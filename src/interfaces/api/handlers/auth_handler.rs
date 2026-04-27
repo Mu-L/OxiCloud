@@ -1,10 +1,11 @@
 use axum::{
     Router,
-    extract::{Json, Query, State},
+    extract::{ConnectInfo, Json, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post, put},
 };
+use std::net::SocketAddr;
 use std::sync::Arc;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -18,6 +19,7 @@ use crate::common::di::AppState;
 use crate::interfaces::api::cookie_auth;
 use crate::interfaces::errors::AppError;
 use crate::interfaces::middleware::auth::CurrentUserId;
+use crate::interfaces::middleware::trusted_proxy::client_ip_from_parts;
 use serde::Deserialize;
 
 /// Public auth routes — no authentication required.
@@ -260,6 +262,7 @@ pub async fn register(
 )]
 pub async fn login(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(dto): Json<LoginDto>,
 ) -> Result<Response, AppError> {
@@ -281,13 +284,24 @@ pub async fn login(
     };
 
     // ── Account lockout check ──────────────────────────────────────────
-    // Reject immediately if the account has too many consecutive failures.
-    // This runs BEFORE Argon2 to save CPU under brute-force attacks.
-    if let Err(lockout_secs) = auth_service.login_lockout.check(&dto.username) {
+    // Reject immediately if (this account, this IP) has too many consecutive
+    // failures. The IP is part of the key so an attacker flooding bad
+    // passwords from one address cannot lock a legitimate user out of the
+    // same account from a different address (issue #323). The check runs
+    // BEFORE Argon2 to save CPU under brute-force attacks.
+    let client_ip = client_ip_from_parts(&headers, Some(peer), false);
+    if let Err(lockout_secs) = auth_service
+        .login_lockout
+        .check(&dto.username, &client_ip)
+    {
         tracing::warn!(
+            target: "audit",
+            event = "auth.login",
+            reason = "account_ip_locked",
             username = %dto.username,
+            ip = %client_ip,
             lockout_secs = lockout_secs,
-            "Login rejected — account temporarily locked"
+            "Login rejected: account temporarily locked for this IP"
         );
         return Err(AppError::new(
             StatusCode::TOO_MANY_REQUESTS,
@@ -317,7 +331,9 @@ pub async fn login(
     {
         Ok(auth_response) => {
             // ── Successful login — reset lockout counter ──
-            auth_service.login_lockout.record_success(&dto.username);
+            auth_service
+                .login_lockout
+                .record_success(&dto.username, &client_ip);
 
             tracing::info!("Login successful for user: {}", dto.username);
             // Log the response structure for debugging
@@ -367,7 +383,9 @@ pub async fn login(
         }
         Err(err) => {
             // ── Record failed attempt for lockout tracking ──
-            auth_service.login_lockout.record_failure(&dto.username);
+            auth_service
+                .login_lockout
+                .record_failure(&dto.username, &client_ip);
             tracing::error!("Login failed for user {}: {}", dto.username, err);
             Err(err.into())
         }
