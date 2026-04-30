@@ -124,6 +124,33 @@ fn reject_path_traversal(path: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+// ─── Helper: strip optional username prefix from CardDAV path ────────
+//
+// The `addressbook-home-set` discovery property returns `/carddav/{username}/`,
+// so standard clients will prefix all subsequent requests with the username segment.
+// The handlers below expect paths of the form `{address_book_id}` or `{address_book_id}/{contact}.vcf`.
+//
+// Heuristic: if the first path segment is a valid UUID it is already an
+// address book ID; otherwise treat it as a username and skip it.
+
+fn strip_username_prefix(path: &str) -> &str {
+    if let Some(pos) = path.find('/') {
+        let first = &path[..pos];
+        if uuid::Uuid::parse_str(first).is_ok() {
+            path
+        } else {
+            &path[pos + 1..]
+        }
+    } else {
+        if uuid::Uuid::parse_str(path).is_ok() {
+            path
+        } else {
+            ""
+        }
+    }
+}
+
+
 // ─── Helper: extract user from request ───────────────────────────────
 
 fn extract_user(req: &Request<Body>) -> Result<AuthUser, AppError> {
@@ -226,7 +253,8 @@ async fn handle_propfind(
             .body(Body::from(response_body))
             .unwrap())
     } else {
-        let parts: Vec<&str> = path.splitn(2, '/').collect();
+        let effective_path = strip_username_prefix(path);
+    let parts: Vec<&str> = effective_path.splitn(2, '/').collect();
         let address_book_id = parts[0];
 
         if parts.len() == 1 {
@@ -324,7 +352,8 @@ async fn handle_report(
     let report = CardDavAdapter::parse_report(body_bytes.reader())
         .map_err(|e| AppError::bad_request(format!("Failed to parse REPORT: {}", e)))?;
 
-    let address_book_id = path.split('/').next().unwrap_or(path);
+    let effective_path = strip_username_prefix(path);
+    let address_book_id = effective_path.split('/').next().unwrap_or(effective_path);
 
     if address_book_id.is_empty() {
         return Err(AppError::bad_request("Address book ID required in path"));
@@ -431,7 +460,8 @@ async fn handle_put(
     let user = extract_user(&req)?;
     let contact_svc = get_contact_service(&state)?;
 
-    let parts: Vec<&str> = path.splitn(2, '/').collect();
+    let effective_path = strip_username_prefix(path);
+    let parts: Vec<&str> = effective_path.splitn(2, '/').collect();
     if parts.len() < 2 {
         return Err(AppError::bad_request(
             "Path must be {address_book_id}/{uid}.vcf",
@@ -524,7 +554,8 @@ async fn handle_get(
     let user = extract_user(&req)?;
     let contact_svc = get_contact_service(&state)?;
 
-    let parts: Vec<&str> = path.splitn(2, '/').collect();
+    let effective_path = strip_username_prefix(path);
+    let parts: Vec<&str> = effective_path.splitn(2, '/').collect();
     let address_book_id = parts[0];
 
     if parts.len() < 2 {
@@ -581,7 +612,8 @@ async fn handle_delete(
     let addressbook_service = get_addressbook_service(&state)?;
     let contact_svc = get_contact_service(&state)?;
 
-    let parts: Vec<&str> = path.splitn(2, '/').collect();
+    let effective_path = strip_username_prefix(path);
+    let parts: Vec<&str> = effective_path.splitn(2, '/').collect();
     let address_book_id = parts[0];
 
     if address_book_id.is_empty() {
@@ -643,7 +675,8 @@ async fn handle_proppatch(
         )
         .map_err(|e| AppError::bad_request(format!("Failed to parse PROPPATCH: {}", e)))?;
 
-    let address_book_id = path.split('/').next().unwrap_or(path);
+    let effective_path = strip_username_prefix(path);
+    let address_book_id = effective_path.split('/').next().unwrap_or(effective_path);
 
     if address_book_id.is_empty() {
         return Err(AppError::bad_request("Address book ID required"));

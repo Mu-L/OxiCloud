@@ -136,6 +136,38 @@ fn reject_path_traversal(path: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+// ─── Helper: strip optional username prefix from CalDAV path ─────────
+//
+// The `calendar-home-set` discovery property returns `/caldav/{username}/`,
+// so standard clients (DAVx5, Apple Calendar, Thunderbird) will prefix all
+// subsequent requests with the username segment.  The handlers below expect
+// paths of the form `{calendar_id}` or `{calendar_id}/{event}.ics`, so we
+// need to detect and strip the leading username when present.
+//
+// Heuristic: if the first path segment is a valid UUID it is already a
+// calendar ID; otherwise treat it as a username and skip it.
+
+fn strip_username_prefix(path: &str) -> &str {
+    if let Some(pos) = path.find('/') {
+        let first = &path[..pos];
+        if uuid::Uuid::parse_str(first).is_ok() {
+            // First segment is a UUID → no username prefix
+            path
+        } else {
+            // First segment is not a UUID → treat as username, return the rest
+            &path[pos + 1..]
+        }
+    } else {
+        // Single segment (no slash)
+        if uuid::Uuid::parse_str(path).is_ok() {
+            path
+        } else {
+            // Single non-UUID segment (bare username) → nothing useful after it
+            ""
+        }
+    }
+}
+
 // ─── Helper: extract user from request ───────────────────────────────
 
 fn extract_user(req: &Request<Body>) -> Result<AuthUser, AppError> {
@@ -260,12 +292,24 @@ async fn handle_propfind(
         //   {calendar_id}/{event_uid}.ics     — individual event
         //   {username}/{calendar_id}          — calendar under user home
         //   {username}/{calendar_id}/{uid}.ics — event under user home
+        //
+        // Use strip_username_prefix heuristic: if first segment is a UUID
+        // it's a calendar ID, otherwise it's a username prefix.
         let parts: Vec<&str> = path.splitn(2, '/').collect();
         let first_segment = parts[0];
+        let first_is_uuid = uuid::Uuid::parse_str(first_segment).is_ok();
 
         if parts.len() == 1 {
-            // Single path segment: try as calendar ID first, fall back to user home
-            let calendar_result = calendar_service.get_calendar(first_segment, user.id).await;
+            // Single path segment: UUID means calendar ID, otherwise user home
+            let calendar_result = if first_is_uuid {
+                calendar_service.get_calendar(first_segment, user.id).await
+            } else {
+                Err(crate::domain::errors::DomainError::new(
+                    crate::domain::errors::ErrorKind::NotFound,
+                    "Calendar",
+                    "Not a UUID",
+                ))
+            };
 
             if let Ok(calendar) = calendar_result {
                 // Valid calendar ID — return calendar collection
@@ -327,10 +371,8 @@ async fn handle_propfind(
             // Multi-segment path: {something}/{rest}
             let rest = parts[1];
 
-            // Check if first_segment is a valid calendar ID
-            let calendar_result = calendar_service.get_calendar(first_segment, user.id).await;
-
-            let (calendar_id, event_path) = if calendar_result.is_ok() {
+            // Use UUID heuristic: if first segment is a UUID it's a calendar ID
+            let (calendar_id, event_path) = if first_is_uuid {
                 // first_segment is a calendar ID, rest is event path
                 (first_segment, rest)
             } else {
@@ -434,7 +476,8 @@ async fn handle_report(
     let report = CalDavAdapter::parse_report(body_bytes.reader())
         .map_err(|e| AppError::bad_request(format!("Failed to parse REPORT: {}", e)))?;
 
-    let calendar_id = path.split('/').next().unwrap_or(path);
+    let effective_path = strip_username_prefix(path);
+    let calendar_id = effective_path.split('/').next().unwrap_or(effective_path);
 
     if calendar_id.is_empty() {
         return Err(AppError::bad_request("Calendar ID required in path"));
@@ -546,7 +589,8 @@ async fn handle_put(
     let user = extract_user(&req)?;
     let calendar_service = get_calendar_service(&state)?;
 
-    let parts: Vec<&str> = path.splitn(2, '/').collect();
+    let effective_path = strip_username_prefix(path);
+    let parts: Vec<&str> = effective_path.splitn(2, '/').collect();
     if parts.len() < 2 {
         return Err(AppError::bad_request(
             "Path must be {calendar_id}/{uid}.ics",
@@ -635,7 +679,8 @@ async fn handle_get(
     let user = extract_user(&req)?;
     let calendar_service = get_calendar_service(&state)?;
 
-    let parts: Vec<&str> = path.splitn(2, '/').collect();
+    let effective_path = strip_username_prefix(path);
+    let parts: Vec<&str> = effective_path.splitn(2, '/').collect();
     let calendar_id = parts[0];
 
     if parts.len() < 2 {
@@ -751,7 +796,8 @@ async fn handle_delete(
     let user = extract_user(&req)?;
     let calendar_service = get_calendar_service(&state)?;
 
-    let parts: Vec<&str> = path.splitn(2, '/').collect();
+    let effective_path = strip_username_prefix(path);
+    let parts: Vec<&str> = effective_path.splitn(2, '/').collect();
     let calendar_id = parts[0];
 
     if calendar_id.is_empty() {
@@ -809,7 +855,8 @@ async fn handle_proppatch(
         )
         .map_err(|e| AppError::bad_request(format!("Failed to parse PROPPATCH: {}", e)))?;
 
-    let calendar_id = path.split('/').next().unwrap_or(path);
+    let effective_path = strip_username_prefix(path);
+    let calendar_id = effective_path.split('/').next().unwrap_or(effective_path);
 
     if calendar_id.is_empty() {
         return Err(AppError::bad_request("Calendar ID required"));
@@ -860,4 +907,58 @@ async fn handle_proppatch(
         .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
         .body(Body::from(response_body))
         .unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_username_prefix;
+
+    #[test]
+    fn test_strip_username_prefix_uuid_only() {
+        let uuid = "ae8ae236-709f-4939-b766-37ad589ac7f2";
+        assert_eq!(strip_username_prefix(uuid), uuid);
+    }
+
+    #[test]
+    fn test_strip_username_prefix_uuid_with_event() {
+        let path = "ae8ae236-709f-4939-b766-37ad589ac7f2/event.ics";
+        assert_eq!(strip_username_prefix(path), path);
+    }
+
+    #[test]
+    fn test_strip_username_prefix_username_and_uuid() {
+        let path = "timm/ae8ae236-709f-4939-b766-37ad589ac7f2";
+        assert_eq!(
+            strip_username_prefix(path),
+            "ae8ae236-709f-4939-b766-37ad589ac7f2"
+        );
+    }
+
+    #[test]
+    fn test_strip_username_prefix_username_uuid_and_event() {
+        let path = "timm/ae8ae236-709f-4939-b766-37ad589ac7f2/event.ics";
+        assert_eq!(
+            strip_username_prefix(path),
+            "ae8ae236-709f-4939-b766-37ad589ac7f2/event.ics"
+        );
+    }
+
+    #[test]
+    fn test_strip_username_prefix_bare_username() {
+        assert_eq!(strip_username_prefix("timm"), "");
+    }
+
+    #[test]
+    fn test_strip_username_prefix_empty() {
+        assert_eq!(strip_username_prefix(""), "");
+    }
+
+    #[test]
+    fn test_strip_username_prefix_email_style_username() {
+        let path = "user@example.com/ae8ae236-709f-4939-b766-37ad589ac7f2/event.ics";
+        assert_eq!(
+            strip_username_prefix(path),
+            "ae8ae236-709f-4939-b766-37ad589ac7f2/event.ics"
+        );
+    }
 }
