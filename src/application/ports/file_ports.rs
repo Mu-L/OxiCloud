@@ -122,6 +122,12 @@ pub trait FileRetrievalUseCase: Send + Sync + 'static {
     /// another user.  All user-facing handlers should use this method.
     async fn get_file_with_perms(&self, id: &str, caller_id: Uuid) -> Result<FileDto, DomainError>;
 
+    async fn get_file_or_trashed_with_perms(
+        &self,
+        id: &str,
+        caller_id: Uuid,
+    ) -> Result<FileDto, DomainError>;
+
     /// Gets a file by its path (for WebDAV)
     async fn get_file_by_path(&self, path: &str) -> Result<FileDto, DomainError>;
 

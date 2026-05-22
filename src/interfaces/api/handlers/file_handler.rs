@@ -396,7 +396,7 @@ impl FileHandler {
         let file_retrieval_service = &state.applications.file_retrieval_service;
 
         let file = match file_retrieval_service
-            .get_file_with_perms(&id, auth_user.id)
+            .get_file_or_trashed_with_perms(&id, auth_user.id)
             .await
         {
             Ok(f) => f,

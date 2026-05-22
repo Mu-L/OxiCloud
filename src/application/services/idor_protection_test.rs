@@ -60,6 +60,14 @@ impl FileReadPort for MockFileReadPort {
             .ok_or_else(|| DomainError::not_found("File", id.to_string()))
     }
 
+    async fn get_file_or_trashed(&self, id: &str) -> Result<File, DomainError> {
+        let files = self.files.lock().unwrap();
+        files
+            .get(id)
+            .map(|(f, _)| f.clone())
+            .ok_or_else(|| DomainError::not_found("File", id.to_string()))
+    }
+
     async fn get_file_for_owner(&self, id: &str, owner_id: Uuid) -> Result<File, DomainError> {
         let files = self.files.lock().unwrap();
         match files.get(id) {

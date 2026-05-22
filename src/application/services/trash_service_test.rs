@@ -459,6 +459,14 @@ impl FileReadPort for MockFileRepository {
         }
     }
 
+    async fn get_file_or_trashed(&self, id: &str) -> std::prelude::v1::Result<File, DomainError> {
+        let files = self.files.lock().unwrap();
+        if let Some(file) = files.get(id) {
+            Ok(file.clone())
+        } else {
+            Err(DomainError::not_found("File", id.to_string()))
+        }
+    }
     async fn list_files(
         &self,
         _folder_id: Option<&str>,

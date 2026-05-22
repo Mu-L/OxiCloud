@@ -70,6 +70,10 @@ impl FileReadPort for StubFileReadPort {
         Ok(File::default())
     }
 
+    async fn get_file_or_trashed(&self, _id: &str) -> Result<File, DomainError> {
+        Ok(File::default())
+    }
+
     async fn list_files(&self, _folder_id: Option<&str>) -> Result<Vec<File>, DomainError> {
         Ok(Vec::new())
     }
@@ -524,6 +528,14 @@ pub struct StubFileRetrievalUseCase;
 
 impl FileRetrievalUseCase for StubFileRetrievalUseCase {
     async fn get_file(&self, _id: &str) -> Result<FileDto, DomainError> {
+        Ok(FileDto::default())
+    }
+
+    async fn get_file_or_trashed_with_perms(
+        &self,
+        _id: &str,
+        _owner_id: Uuid,
+    ) -> Result<FileDto, DomainError> {
         Ok(FileDto::default())
     }
 

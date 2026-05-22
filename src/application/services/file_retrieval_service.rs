@@ -255,6 +255,16 @@ impl FileRetrievalUseCase for FileRetrievalService {
         Ok(FileDto::from(file))
     }
 
+    async fn get_file_or_trashed_with_perms(
+        &self,
+        id: &str,
+        caller_id: Uuid,
+    ) -> Result<FileDto, DomainError> {
+        self.require_file(id, Permission::Read, caller_id).await?;
+        let file = self.file_read.get_file_or_trashed(id).await?;
+        Ok(FileDto::from(file))
+    }
+
     // FIXME no authorisation at all
     async fn get_file_by_path(&self, path: &str) -> Result<FileDto, DomainError> {
         // Direct SQL lookup — O(folder_depth) queries instead of O(total_files)
