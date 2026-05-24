@@ -169,7 +169,7 @@ async function initI18n() {
         await loadTranslations('en');
     }
 
-    // Mark loaded BEFORE translatePage so safeT resolves properly
+    // Mark loaded BEFORE translatePage so t() resolves properly
     translationsLoaded = true;
 
     // Translate the page
@@ -191,9 +191,7 @@ function translatePage() {
  * @param {Element|Document} root - The root element to search within
  */
 function translateElement(root) {
-    // Use safeT instead of bare t() to avoid issues when other scripts
-    // (e.g. admin.js) shadow the global t() function.
-    const resolve = safeT;
+    const resolve = t;
     const el = root || document;
     el.querySelectorAll('[data-i18n]').forEach((element) => {
         const key = element.getAttribute('data-i18n');
@@ -242,14 +240,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.dispatchEvent(new Event('translationsLoaded'));
 });
 
-// Self-contained t wrapper — does NOT call the global t() because other
-// scripts (e.g. admin.js) may shadow it, which would cause infinite recursion.
 /**
  * @param {string} key
  * @param {string | Record<string, any>} [paramsOrFallback] - interpolation params object, or a string fallback used when the key is missing
  * @returns {string}
  */
-function safeT(key, paramsOrFallback = {}) {
+function t(key, paramsOrFallback = {}) {
     const fallback = typeof paramsOrFallback === 'string' ? paramsOrFallback : null;
     const params = typeof paramsOrFallback === 'object' ? paramsOrFallback : {};
 
@@ -271,7 +267,7 @@ function safeT(key, paramsOrFallback = {}) {
 }
 
 export const i18n = {
-    t: safeT,
+    t,
     setLocale,
     getCurrentLocale,
     getSupportedLocales,
