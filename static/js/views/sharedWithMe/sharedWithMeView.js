@@ -16,8 +16,8 @@
 
 import { ui } from '../../app/ui.js';
 import { i18n } from '../../core/i18n.js';
-import { ownerTooltip } from '../../features/ownerTooltip.js';
 import { multiSelect } from '../../features/files/multiSelect.js';
+import { ownerTooltip } from '../../features/ownerTooltip.js';
 import { grants } from '../../model/grants.js';
 import { systemUsers } from '../../model/systemUsers.js';
 
@@ -201,9 +201,7 @@ const sharedWithMeView = {
      */
     _stampOwnerIds(container, ownerMap) {
         for (const [itemId, ownerId] of ownerMap) {
-            const el = container.querySelector(
-                `[data-folder-id="${itemId}"], [data-file-id="${itemId}"]`
-            );
+            const el = container.querySelector(`[data-folder-id="${itemId}"], [data-file-id="${itemId}"]`);
             if (el instanceof HTMLElement) {
                 el.dataset.ownerId = ownerId;
             }

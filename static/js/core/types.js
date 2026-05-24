@@ -313,3 +313,45 @@
  * @property {string|undefined}    [next_cursor]  - Absent when the last page is reached.
  */
 
+/**
+ * @typedef {Object} ContactEmail
+ * @property {string}  email
+ * @property {string}  type        - e.g. "work", "home"
+ * @property {boolean} is_primary
+ */
+
+/**
+ * Mirrors the backend `ContactDto`.
+ * `id` equals the OxiCloud user UUID for contacts from the system address book.
+ * @typedef {Object} ContactItem
+ * @property {string}          id
+ * @property {string}          address_book_id
+ * @property {string}          uid             - vCard UID
+ * @property {string|null}     [full_name]
+ * @property {string|null}     [first_name]
+ * @property {string|null}     [last_name]
+ * @property {string|null}     [nickname]
+ * @property {ContactEmail[]}  email
+ * @property {string|null}     [organization]
+ * @property {string|null}     [title]
+ * @property {string|null}     [photo_url]
+ * @property {string}          created_at      - ISO-8601
+ * @property {string}          updated_at      - ISO-8601
+ * @property {string}          etag
+ */
+
+/**
+ * Mirrors the backend `AddressBookResponse`.
+ * @typedef {Object} AddressBookItem
+ * @property {string}       id
+ * @property {string}       name
+ * @property {string}       owner_id
+ * @property {string|null}  [description]
+ * @property {string|null}  [color]
+ * @property {boolean}      is_public
+ * @property {boolean}      is_readonly
+ * @property {boolean}      is_system
+ * @property {string}       created_at   - ISO-8601
+ * @property {string}       updated_at   - ISO-8601
+ */
+
