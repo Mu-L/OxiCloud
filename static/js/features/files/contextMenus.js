@@ -11,7 +11,7 @@ import { showConfirmDialog, ui } from '../../app/ui.js';
 import { getCsrfHeaders } from '../../core/csrf.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { i18n } from '../../core/i18n.js';
-import { Modal } from '../../core/modal.js';
+import { Modal } from '../../components/modal.js';
 import { favorites } from '../library/favorites.js';
 import { musicView } from '../library/music.js';
 import { fileSharing } from '../sharing/fileSharing.js';

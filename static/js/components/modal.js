@@ -1,5 +1,5 @@
-import { i18n } from './i18n.js';
-import { replaceIconsInElement } from './icons.js';
+import { i18n } from '../core/i18n.js';
+import { replaceIconsInElement } from '../core/icons.js';
 
 /**
  * Modal System for OxiCloud
