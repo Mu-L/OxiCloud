@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="/css/views/favorites.css">
     <link rel="stylesheet" href="/css/views/recent.css">
     <link rel="stylesheet" href="/css/views/shared.css">
+    <link rel="stylesheet" href="/css/views/sharedWithMe.css">
     <link rel="stylesheet" href="/css/views/trash.css">
     <link rel="stylesheet" href="/css/views/photos.css">
     <link rel="stylesheet" href="/css/views/photosLightbox.css">
@@ -24,7 +25,7 @@
     <script defer type="module" src="/js/core/csrf.js"></script>
     <script defer type="module" src="/js/core/languageSelector.js"></script>
     <script defer type="module" src="/js/core/notifications.js"></script>
-    <script defer type="module" src="/js/core/modal.js"></script>
+    <script defer type="module" src="/js/components/modal.js"></script>
     <script defer type="module" src="/js/core/formatters.js"></script>
     <script defer type="module" src="/js/app/state.js"></script>
     <script defer type="module" src="/js/app/uiFileTypes.js"></script>
@@ -76,8 +77,12 @@
                 <span data-i18n="nav.files">Files</span>
             </div>
             <div class="nav-item" id="nav-shared">
-                <i class="fas fa-share-alt"></i>
+                <i class="fas fa-oxiexport"></i>
                 <span data-i18n="nav.shared">Shared</span>
+            </div>
+            <div class="nav-item" id="nav-sharedwithme">
+                <i class="fas fa-oxiimport"></i>
+                <span data-i18n="nav.sharedwithme">Shared with me</span>
             </div>
             <div class="nav-item">
                 <i class="fas fa-clock"></i>

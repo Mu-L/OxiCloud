@@ -20,6 +20,10 @@ use crate::application::dtos::folder_dto::{
     CreateFolderDto, FolderDto, MoveFolderDto, RenameFolderDto,
 };
 use crate::application::dtos::folder_listing_dto::FolderListingDto;
+use crate::application::dtos::grant_dto::{
+    CreateGrantDto, GrantDto, PermissionDto, ResourceDto, ResourceTypeDto, Role, SharedWithMeDto,
+    SharedWithMeItemDto, SubjectDto, SubjectTypeDto, UpdateRoleDto,
+};
 use crate::application::dtos::i18n_dto::{
     LocaleDto, TranslationErrorDto, TranslationRequestDto, TranslationResponseDto,
 };
@@ -202,6 +206,14 @@ use crate::interfaces::api::handlers::file_handler::MoveFilePayload;
         handlers::admin_handler::complete_migration,
         handlers::admin_handler::verify_migration,
         handlers::admin_handler::generate_encryption_key,
+        // Grant / ReBAC handlers (free functions)
+        handlers::grant_handler::create_grant,
+        handlers::grant_handler::revoke_grant,
+        handlers::grant_handler::set_role,
+        handlers::grant_handler::list_incoming,
+        handlers::grant_handler::list_shared_with_me,
+        handlers::grant_handler::list_outgoing,
+        handlers::grant_handler::list_on_resource,
     ),
     components(
         schemas(
@@ -275,6 +287,18 @@ use crate::interfaces::api::handlers::file_handler::MoveFilePayload;
             UpdateContactRequest,
             GroupNameRequest,
             AddMemberRequest,
+            // Grant / ReBAC schemas
+            SubjectTypeDto,
+            SubjectDto,
+            ResourceTypeDto,
+            ResourceDto,
+            PermissionDto,
+            Role,
+            CreateGrantDto,
+            UpdateRoleDto,
+            GrantDto,
+            SharedWithMeDto,
+            SharedWithMeItemDto,
         )
     ),
     tags(
@@ -293,6 +317,7 @@ use crate::interfaces::api::handlers::file_handler::MoveFilePayload;
         (name = "playlists", description = "Music playlist endpoints"),
         (name = "contacts", description = "Address books, contacts, and groups endpoints"),
         (name = "admin", description = "Admin management endpoints"),
+        (name = "grants", description = "ReBAC grant management endpoints"),
     ),
     info(
         title = "OxiCloud API",

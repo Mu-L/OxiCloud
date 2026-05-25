@@ -42,7 +42,17 @@ async function getFolder(id) {
 }
 
 /**
- * rebuild breadcrumb from selected folder (iterate up to root)
+ * Rebuild breadcrumb from selected folder (iterate up to root).
+ *
+ * Stops traversal gracefully when a parent folder is not accessible
+ * (e.g. the user entered via a "Shared with me" grant whose parent
+ * folder they have no permission on). In that case the partial
+ * breadcrumb built so far is kept — the deepest reachable ancestor
+ * acts as the visual root, matching how Google Drive / Dropbox handle
+ * shared subtrees.
+ *
+ * An error on the *target folder itself* (first iteration) is still
+ * treated as a real error and redirects to the home folder.
  */
 async function rebuildBreadCrumb() {
     /**
@@ -69,23 +79,29 @@ async function rebuildBreadCrumb() {
                 currentFolderInfo = folderInfo;
             }
 
-            // XXX do not enter root into bread crumb updateBreadcrumb() method always display it
-            if (!folderInfo.is_root) {
-                app.breadcrumbPath.unshift({
-                    id: folderInfo.id,
-                    name: folderInfo.name
-                });
-            }
+            // Add every folder to the breadcrumb, including the root (home folder).
+            // updateBreadcrumb() no longer auto-prepends home — it's our responsibility here.
+            app.breadcrumbPath.unshift({
+                id: folderInfo.id,
+                name: folderInfo.name
+            });
 
             // iterate to parent folder
             id = folderInfo.parent_id;
         } catch (_e) {
-            console.log(`Error loading information from folder ${app.currentPath}, falling back to ${app.userHomeFolderId}`);
-            // fallback of root
-            uiNotifications.show('error: folder not found or permission denied', 'the given folder is not available or you do not have sufficient rights');
-            app.breadcrumbPath = [];
-            id = app.userHomeFolderId;
-            if (id) app.currentPath = id;
+            if (currentFolderInfo === null) {
+                // Failed on the target folder itself — real error, fall back to home.
+                console.warn(`Cannot access target folder ${app.currentPath}, falling back to home`);
+                uiNotifications.show('error: folder not found or permission denied', 'the given folder is not available or you do not have sufficient rights');
+                app.breadcrumbPath = [];
+                id = app.userHomeFolderId;
+                if (id) app.currentPath = id;
+            } else {
+                // Failed on a parent — hit the permission boundary of a shared subtree.
+                // Stop traversal; the partial breadcrumb is the best we can show.
+                console.log(`Stopped breadcrumb traversal at permission boundary (parent of ${currentFolderInfo.id} is not accessible)`);
+                break;
+            }
         }
     }
 
@@ -217,6 +233,7 @@ async function loadFiles(options = { insertHistory: true }) {
         } else {
             ui.renderFolders(folderList);
             ui.renderFiles(fileList);
+            ui.resolveOwnerCells();
 
             // check if a file was provided
             if (app.viewFile) {

@@ -10,7 +10,8 @@
         "favorites": "收藏",
         "photos": "照片",
         "music": "音乐",
-        "trash": "回收站"
+        "trash": "回收站",
+        "sharedwithme": "与我共享"
     },
     "photos": {
         "empty_state": "还没有照片",
@@ -269,7 +270,8 @@
             "archive": "压缩文件",
             "installer": "安装程序",
             "code": "代码"
-        }
+        },
+        "owner": "所有者"
     },
     "dialogs": {
         "rename_folder": "重命名文件夹",
@@ -682,5 +684,18 @@
         "files": "个文件",
         "complete": "已上传 {{count}} / {{total}}"
     },
-    "storage_quota_exceeded": "存储配额已超限"
+    "storage_quota_exceeded": "存储配额已超限",
+    "sharedwithme": {
+        "pageTitle": "与我共享",
+        "pageDescription": "其他用户与您共享的文件和文件夹",
+        "emptyStateTitle": "暂无内容与您共享",
+        "emptyStateDesc": "其他用户与您共享的项目将显示在此处",
+        "loadMore": "加载更多",
+        "sharedBy": "共享者",
+        "colName": "名称",
+        "colType": "类型",
+        "colSharedBy": "共享者",
+        "colDate": "共享日期",
+        "colPermissions": "权限"
+    }
 }

@@ -10,7 +10,8 @@
         "favorites": "Избранное",
         "photos": "Фото",
         "music": "Музыка",
-        "trash": "Корзина"
+        "trash": "Корзина",
+        "sharedwithme": "Доступно мне"
     },
     "photos": {
         "empty_state": "Фотографий пока нет",
@@ -269,7 +270,8 @@
             "archive": "Архив",
             "installer": "Установщик",
             "code": "Код"
-        }
+        },
+        "owner": "Владелец"
     },
     "dialogs": {
         "rename_folder": "Переименовать папку",
@@ -682,5 +684,18 @@
         "files": "файлов",
         "complete": "{{count}} / {{total}} загружено"
     },
-    "storage_quota_exceeded": "Превышена квота хранилища"
+    "storage_quota_exceeded": "Превышена квота хранилища",
+    "sharedwithme": {
+        "pageTitle": "Доступно мне",
+        "pageDescription": "Файлы и папки, которые другие пользователи предоставили вам",
+        "emptyStateTitle": "Вам ещё ничего не предоставлено",
+        "emptyStateDesc": "Элементы, которые другие пользователи предоставят вам, появятся здесь",
+        "loadMore": "Загрузить ещё",
+        "sharedBy": "Предоставлено",
+        "colName": "Имя",
+        "colType": "Тип",
+        "colSharedBy": "Предоставлено",
+        "colDate": "Дата предоставления",
+        "colPermissions": "Права"
+    }
 }

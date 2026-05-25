@@ -5,6 +5,8 @@
 
 // @ts-check
 
+import { shareModal } from '../components/shareModal.js';
+import { createUserVignette } from '../components/userVignette.js';
 import { escapeHtml, formatDateTime, formatFileSize } from '../core/formatters.js';
 import { i18n } from '../core/i18n.js';
 import { OxiIcons } from '../core/icons.js';
@@ -15,12 +17,12 @@ import { multiSelect } from '../features/files/multiSelect.js';
 import { wopiEditor } from '../features/files/wopiEditor.js';
 import { favorites } from '../features/library/favorites.js';
 import { recent } from '../features/library/recent.js';
-import { fileSharing } from '../features/sharing/fileSharing.js';
 import { thumbnail } from '../features/thumbnail.js';
-import { sharedView } from '../views/shared/sharedView.js';
+import { grants } from '../model/grants.js';
+import { systemUsers } from '../model/systemUsers.js';
 import { loadFiles } from './filesView.js';
 import { updateHistory } from './main.js';
-import { switchToFilesSection, syncViewContainers } from './navigation.js';
+import { activateFilesUI, switchToFilesSection, syncViewContainers } from './navigation.js';
 import { app } from './state.js';
 import { uiFileTypes } from './uiFileTypes.js';
 import { uiNotifications } from './uiNotifications.js';
@@ -36,6 +38,12 @@ const ui = {
     dragPreview: null,
     /** @type {HTMLDivElement | null} */
     draggedItems: null,
+
+    /**
+     * Whether the Owner column is currently visible.
+     * Tracked so that newly rendered items can stamp the correct initial class.
+     */
+    _ownerVisible: false,
 
     /**
      * Initialize context menus and dialogs
@@ -54,7 +62,7 @@ const ui = {
                     <i class="fas fa-star"></i> <span data-i18n="actions.favorite">Add to favorites</span>
                 </div>
                 <div class="context-menu-item" id="share-folder-option">
-                    <i class="fas fa-share-alt"></i> <span data-i18n="actions.share">Share</span>
+                    <i class="fas fa-oxiexport"></i> <span data-i18n="actions.share">Share</span>
                 </div>
                 <div class="context-menu-separator"></div>
                 <div class="context-menu-item" id="rename-folder-option">
@@ -98,7 +106,7 @@ const ui = {
                     <i class="fas fa-star"></i> <span data-i18n="actions.favorite">Add to favorites</span>
                 </div>
                 <div class="context-menu-item" id="share-file-option">
-                    <i class="fas fa-share-alt"></i> <span data-i18n="actions.share">Share</span>
+                    <i class="fas fa-oxiexport"></i> <span data-i18n="actions.share">Share</span>
                 </div>
                 <div class="context-menu-item hidden" id="add-to-playlist-option">
                     <i class="fas fa-compact-disc"></i> <span data-i18n="music.add_to_playlist">Add to Playlist</span>
@@ -146,115 +154,7 @@ const ui = {
             document.body.appendChild(moveDialog);
         }
 
-        // Share dialog
-        if (!document.getElementById('share-dialog')) {
-            const shareDialog = document.createElement('div');
-            shareDialog.classList.add('share-dialog', 'hidden');
-            shareDialog.id = 'share-dialog';
-            shareDialog.innerHTML = `
-                <div class="share-dialog-content">
-                    <div class="share-dialog-header">
-                        <i class="fas fa-share-alt dialog-header-icon"></i>
-                        <span data-i18n="dialogs.share_file">Share file</span>
-                    </div>
-                    <div class="shared-item-info">
-                        <strong>Item:</strong> <span id="shared-item-name"></span>
-                    </div>
-
-                    <div id="existing-shares-section" class="share-section hidden">
-                        <h3 data-i18n="dialogs.existing_shares">Existing shared links</h3>
-                        <div id="existing-shares-container"></div>
-                    </div>
-
-                    <div class="share-options">
-                        <h3 data-i18n="dialogs.share_options">Share options</h3>
-
-                        <div class="form-group">
-                            <label for="share-password" data-i18n="dialogs.password">Password (optional):</label>
-                            <input type="password" id="share-password" placeholder="Protect with password">
-                        </div>
-
-                        <div class="form-group">
-                            <label for="share-expiration" data-i18n="dialogs.expiration">Expiration date (optional):</label>
-                            <input type="date" id="share-expiration">
-                        </div>
-
-                        <div class="form-group">
-                            <label data-i18n="dialogs.permissions">Permissions:</label>
-                            <div class="permission-options">
-                                <div class="permission-option">
-                                    <input type="checkbox" id="share-permission-read" checked>
-                                    <label for="share-permission-read" data-i18n="permissions.read">Read</label>
-                                </div>
-                                <div class="permission-option">
-                                    <input type="checkbox" id="share-permission-write">
-                                    <label for="share-permission-write" data-i18n="permissions.write">Write</label>
-                                </div>
-                                <div class="permission-option">
-                                    <input type="checkbox" id="share-permission-reshare">
-                                    <label for="share-permission-reshare" data-i18n="permissions.reshare">Allow sharing</label>
-                                </div>
-                            </div>
-                        </div>
-                        <button class="btn btn-primary btn-small" id="share-confirm-btn" data-i18n="actions.share">Share</button>
-                    </div>
-
-                    <div id="new-share-section" class="share-section hidden">
-                        <h3 data-i18n="dialogs.generated_link">Generated link</h3>
-                        <div class="form-group">
-                            <input type="text" id="generated-share-url" readonly>
-                            <div class="share-link-actions">
-                                <button class="btn btn-small" id="copy-share-btn">
-                                    <i class="fas fa-copy"></i> <span data-i18n="actions.copy">Copy</span>
-                                </button>
-                                <button class="btn btn-small" id="notify-share-btn">
-                                    <i class="fas fa-envelope"></i> <span data-i18n="actions.notify">Notify</span>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="share-dialog-buttons">
-                        <button class="btn btn-secondary" id="share-close-btn" data-i18n="actions.close">Close</button>
-                    </div>
-                </div>
-            `;
-            i18n.translateElement(shareDialog);
-            document.body.appendChild(shareDialog);
-
-            // Add event listeners for share dialog
-            document.getElementById('share-close-btn')?.addEventListener('click', () => {
-                contextMenus.closeShareDialog();
-            });
-
-            document.getElementById('share-confirm-btn')?.addEventListener('click', async () => {
-                await contextMenus.createSharedLink();
-            });
-
-            document.getElementById('copy-share-btn')?.addEventListener('click', async () => {
-                const shareUrl = /** @type {HTMLInputElement | null} */ (document.getElementById('generated-share-url'))?.value;
-                if (shareUrl) await fileSharing.copyLinkToClipboard(shareUrl);
-            });
-
-            document.getElementById('notify-share-btn')?.addEventListener('click', () => {
-                const shareUrl = /** @type {HTMLInputElement | null} */ (document.getElementById('generated-share-url'))?.value;
-                if (shareUrl) contextMenus.showEmailNotificationDialog(shareUrl);
-            });
-
-            // FIXME make generic function (close all dialog / etc)
-            document.addEventListener('keydown', (e) => {
-                const dialog = document.getElementById('share-dialog');
-                if (e.key === 'Escape' && !dialog?.classList.contains('hidden')) {
-                    contextMenus.closeShareDialog();
-                }
-            });
-
-            shareDialog.addEventListener('click', (e) => {
-                if (e.target === shareDialog) {
-                    contextMenus.closeShareDialog();
-                }
-            });
-        }
+        // Share dialog is now handled by shareModal (components/shareModal.js)
 
         // Notification dialog
         if (!document.getElementById('notification-dialog')) {
@@ -545,6 +445,47 @@ const ui = {
     },
 
     /**
+     * Show or hide the Owner column. When hidden, no name-resolution calls are made.
+     * Sections that show owner (SharedWithMe, Favorites) pass `true`; all others `false`.
+     * @param {boolean} visible
+     */
+    setOwnerColumnVisible(visible) {
+        this._ownerVisible = visible;
+        document
+            .getElementById('files-list')
+            ?.querySelectorAll('.owner-cell')
+            .forEach((cell) => {
+                cell.classList.toggle('hidden', !visible);
+            });
+    },
+
+    /**
+     * Asynchronously fill every un-resolved `.owner-cell` in the current list with
+     * the display name for its `data-owner-id` attribute.
+     *
+     * Call this after `renderFiles()` / `renderFolders()` in sections where the owner
+     * column is visible. Idempotent: cells already stamped with `data-owner-resolved`
+     * are skipped (safe to call on each "Load more" page append).
+     *
+     * When the column is hidden nothing calls this function, so `systemUsers` is never
+     * touched and no address-book requests are issued.
+     *
+     * @returns {Promise<void>}
+     */
+    async resolveOwnerCells() {
+        const filesList = document.getElementById('files-list');
+        const cells = /** @type {NodeListOf<HTMLElement>} */ (filesList?.querySelectorAll('.owner-cell[data-owner-id]:not([data-owner-resolved])'));
+        if (!cells?.length) return;
+        systemUsers.prefetch(); // warm cache once (idempotent, fire-and-forget)
+        for (const cell of cells) {
+            const id = cell.dataset.ownerId;
+            cell.dataset.ownerResolved = '1';
+            if (!id) continue;
+            cell.replaceChildren(createUserVignette(id, 'sm'));
+        }
+    },
+
+    /**
      * Update breadcrumb navigation from the breadcrumbPath array.
      * Renders: Home > folder1 > folder2 > ...
      * Each segment is clickable to navigate back to that level.
@@ -574,18 +515,11 @@ const ui = {
         }
         breadcrumb?.appendChild(homeIcon);
 
-        // -- Root/Home folder name (if available) is always the first element of the breadcrumb --
-        // TODO clarify the difference between homeIcon & this first element
-        if (app.userHomeFolderName) {
-            if (path.length === 0 || path[0].id !== app.userHomeFolderId) {
-                path.unshift({
-                    name: app.userHomeFolderName,
-                    id: app.userHomeFolderId
-                });
-            }
-        }
-
         // -- Root/Home + Intermediate + current segments --
+        // NOTE: The home folder entry is added by rebuildBreadCrumb() (filesView.js) when it
+        // reaches the root folder during traversal. updateBreadcrumb() just renders app.breadcrumbPath
+        // as-is — no implicit mutation. This allows shared-folder navigation to show only the
+        // reachable subtree without the home prefix leaking in.
         path.forEach((segment, index) => {
             const isLast = index === path.length - 1;
 
@@ -937,6 +871,11 @@ const ui = {
                 loadFiles();
                 return;
             }
+            if (app.currentSection === 'sharedwithme') {
+                // Activate Files UI (nav, breadcrumb, actions bar) without
+                // resetting the path — the shared folder becomes the entry point.
+                activateFilesUI();
+            }
             app.breadcrumbPath.push({ id: folderId, name: folderName });
             app.currentPath = folderId;
             this.updateBreadcrumb();
@@ -1247,15 +1186,14 @@ const ui = {
             const itemType = itemElement.dataset.fileId ? 'file' : 'folder';
             const itemName = itemElement.dataset.fileId ? itemElement.dataset.fileName : itemElement.dataset.folderName;
 
-            // TODO corrently dirty
-            const item = /** @type {unknown} */ ({
-                id: itemId,
-                item_id: itemId,
-                item_type: itemType,
-                item_name: itemName
-            });
+            const item = /** @type {FileItem|FolderItem} */ (
+                /** @type {unknown} */ ({
+                    id: itemId,
+                    name: itemName
+                })
+            );
 
-            contextMenus.showShareDialog(/** @type {FileItem} */ (item), itemType);
+            shareModal.open(item, /** @type {'file'|'folder'} */ (itemType));
         });
     },
 
@@ -1334,7 +1272,7 @@ const ui = {
         if (folder.path) el.dataset.path = folder.path;
 
         const isFav = favorites?.isFavorite(folder.id, 'folder');
-        const isShared = sharedView.isShared(folder.id, 'folder');
+        const isShared = grants.getOutgoingGrantsFor('folder', folder.id).length > 0; //sharedView.isShared(folder.id, 'folder');
         const formattedDate = formatDateTime(folder.modified_at);
 
         el.innerHTML = `
@@ -1345,8 +1283,9 @@ const ui = {
                 </div>
                 <span>${escapeHtml(folder.name)}</span>
                 <div class="file-badge file-badge-favorite ${isFav ? '' : 'hidden'}"><i class="fas fa-star favorite-star-inline"></i></div>
-                <div class="file-badge file-badge-shared ${isShared ? '' : 'hidden'}"><i class="fas fa-share-alt"></i></div>
+                <div class="file-badge file-badge-shared ${isShared ? '' : 'hidden'}"><i class="fas fa-oxiexport"></i></div>
             </div>
+            <div class="owner-cell${this._ownerVisible ? '' : ' hidden'}" data-owner-id="${escapeHtml(folder.owner_id || '')}"></div>
             <div class="type-cell">${i18n.t('files.file_types.folder')}</div>
             <div class="size-cell">--</div>
             <div class="date-cell">${formattedDate}</div>
@@ -1377,7 +1316,8 @@ const ui = {
         const fileSize = file.size_formatted || formatFileSize(file.size);
         const formattedDate = formatDateTime(file.modified_at);
         const isFav = favorites?.isFavorite(file.id, 'file');
-        const isShared = sharedView.isShared(file.id, 'file');
+        const isShared = grants.getOutgoingGrantsFor('file', file.id).length > 0;
+        //const isShared = sharedView.isShared(file.id, 'file');
         const canThumbnail = thumbnail.canHandle(file);
 
         const el = document.createElement('div');
@@ -1398,8 +1338,9 @@ const ui = {
                 </div>
                 <span>${escapeHtml(file.name)}</span>
                 <div class="file-badge file-badge-favorite ${isFav ? '' : 'hidden'}"><i class="fas fa-star favorite-star-inline"></i></div>
-                <div class="file-badge file-badge-shared ${isShared ? '' : 'hidden'}"><i class="fas fa-share-alt"></i></div>
+                <div class="file-badge file-badge-shared ${isShared ? '' : 'hidden'}"><i class="fas fa-oxiexport"></i></div>
             </div>
+            <div class="owner-cell${this._ownerVisible ? '' : ' hidden'}" data-owner-id="${escapeHtml(file.owner_id || '')}"></div>
             <div class="type-cell">${typeLabel}</div>
             <div class="size-cell">${fileSize}</div>
             <div class="date-cell">${formattedDate}</div>
@@ -1439,6 +1380,7 @@ const ui = {
             <div class="list-header">
                 <div class="list-header-checkbox"><input type="checkbox" id="select-all-checkbox" title="Select all"></div>
                 <div data-i18n="files.name">Name</div>
+                <div class="owner-cell${this._ownerVisible ? '' : ' hidden'}" data-i18n="files.owner">Owner</div>
                 <div data-i18n="files.type">Type</div>
                 <div data-i18n="files.size">Size</div>
                 <div data-i18n="files.modified">Modified</div>

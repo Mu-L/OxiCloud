@@ -103,6 +103,7 @@
  * @property {String} icon_special_class
  * @property {String} category
  * @property {String} size_formatted
+ * @property {string|null} owner_id UUID of the file/folder's actual owner
  */
 
 /**
@@ -253,3 +254,137 @@
  * @property {number|null} width
  * @property {number|null} height
  */
+
+// ------------------- grants
+
+/**
+ * @typedef {'read'|'create'|'share'|'comment'|'delete'|'update'} PermissionTypeEnum
+ */
+
+/**
+ * @typedef {'folder'|'file'} ResourceTypeEnum
+ */
+
+/**
+ * @typedef {Object} Resource
+ * @property {ResourceTypeEnum} type
+ * @property {String} id
+ */
+
+/**
+ * @typedef {'user'|'group'|'token'|'external'} SubjectTypeEnum
+ */
+
+/**
+ * @typedef {Object} Subject
+ * @property {SubjectTypeEnum} type
+ * @property {String} id
+ */
+
+/**
+ * @typedef {Object} Grant
+ * @property {string} id
+ * @property {number} granted_at
+ * @property {string} granted_by
+ * @property {Subject} subject
+ * @property {PermissionTypeEnum} permission
+ * @property {Resource} resource
+ */
+
+/**
+ * Roles: `viewer`, `commenter`, `editor`, `manager`, `admin`
+ */
+
+/**
+ * One item returned by `GET /api/grants/incoming/resources`.
+ * Exactly one of `file` / `folder` is populated (indicated by `resource_type`).
+ * @typedef {Object} SharedWithMeItem
+ * @property {ResourceTypeEnum}        resource_type
+ * @property {PermissionTypeEnum[]}    permissions   - All permissions the caller holds on this resource.
+ * @property {string}                  granted_at    - ISO-8601 timestamp of the earliest grant.
+ * @property {string}                  granted_by    - UUID of the user who created the grant.
+ * @property {FileItem|undefined}      [file]        - Populated when resource_type === 'file'.
+ * @property {FolderItem|undefined}    [folder]      - Populated when resource_type === 'folder'.
+ */
+
+/**
+ * Response for `GET /api/grants/incoming/resources`.
+ * @typedef {Object} SharedWithMeResponse
+ * @property {SharedWithMeItem[]}  items
+ * @property {string|undefined}    [next_cursor]  - Absent when the last page is reached.
+ */
+
+/**
+ * @typedef {Object} ContactEmail
+ * @property {string}  email
+ * @property {string}  type        - e.g. "work", "home"
+ * @property {boolean} is_primary
+ */
+
+/**
+ * Mirrors the backend `ContactDto`.
+ * `id` equals the OxiCloud user UUID for contacts from the system address book.
+ * @typedef {Object} ContactItem
+ * @property {string}          id
+ * @property {string}          address_book_id
+ * @property {string}          uid             - vCard UID
+ * @property {string|null}     [full_name]
+ * @property {string|null}     [first_name]
+ * @property {string|null}     [last_name]
+ * @property {string|null}     [nickname]
+ * @property {ContactEmail[]}  email
+ * @property {string|null}     [organization]
+ * @property {string|null}     [title]
+ * @property {string|null}     [photo_url]
+ * @property {string}          created_at      - ISO-8601
+ * @property {string}          updated_at      - ISO-8601
+ * @property {string}          etag
+ */
+
+/**
+ * Mirrors the backend `AddressBookResponse`.
+ * @typedef {Object} AddressBookItem
+ * @property {string}       id
+ * @property {string}       name
+ * @property {string}       owner_id
+ * @property {string|null}  [description]
+ * @property {string|null}  [color]
+ * @property {boolean}      is_public
+ * @property {boolean}      is_readonly
+ * @property {boolean}      is_system
+ * @property {string}       created_at   - ISO-8601
+ * @property {string}       updated_at   - ISO-8601
+ */
+
+// ------------------- share modal
+
+/**
+ * Share roles (DTO-layer sugar for the ReBAC permission sets).
+ * @typedef {'viewer'|'editor'|'admin'} ShareRoleEnum
+ */
+
+/**
+ * One collaborator row in the share modal's People section.
+ * @typedef {Object} MemberEntry
+ * @property {Grant}         grant   - Representative grant (used for subject/resource info).
+ * @property {Grant[]}       _grants - All grants for this subject on the resource (may be > 1).
+ * @property {ShareRoleEnum} role    - Derived role label shown in the UI.
+ * @property {'keep'|'remove'|'change'|'new'} _op - Pending local operation.
+ */
+
+/**
+ * Existing public link with a pending local operation.
+ * @typedef {Object} LinkEntry
+ * @property {ShareItem}  share   - The existing share object.
+ * @property {'keep'|'remove'|'edit'} _op - Pending local operation.
+ * @property {DraftLink|null} _draft - Updated fields when _op === 'edit'.
+ */
+
+/**
+ * A public link staged for creation (not yet committed).
+ * @typedef {Object} DraftLink
+ * @property {string}      name
+ * @property {string|null} password
+ * @property {string|null} expires_at  - ISO-8601 date string or null.
+ */
+

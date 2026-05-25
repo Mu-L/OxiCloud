@@ -54,6 +54,9 @@ db-down:
 front-dev:
     PROFILE=dev cargo run
 
+# front: check all (linter, format, type, ...)
+front-check: front-fmt front-lint front-type front-rules
+
 front-fmt:
     biome format static/
 

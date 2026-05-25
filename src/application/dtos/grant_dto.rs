@@ -5,9 +5,11 @@
 //! storage-agnostic and DTOs can evolve with the HTTP contract.
 
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
+use crate::application::dtos::file_dto::FileDto;
+use crate::application::dtos::folder_dto::FolderDto;
 use crate::domain::services::authorization::{Grant, Permission, Resource, Subject};
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -131,9 +133,9 @@ impl From<Permission> for PermissionDto {
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Viewer,
-    Commenter,
+    //Commenter,
     Editor,
-    Manager,
+    //Manager,
     Admin,
 }
 
@@ -144,13 +146,16 @@ impl Role {
     pub fn expand(self) -> &'static [Permission] {
         match self {
             Role::Viewer => &[Permission::Read],
+            /* reserved for future
             Role::Commenter => &[Permission::Read, Permission::Comment],
+            */
             Role::Editor => &[
                 Permission::Read,
                 Permission::Comment,
                 Permission::Create,
                 Permission::Update,
             ],
+            /* reserved for future
             Role::Manager => &[
                 Permission::Read,
                 Permission::Comment,
@@ -158,6 +163,7 @@ impl Role {
                 Permission::Update,
                 Permission::Share,
             ],
+            */
             Role::Admin => &[
                 Permission::Read,
                 Permission::Comment,
@@ -219,4 +225,53 @@ impl From<Grant> for GrantDto {
             granted_at: g.granted_at,
         }
     }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Shared-with-me DTOs  (GET /api/grants/incoming/resources)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Query parameters for `GET /api/grants/incoming/resources`.
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct SharedWithMeQuery {
+    /// Maximum number of items to return (1–200, default 50).
+    #[serde(default = "shared_with_me_default_limit")]
+    pub limit: u32,
+    /// Comma-separated resource types to include, e.g. `file,folder`.
+    /// Omit to return all known types.
+    pub resource_types: Option<String>,
+    /// Opaque cursor returned by a previous call. Omit to start from the
+    /// most-recently-granted item.
+    pub cursor: Option<String>,
+}
+
+fn shared_with_me_default_limit() -> u32 {
+    50
+}
+
+/// One item in the shared-with-me list. Exactly one of `file` / `folder` is
+/// populated, indicated by `resource_type`. Additional optional fields for
+/// future resource types (playlist, addressbook, …) will be added here.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SharedWithMeItemDto {
+    pub resource_type: ResourceTypeDto,
+    /// All permissions the caller holds on this resource (aggregated).
+    pub permissions: Vec<PermissionDto>,
+    /// Earliest grant date for this resource.
+    pub granted_at: chrono::DateTime<chrono::Utc>,
+    /// UUID of the user who created the (earliest) grant.
+    pub granted_by: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<FileDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<FolderDto>,
+}
+
+/// Response for `GET /api/grants/incoming/resources`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SharedWithMeDto {
+    pub items: Vec<SharedWithMeItemDto>,
+    /// Opaque cursor for the next page. Absent when the last page is reached.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
