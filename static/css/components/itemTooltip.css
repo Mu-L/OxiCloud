@@ -63,7 +63,7 @@
 }
 
 .path-tooltip__label::after {
-    content: ':';
+    content: ":";
 }
 
 /* Value column */
