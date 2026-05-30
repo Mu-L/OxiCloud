@@ -126,7 +126,12 @@
         "about_description": "Plataforma de armazenamento em nuvem construída com Rust e Arquitetura Limpa. Rápida, segura e privada.",
         "admin_panel": "Painel de administração",
         "profile": "Meu perfil",
-        "role_user": "Usuário"
+        "role_user": "Usuário",
+        "theme": {
+            "light": "Claro",
+            "dark": "Escuro",
+            "auto": "Como o sistema"
+        }
     },
     "share": {
         "dialogTitle": "Link de compartilhamento",
@@ -341,10 +346,29 @@
         "empty_state": "A lixeira está vazia",
         "original_location": "Local original",
         "deleted_date": "Data de exclusão",
+        "remaining": "Restante",
         "actions": "Ações",
         "restore": "Restaurar",
         "delete_permanently": "Excluir permanentemente",
-        "empty_confirm": "Tem certeza de que deseja esvaziar a lixeira? Todos os itens serão excluídos permanentemente."
+        "empty_confirm": "Tem certeza de que deseja esvaziar a lixeira? Todos os itens serão excluídos permanentemente.",
+        "groupby": {
+            "remaining_days": "Dias restantes",
+            "trashed_time": "Data de exclusão"
+        }
+    },
+    "daysRemaining": {
+        "expired": "Expirado",
+        "today": "Hoje",
+        "tomorrow": "Amanhã",
+        "inDays": "{{count}} dias"
+    },
+    "expiryChip": {
+        "never": "Nunca expira",
+        "expired": "Expirado",
+        "today": "Expira hoje",
+        "tomorrow": "Expira amanhã",
+        "inDays": "Expira em {{count}} dias",
+        "onDate": "Expira em {{date}}"
     },
     "auth": {
         "login_title": "Entrar",

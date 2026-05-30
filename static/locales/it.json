@@ -126,7 +126,12 @@
         "about_description": "Piattaforma di archiviazione cloud realizzata con Rust & Architettura Pulita. Veloce, sicura e privata.",
         "admin_panel": "Pannello di amministrazione",
         "profile": "Il mio profilo",
-        "role_user": "Utente"
+        "role_user": "Utente",
+        "theme": {
+            "light": "Chiaro",
+            "dark": "Scuro",
+            "auto": "Come il sistema"
+        }
     },
     "share": {
         "dialogTitle": "Link di condivisione",
@@ -341,10 +346,29 @@
         "empty_state": "Il cestino è vuoto",
         "original_location": "Posizione originale",
         "deleted_date": "Data di eliminazione",
+        "remaining": "Rimanente",
         "actions": "Azioni",
         "restore": "Ripristina",
         "delete_permanently": "Elimina definitivamente",
-        "empty_confirm": "Sei sicuro di voler svuotare il cestino? Questa operazione eliminerà definitivamente tutti gli elementi."
+        "empty_confirm": "Sei sicuro di voler svuotare il cestino? Questa operazione eliminerà definitivamente tutti gli elementi.",
+        "groupby": {
+            "remaining_days": "Giorni rimanenti",
+            "trashed_time": "Data di eliminazione"
+        }
+    },
+    "daysRemaining": {
+        "expired": "Scaduto",
+        "today": "Oggi",
+        "tomorrow": "Domani",
+        "inDays": "{{count}} giorni"
+    },
+    "expiryChip": {
+        "never": "Non scade mai",
+        "expired": "Scaduto",
+        "today": "Scade oggi",
+        "tomorrow": "Scade domani",
+        "inDays": "Scade tra {{count}} giorni",
+        "onDate": "Scade il {{date}}"
     },
     "auth": {
         "login_title": "Accedi",

@@ -126,7 +126,12 @@
         "about_description": "Rust और Clean Architecture से बना क्लाउड स्टोरेज प्लेटफ़ॉर्म। तेज़, सुरक्षित और निजी।",
         "admin_panel": "एडमिन पैनल",
         "profile": "मेरी प्रोफ़ाइल",
-        "role_user": "उपयोगकर्ता"
+        "role_user": "उपयोगकर्ता",
+        "theme": {
+            "light": "हल्का",
+            "dark": "गहरा",
+            "auto": "सिस्टम जैसा"
+        }
     },
     "share": {
         "dialogTitle": "शेयर लिंक",
@@ -341,10 +346,29 @@
         "empty_state": "रद्दी खाली है",
         "original_location": "मूल स्थान",
         "deleted_date": "हटाने की तिथि",
+        "remaining": "शेष",
         "actions": "कार्य",
         "restore": "पुनर्स्थापित करें",
         "delete_permanently": "स्थायी रूप से हटाएँ",
-        "empty_confirm": "क्या आप वाकई रद्दी खाली करना चाहते हैं? यह सभी आइटम स्थायी रूप से हटा देगा।"
+        "empty_confirm": "क्या आप वाकई रद्दी खाली करना चाहते हैं? यह सभी आइटम स्थायी रूप से हटा देगा।",
+        "groupby": {
+            "remaining_days": "शेष दिन",
+            "trashed_time": "हटाने का समय"
+        }
+    },
+    "daysRemaining": {
+        "expired": "समाप्त",
+        "today": "आज",
+        "tomorrow": "कल",
+        "inDays": "{{count}} दिन"
+    },
+    "expiryChip": {
+        "never": "कभी समाप्त नहीं होता",
+        "expired": "समाप्त",
+        "today": "आज समाप्त होता है",
+        "tomorrow": "कल समाप्त होता है",
+        "inDays": "{{count}} दिनों में समाप्त होता है",
+        "onDate": "{{date}} को समाप्त होता है"
     },
     "auth": {
         "login_title": "साइन इन",

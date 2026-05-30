@@ -126,7 +126,12 @@
         "about_description": "منصة تخزين سحابي مبنية بـ Rust و Clean Architecture. سريعة وآمنة وخاصة.",
         "admin_panel": "لوحة الإدارة",
         "profile": "ملفي الشخصي",
-        "role_user": "مستخدم"
+        "role_user": "مستخدم",
+        "theme": {
+            "light": "فاتح",
+            "dark": "داكن",
+            "auto": "مثل النظام"
+        }
     },
     "share": {
         "dialogTitle": "رابط المشاركة",
@@ -341,10 +346,29 @@
         "empty_state": "سلة المهملات فارغة",
         "original_location": "الموقع الأصلي",
         "deleted_date": "تاريخ الحذف",
+        "remaining": "المتبقي",
         "actions": "الإجراءات",
         "restore": "استعادة",
         "delete_permanently": "حذف نهائياً",
-        "empty_confirm": "هل أنت متأكد أنك تريد تفريغ سلة المهملات؟ سيتم حذف جميع العناصر نهائياً."
+        "empty_confirm": "هل أنت متأكد أنك تريد تفريغ سلة المهملات؟ سيتم حذف جميع العناصر نهائياً.",
+        "groupby": {
+            "remaining_days": "الأيام المتبقية",
+            "trashed_time": "وقت الحذف"
+        }
+    },
+    "daysRemaining": {
+        "expired": "منتهية الصلاحية",
+        "today": "اليوم",
+        "tomorrow": "غدًا",
+        "inDays": "{{count}} يوم"
+    },
+    "expiryChip": {
+        "never": "لا تنتهي الصلاحية",
+        "expired": "منتهية الصلاحية",
+        "today": "تنتهي الصلاحية اليوم",
+        "tomorrow": "تنتهي الصلاحية غدًا",
+        "inDays": "تنتهي الصلاحية خلال {{count}} يوم",
+        "onDate": "تنتهي الصلاحية في {{date}}"
     },
     "auth": {
         "login_title": "تسجيل الدخول",

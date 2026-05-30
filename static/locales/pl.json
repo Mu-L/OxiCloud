@@ -126,7 +126,12 @@
         "about_description": "Platforma pamięci masowej w chmurze zbudowana w oparciu o Rust & Clean Architecture. Szybka, bezpieczna i prywatna.",
         "admin_panel": "Panel administratora",
         "profile": "Mój profil",
-        "role_user": "Użytkownik"
+        "role_user": "Użytkownik",
+        "theme": {
+            "light": "Jasny",
+            "dark": "Ciemny",
+            "auto": "Jak system"
+        }
     },
     "share": {
         "dialogTitle": "Link udostępniania",
@@ -341,10 +346,29 @@
         "empty_state": "Kosz jest pusty",
         "original_location": "Pierwotna lokalizacja",
         "deleted_date": "Data usunięcia",
+        "remaining": "Pozostało",
         "actions": "Akcje",
         "restore": "Przywróć",
         "delete_permanently": "Usuń trwale",
-        "empty_confirm": "Czy na pewno chcesz opróżnić kosz? Wszystkie elementy zostaną trwale usunięte."
+        "empty_confirm": "Czy na pewno chcesz opróżnić kosz? Wszystkie elementy zostaną trwale usunięte.",
+        "groupby": {
+            "remaining_days": "Pozostałe dni",
+            "trashed_time": "Czas usunięcia"
+        }
+    },
+    "daysRemaining": {
+        "expired": "Wygasł",
+        "today": "Dziś",
+        "tomorrow": "Jutro",
+        "inDays": "{{count}} dni"
+    },
+    "expiryChip": {
+        "never": "Nigdy nie wygasa",
+        "expired": "Wygasł",
+        "today": "Wygasa dziś",
+        "tomorrow": "Wygasa jutro",
+        "inDays": "Wygasa za {{count}} dni",
+        "onDate": "Wygasa {{date}}"
     },
     "auth": {
         "login_title": "Zaloguj się",

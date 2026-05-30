@@ -126,7 +126,12 @@
         "about_description": "Cloudopslagplatform gebouwd met Rust & Clean Architecture. Snel, veilig en privé.",
         "admin_panel": "Beheerpaneel",
         "profile": "Mijn profiel",
-        "role_user": "Gebruiker"
+        "role_user": "Gebruiker",
+        "theme": {
+            "light": "Licht",
+            "dark": "Donker",
+            "auto": "Zoals systeem"
+        }
     },
     "share": {
         "dialogTitle": "Deellink",
@@ -341,10 +346,29 @@
         "empty_state": "Prullenbak is leeg",
         "original_location": "Oorspronkelijke locatie",
         "deleted_date": "Verwijderdatum",
+        "remaining": "Resterend",
         "actions": "Acties",
         "restore": "Herstellen",
         "delete_permanently": "Permanent verwijderen",
-        "empty_confirm": "Weet je zeker dat je de prullenbak wilt legen? Dit verwijdert alle items permanent."
+        "empty_confirm": "Weet je zeker dat je de prullenbak wilt legen? Dit verwijdert alle items permanent.",
+        "groupby": {
+            "remaining_days": "Resterende dagen",
+            "trashed_time": "Verwijderd op"
+        }
+    },
+    "daysRemaining": {
+        "expired": "Verlopen",
+        "today": "Vandaag",
+        "tomorrow": "Morgen",
+        "inDays": "{{count}} dagen"
+    },
+    "expiryChip": {
+        "never": "Verloopt nooit",
+        "expired": "Verlopen",
+        "today": "Verloopt vandaag",
+        "tomorrow": "Verloopt morgen",
+        "inDays": "Verloopt over {{count}} dagen",
+        "onDate": "Verloopt op {{date}}"
     },
     "auth": {
         "login_title": "Inloggen",

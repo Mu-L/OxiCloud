@@ -126,7 +126,12 @@
         "about_description": "Cloud-Speicherplattform mit Rust und Clean Architecture. Schnell, sicher und privat.",
         "admin_panel": "Admin-Panel",
         "profile": "Mein Profil",
-        "role_user": "Benutzer"
+        "role_user": "Benutzer",
+        "theme": {
+            "light": "Hell",
+            "dark": "Dunkel",
+            "auto": "Wie System"
+        }
     },
     "share": {
         "dialogTitle": "Link teilen",
@@ -341,10 +346,29 @@
         "empty_state": "Der Papierkorb ist leer",
         "original_location": "Ursprünglicher Speicherort",
         "deleted_date": "Löschdatum",
+        "remaining": "Verbleibend",
         "actions": "Aktionen",
         "restore": "Wiederherstellen",
         "delete_permanently": "Endgültig löschen",
-        "empty_confirm": "Sind Sie sicher, dass Sie den Papierkorb leeren möchten? Alle Elemente werden endgültig gelöscht."
+        "empty_confirm": "Sind Sie sicher, dass Sie den Papierkorb leeren möchten? Alle Elemente werden endgültig gelöscht.",
+        "groupby": {
+            "remaining_days": "Verbleibende Tage",
+            "trashed_time": "Löschzeit"
+        }
+    },
+    "daysRemaining": {
+        "expired": "Abgelaufen",
+        "today": "Heute",
+        "tomorrow": "Morgen",
+        "inDays": "{{count}} Tage"
+    },
+    "expiryChip": {
+        "never": "Läuft nie ab",
+        "expired": "Abgelaufen",
+        "today": "Läuft heute ab",
+        "tomorrow": "Läuft morgen ab",
+        "inDays": "Läuft in {{count}} Tagen ab",
+        "onDate": "Läuft am {{date}} ab"
     },
     "auth": {
         "login_title": "Anmelden",

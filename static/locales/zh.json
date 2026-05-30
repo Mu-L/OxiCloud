@@ -126,7 +126,12 @@
         "about_description": "基于 Rust 和整洁架构构建的云存储平台。快速、安全、私密。",
         "admin_panel": "管理面板",
         "profile": "我的资料",
-        "role_user": "用户"
+        "role_user": "用户",
+        "theme": {
+            "light": "浅色",
+            "dark": "深色",
+            "auto": "跟随系统"
+        }
     },
     "share": {
         "dialogTitle": "共享链接",
@@ -341,10 +346,29 @@
         "empty_state": "回收站为空",
         "original_location": "原始位置",
         "deleted_date": "删除日期",
+        "remaining": "剩余",
         "actions": "操作",
         "restore": "恢复",
         "delete_permanently": "永久删除",
-        "empty_confirm": "你确定要清空回收站吗？这将永久删除所有项目。"
+        "empty_confirm": "你确定要清空回收站吗？这将永久删除所有项目。",
+        "groupby": {
+            "remaining_days": "剩余天数",
+            "trashed_time": "删除时间"
+        }
+    },
+    "daysRemaining": {
+        "expired": "已过期",
+        "today": "今天",
+        "tomorrow": "明天",
+        "inDays": "{{count}} 天"
+    },
+    "expiryChip": {
+        "never": "永不过期",
+        "expired": "已过期",
+        "today": "今天到期",
+        "tomorrow": "明天到期",
+        "inDays": "{{count}} 天后到期",
+        "onDate": "于 {{date}} 到期"
     },
     "auth": {
         "login_title": "登录",

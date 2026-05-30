@@ -126,7 +126,12 @@
         "about_description": "پلتفرم ذخیره‌سازی ابری ساخته شده با Rust و معماری تمیز. سریع، امن و خصوصی.",
         "admin_panel": "پنل مدیریت",
         "profile": "نمایه من",
-        "role_user": "کاربر"
+        "role_user": "کاربر",
+        "theme": {
+            "light": "روشن",
+            "dark": "تاریک",
+            "auto": "مانند سیستم"
+        }
     },
     "share": {
         "dialogTitle": "پیوند هم‌رسانی",
@@ -341,10 +346,29 @@
         "empty_state": "سطل زباله خالی است",
         "original_location": "محل اصلی",
         "deleted_date": "تاریخ حذف",
+        "remaining": "باقی‌مانده",
         "actions": "عملیات",
         "restore": "بازیابی",
         "delete_permanently": "حذف دائمی",
-        "empty_confirm": "آیا مطمئن هستید که می‌خواهید سطل زباله را خالی کنید؟ این کار همهٔ موارد را به‌طور دائمی حذف خواهد کرد."
+        "empty_confirm": "آیا مطمئن هستید که می‌خواهید سطل زباله را خالی کنید؟ این کار همهٔ موارد را به‌طور دائمی حذف خواهد کرد.",
+        "groupby": {
+            "remaining_days": "روزهای باقی‌مانده",
+            "trashed_time": "زمان حذف"
+        }
+    },
+    "daysRemaining": {
+        "expired": "منقضی شده",
+        "today": "امروز",
+        "tomorrow": "فردا",
+        "inDays": "{{count}} روز"
+    },
+    "expiryChip": {
+        "never": "هرگز منقضی نمی‌شود",
+        "expired": "منقضی شده",
+        "today": "امروز منقضی می‌شود",
+        "tomorrow": "فردا منقضی می‌شود",
+        "inDays": "در {{count}} روز منقضی می‌شود",
+        "onDate": "در {{date}} منقضی می‌شود"
     },
     "auth": {
         "login_title": "ورود",

@@ -126,7 +126,12 @@
         "about_description": "RustとClean Architectureで構築されたクラウドストレージプラットフォーム。高速・安全・プライベート。",
         "admin_panel": "管理パネル",
         "profile": "マイプロフィール",
-        "role_user": "ユーザー"
+        "role_user": "ユーザー",
+        "theme": {
+            "light": "ライト",
+            "dark": "ダーク",
+            "auto": "システムに合わせる"
+        }
     },
     "share": {
         "dialogTitle": "共有リンク",
@@ -341,10 +346,29 @@
         "empty_state": "ゴミ箱は空です",
         "original_location": "元の場所",
         "deleted_date": "削除日",
+        "remaining": "残り",
         "actions": "操作",
         "restore": "復元",
         "delete_permanently": "完全に削除",
-        "empty_confirm": "ゴミ箱を空にしますか？すべてのアイテムが完全に削除されます。"
+        "empty_confirm": "ゴミ箱を空にしますか？すべてのアイテムが完全に削除されます。",
+        "groupby": {
+            "remaining_days": "残り日数",
+            "trashed_time": "削除日時"
+        }
+    },
+    "daysRemaining": {
+        "expired": "期限切れ",
+        "today": "今日",
+        "tomorrow": "明日",
+        "inDays": "{{count}}日"
+    },
+    "expiryChip": {
+        "never": "期限なし",
+        "expired": "期限切れ",
+        "today": "今日で期限切れ",
+        "tomorrow": "明日で期限切れ",
+        "inDays": "{{count}}日後に期限切れ",
+        "onDate": "{{date}}に期限切れ"
     },
     "auth": {
         "login_title": "サインイン",

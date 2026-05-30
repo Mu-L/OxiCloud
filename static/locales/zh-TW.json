@@ -126,7 +126,12 @@
         "about_description": "基於 Rust 和整潔架構構建的雲端儲存平臺。快速、安全、私密。",
         "admin_panel": "管理面板",
         "profile": "我的資料",
-        "role_user": "使用者"
+        "role_user": "使用者",
+        "theme": {
+            "light": "淺色",
+            "dark": "深色",
+            "auto": "跟隨系統"
+        }
     },
     "share": {
         "dialogTitle": "共享連結",
@@ -341,10 +346,29 @@
         "empty_state": "回收站為空",
         "original_location": "原始位置",
         "deleted_date": "刪除日期",
+        "remaining": "剩餘",
         "actions": "操作",
         "restore": "恢復",
         "delete_permanently": "永久刪除",
-        "empty_confirm": "你確定要清空回收站嗎？這將永久刪除所有專案。"
+        "empty_confirm": "你確定要清空回收站嗎？這將永久刪除所有專案。",
+        "groupby": {
+            "remaining_days": "剩餘天數",
+            "trashed_time": "刪除時間"
+        }
+    },
+    "daysRemaining": {
+        "expired": "已過期",
+        "today": "今天",
+        "tomorrow": "明天",
+        "inDays": "{{count}} 天"
+    },
+    "expiryChip": {
+        "never": "永不過期",
+        "expired": "已過期",
+        "today": "今天到期",
+        "tomorrow": "明天到期",
+        "inDays": "{{count}} 天後到期",
+        "onDate": "於 {{date}} 到期"
     },
     "auth": {
         "login_title": "登入",

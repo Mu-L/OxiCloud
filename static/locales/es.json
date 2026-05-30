@@ -245,7 +245,12 @@
         "about_description": "Plataforma de almacenamiento en la nube creada con Rust y Arquitectura Limpia. Rápida, segura y privada.",
         "admin_panel": "Panel de administración",
         "profile": "Mi perfil",
-        "role_user": "Usuario"
+        "role_user": "Usuario",
+        "theme": {
+            "light": "Claro",
+            "dark": "Oscuro",
+            "auto": "Como el sistema"
+        }
     },
     "files": {
         "name": "Nombre",
@@ -341,10 +346,29 @@
         "empty_state": "La papelera está vacía",
         "original_location": "Ubicación original",
         "deleted_date": "Fecha de eliminación",
+        "remaining": "Restante",
         "actions": "Acciones",
         "restore": "Restaurar",
         "delete_permanently": "Eliminar permanentemente",
-        "empty_confirm": "¿Estás seguro de que quieres vaciar la papelera? Esta acción eliminará permanentemente todos los elementos."
+        "empty_confirm": "¿Estás seguro de que quieres vaciar la papelera? Esta acción eliminará permanentemente todos los elementos.",
+        "groupby": {
+            "remaining_days": "Días restantes",
+            "trashed_time": "Fecha de eliminación"
+        }
+    },
+    "daysRemaining": {
+        "expired": "Caducado",
+        "today": "Hoy",
+        "tomorrow": "Mañana",
+        "inDays": "{{count}} días"
+    },
+    "expiryChip": {
+        "never": "Nunca caduca",
+        "expired": "Caducado",
+        "today": "Caduca hoy",
+        "tomorrow": "Caduca mañana",
+        "inDays": "Caduca en {{count}} días",
+        "onDate": "Caduca el {{date}}"
     },
     "auth": {
         "login_title": "Iniciar sesión",

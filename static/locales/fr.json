@@ -126,7 +126,12 @@
         "about_description": "Plateforme de stockage cloud construite avec Rust et Architecture Propre. Rapide, sécurisée et privée.",
         "admin_panel": "Panneau d'administration",
         "profile": "Mon profil",
-        "role_user": "Utilisateur"
+        "role_user": "Utilisateur",
+        "theme": {
+            "light": "Clair",
+            "dark": "Sombre",
+            "auto": "Comme le système"
+        }
     },
     "share": {
         "dialogTitle": "Lien de partage",
@@ -341,10 +346,29 @@
         "empty_state": "La corbeille est vide",
         "original_location": "Emplacement d'origine",
         "deleted_date": "Date de suppression",
+        "remaining": "Restant",
         "actions": "Actions",
         "restore": "Restaurer",
         "delete_permanently": "Supprimer définitivement",
-        "empty_confirm": "Êtes-vous sûr de vouloir vider la corbeille ? Tous les éléments seront définitivement supprimés."
+        "empty_confirm": "Êtes-vous sûr de vouloir vider la corbeille ? Tous les éléments seront définitivement supprimés.",
+        "groupby": {
+            "remaining_days": "Jours restants",
+            "trashed_time": "Date de suppression"
+        }
+    },
+    "daysRemaining": {
+        "expired": "Expiré",
+        "today": "Aujourd'hui",
+        "tomorrow": "Demain",
+        "inDays": "{{count}} jours"
+    },
+    "expiryChip": {
+        "never": "N'expire jamais",
+        "expired": "Expiré",
+        "today": "Expire aujourd'hui",
+        "tomorrow": "Expire demain",
+        "inDays": "Expire dans {{count}} jours",
+        "onDate": "Expire le {{date}}"
     },
     "auth": {
         "login_title": "Se connecter",
