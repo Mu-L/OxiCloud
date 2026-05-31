@@ -423,7 +423,11 @@ mod integration_tests {
     }
 
     fn rand_name(test: &str) -> String {
-        format!("rust-test-svc-{}-{}", test, &Uuid::new_v4().to_string()[..8])
+        format!(
+            "rust-test-svc-{}-{}",
+            test,
+            &Uuid::new_v4().to_string()[..8]
+        )
     }
 
     // ── 9. Virtual group cannot be deleted ─────────────────────────────────

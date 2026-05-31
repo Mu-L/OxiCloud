@@ -1401,30 +1401,29 @@ impl AuthorizationEngine for PgAclEngine {
             .filter_map(|rid| {
                 let (resource_type, first_shared_at, subj_map) = resource_map.remove(&rid)?;
                 let mut grants: Vec<OutgoingGrantEntry> = subj_map.into_values().collect();
-                let role_rank = |perms: &[Permission]| -> u8 {
-                    if perms.contains(&Permission::Delete) && perms.contains(&Permission::Share) {
-                        0 // admin → Can manage
-                    } else if perms.contains(&Permission::Create)
-                        || perms.contains(&Permission::Update)
-                    {
-                        1 // editor → Can edit
-                    } else {
-                        2 // viewer → Can view
+                // Per-resource subject ordering (matches the subject-sort
+                // branch's SQL CASE):
+                //   0 = group, 1 = user, 2 = token-with-password, 3 = token,
+                //   4 = external.
+                // Alphabetical tiebreak by display name. This intentionally
+                // ignores role/permission tier — the share dialog renders
+                // role as a separate pill; ordering by subject type is the
+                // UX contract.
+                let subject_rank = |e: &OutgoingGrantEntry| -> u8 {
+                    match e.subject_type.as_str() {
+                        "group" => 0,
+                        "user" => 1,
+                        "token" if e.has_password => 2,
+                        "token" => 3,
+                        _ => 4,
                     }
                 };
                 grants.sort_by(|a, b| {
-                    role_rank(&a.permissions)
-                        .cmp(&role_rank(&b.permissions))
-                        .then_with(|| {
-                            // users before tokens
-                            let type_rank = |st: &str| if st == "user" { 0u8 } else { 1 };
-                            type_rank(&a.subject_type).cmp(&type_rank(&b.subject_type))
-                        })
-                        .then_with(|| {
-                            a.subject_display
-                                .to_lowercase()
-                                .cmp(&b.subject_display.to_lowercase())
-                        })
+                    subject_rank(a).cmp(&subject_rank(b)).then_with(|| {
+                        a.subject_display
+                            .to_lowercase()
+                            .cmp(&b.subject_display.to_lowercase())
+                    })
                 });
                 Some(OutgoingResourceSummary {
                     resource_type,

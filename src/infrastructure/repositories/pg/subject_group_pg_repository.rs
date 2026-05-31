@@ -786,9 +786,7 @@ mod integration_tests {
         let mut ids = Vec::with_capacity(8);
         for i in 0..8 {
             let g = repo
-                .create(
-                    &SubjectGroup::new(&rand_name(&format!("cyc8-{i}")), None).unwrap(),
-                )
+                .create(&SubjectGroup::new(&rand_name(&format!("cyc8-{i}")), None).unwrap())
                 .await
                 .unwrap();
             ids.push(g.id);
@@ -843,9 +841,7 @@ mod integration_tests {
         let mut ids = Vec::with_capacity(len);
         for i in 0..len {
             let g = repo
-                .create(
-                    &SubjectGroup::new(&rand_name(&format!("depth-{i}")), None).unwrap(),
-                )
+                .create(&SubjectGroup::new(&rand_name(&format!("depth-{i}")), None).unwrap())
                 .await
                 .unwrap();
             ids.push(g.id);
@@ -855,9 +851,7 @@ mod integration_tests {
         for i in 0..(len - 1) {
             repo.add_member(ids[i], GroupMember::Group(ids[i + 1]), admin)
                 .await
-                .unwrap_or_else(|e| {
-                    panic!("edge {i} should fit in the depth budget: {:?}", e)
-                });
+                .unwrap_or_else(|e| panic!("edge {i} should fit in the depth budget: {:?}", e));
         }
 
         // Lift the whole chain under a new outer group → subtree depth 9.
