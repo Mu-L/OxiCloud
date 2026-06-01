@@ -697,10 +697,23 @@ pub struct MagicLinkConfig {
     /// - `POST /api/auth/magic-link/send` returns the uniform stub
     ///   response without actually issuing a token.
     ///
-    /// This is the coarser "turn it all off" switch; the future
-    /// `OXICLOUD_EXTERNAL_EMAIL_DOMAINS` allowlist is the fine-grained
-    /// version.
+    /// This is the coarser "turn it all off" switch; the fine-grained
+    /// version is [`allowed_email_domains`] below.
     pub allow_external_users: bool,
+    /// Allowlist of email domains accepted when minting a new external
+    /// user. Empty = no restriction (any domain is allowed, subject to
+    /// [`allow_external_users`]). Entries are lowercased and trimmed
+    /// at load time; matching is case-insensitive exact-match on the
+    /// post-`@` part of the address.
+    ///
+    /// Example: `["partner-a.com", "partner-b.io"]` — only addresses
+    /// `<anything>@partner-a.com` or `<anything>@partner-b.io` can be
+    /// invited; everything else is rejected with 403.
+    ///
+    /// Wildcards / subdomain semantics are intentionally out of scope:
+    /// `partner.com` does NOT match `eng.partner.com`. List every
+    /// subdomain explicitly.
+    pub allowed_email_domains: Vec<String>,
 }
 
 impl Default for MagicLinkConfig {
@@ -708,7 +721,34 @@ impl Default for MagicLinkConfig {
         Self {
             ttl_hours: 24,
             allow_external_users: true,
+            allowed_email_domains: Vec::new(),
         }
+    }
+}
+
+impl MagicLinkConfig {
+    /// Whether an email address is allowed under the current allowlist.
+    ///
+    /// Returns `true` when the allowlist is empty (no restriction).
+    /// Otherwise the domain part of `email` (lowercased) must match one
+    /// of the allowlist entries exactly. Malformed addresses without an
+    /// `@` always return `false` — fail closed so a typo in the
+    /// upstream validator can't slip past this check.
+    ///
+    /// Caller is expected to have already passed `email` through the
+    /// email regex / normaliser; this method does not re-validate. It
+    /// only performs the domain comparison.
+    pub fn is_email_allowed(&self, email: &str) -> bool {
+        if self.allowed_email_domains.is_empty() {
+            return true;
+        }
+        let Some((_, domain)) = email.rsplit_once('@') else {
+            return false;
+        };
+        let domain_lc = domain.to_ascii_lowercase();
+        self.allowed_email_domains
+            .iter()
+            .any(|d| d.as_str() == domain_lc.as_str())
     }
 }
 
@@ -1303,6 +1343,13 @@ impl AppConfig {
         if let Ok(v) = env::var("OXICLOUD_ALLOW_EXTERNAL_USERS") {
             config.magic_link.allow_external_users = v.parse::<bool>().unwrap_or(true);
         }
+        if let Ok(v) = env::var("OXICLOUD_EXTERNAL_EMAIL_DOMAINS") {
+            config.magic_link.allowed_email_domains = v
+                .split(',')
+                .map(|d| d.trim().to_ascii_lowercase())
+                .filter(|d| !d.is_empty())
+                .collect();
+        }
 
         config
     }
@@ -1346,4 +1393,58 @@ impl AppConfig {
 /// Gets a default global configuration
 pub fn default_config() -> AppConfig {
     AppConfig::default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_allowlist_accepts_any_email() {
+        let cfg = MagicLinkConfig::default();
+        assert!(cfg.allowed_email_domains.is_empty());
+        assert!(cfg.is_email_allowed("alice@example.com"));
+        assert!(cfg.is_email_allowed("bob@whatever.io"));
+    }
+
+    #[test]
+    fn allowlist_matches_case_insensitively() {
+        let cfg = MagicLinkConfig {
+            ttl_hours: 24,
+            allow_external_users: true,
+            allowed_email_domains: vec!["partner-a.com".to_string(), "partner-b.io".to_string()],
+        };
+        assert!(cfg.is_email_allowed("alice@partner-a.com"));
+        // Uppercase domain in the email — must still match.
+        assert!(cfg.is_email_allowed("alice@PARTNER-A.COM"));
+        assert!(cfg.is_email_allowed("eve@partner-b.io"));
+        // Unlisted domain — rejected.
+        assert!(!cfg.is_email_allowed("mallory@other.com"));
+    }
+
+    #[test]
+    fn allowlist_does_not_match_subdomains_implicitly() {
+        let cfg = MagicLinkConfig {
+            ttl_hours: 24,
+            allow_external_users: true,
+            allowed_email_domains: vec!["partner.com".to_string()],
+        };
+        assert!(cfg.is_email_allowed("alice@partner.com"));
+        // Subdomain must be listed explicitly — exact match only.
+        assert!(!cfg.is_email_allowed("alice@eng.partner.com"));
+        // Suffix match is not enough — different domain.
+        assert!(!cfg.is_email_allowed("alice@evilpartner.com"));
+    }
+
+    #[test]
+    fn malformed_email_fails_closed() {
+        let cfg = MagicLinkConfig {
+            ttl_hours: 24,
+            allow_external_users: true,
+            allowed_email_domains: vec!["partner.com".to_string()],
+        };
+        // No `@` — rejected even though allowlist is set.
+        assert!(!cfg.is_email_allowed("not-an-email"));
+        assert!(!cfg.is_email_allowed(""));
+    }
 }
