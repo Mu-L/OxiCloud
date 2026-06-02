@@ -411,7 +411,14 @@
         "admin_create_error": "관리자 계정 생성 오류",
         "or": "또는",
         "sso_login": "SSO로 로그인",
-        "sso_login_provider": "{{provider}}(으)로 로그인"
+        "sso_login_provider": "{{provider}}(으)로 로그인",
+        "magicLinkHint": "비밀번호가 없으신가요? 이메일을 입력하시면 일회용 로그인 링크를 보내드립니다.",
+        "magicLinkEmailLabel": "이메일 주소",
+        "magicLinkEmailPlaceholder": "you@example.com",
+        "magicLinkSubmit": "로그인 링크 보내기",
+        "magicLinkSent": "해당 이메일에 대한 계정이 있는 경우 로그인 링크가 전송되었습니다. 받은편지함을 확인하세요.",
+        "magicLinkUnavailable": "이 서버에서는 이메일 로그인을 사용할 수 없습니다.",
+        "magicLinkNetworkError": "서버에 연결할 수 없습니다: {{message}}"
     },
     "storage": {
         "title": "저장소",

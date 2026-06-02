@@ -411,7 +411,14 @@
         "admin_create_error": "建立管理員賬號時出錯",
         "or": "或",
         "sso_login": "使用 SSO 登入",
-        "sso_login_provider": "使用 {{provider}} 登入"
+        "sso_login_provider": "使用 {{provider}} 登入",
+        "magicLinkHint": "沒有密碼？輸入您的電子郵件，我們將向您發送一次性登入連結。",
+        "magicLinkEmailLabel": "電子郵件地址",
+        "magicLinkEmailPlaceholder": "you@example.com",
+        "magicLinkSubmit": "傳送登入連結",
+        "magicLinkSent": "若該電子郵件存在帳號，登入連結已發送。請查收您的收件匣。",
+        "magicLinkUnavailable": "此伺服器不支援電子郵件登入。",
+        "magicLinkNetworkError": "無法連線到伺服器：{{message}}"
     },
     "storage": {
         "title": "儲存空間",

@@ -411,7 +411,14 @@
         "admin_create_error": "Errore durante la creazione dell'account amministratore",
         "or": "o",
         "sso_login": "Accedi con SSO",
-        "sso_login_provider": "Accedi con {{provider}}"
+        "sso_login_provider": "Accedi con {{provider}}",
+        "magicLinkHint": "Niente password? Inserisci la tua email e ti invieremo un link di accesso monouso.",
+        "magicLinkEmailLabel": "Indirizzo email",
+        "magicLinkEmailPlaceholder": "tu@esempio.com",
+        "magicLinkSubmit": "Invia link di accesso",
+        "magicLinkSent": "Se esiste un account per questa email, è stato inviato un link di accesso. Controlla la tua casella di posta.",
+        "magicLinkUnavailable": "L'accesso tramite email non è disponibile su questo server.",
+        "magicLinkNetworkError": "Impossibile raggiungere il server: {{message}}"
     },
     "storage": {
         "title": "Archiviazione",

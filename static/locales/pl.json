@@ -411,7 +411,14 @@
         "admin_create_error": "Błąd podczas tworzenia konta administratora",
         "or": "lub",
         "sso_login": "Zaloguj się przez SSO",
-        "sso_login_provider": "Zaloguj się przez {{provider}}"
+        "sso_login_provider": "Zaloguj się przez {{provider}}",
+        "magicLinkHint": "Brak hasła? Wpisz swój adres e-mail, a wyślemy Ci jednorazowy link do logowania.",
+        "magicLinkEmailLabel": "Adres e-mail",
+        "magicLinkEmailPlaceholder": "ty@przyklad.pl",
+        "magicLinkSubmit": "Wyślij link do logowania",
+        "magicLinkSent": "Jeśli konto dla tego adresu istnieje, link do logowania został wysłany. Sprawdź swoją skrzynkę odbiorczą.",
+        "magicLinkUnavailable": "Logowanie e-mailem nie jest dostępne na tym serwerze.",
+        "magicLinkNetworkError": "Nie udało się połączyć z serwerem: {{message}}"
     },
     "storage": {
         "title": "Pamięć masowa",

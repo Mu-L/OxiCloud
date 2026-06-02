@@ -411,7 +411,14 @@
         "admin_create_error": "خطأ في إنشاء حساب المسؤول",
         "or": "أو",
         "sso_login": "تسجيل الدخول عبر SSO",
-        "sso_login_provider": "تسجيل الدخول عبر {{provider}}"
+        "sso_login_provider": "تسجيل الدخول عبر {{provider}}",
+        "magicLinkHint": "ليس لديك كلمة مرور؟ أدخل بريدك الإلكتروني وسنرسل لك رابط تسجيل دخول لمرة واحدة.",
+        "magicLinkEmailLabel": "عنوان البريد الإلكتروني",
+        "magicLinkEmailPlaceholder": "you@example.com",
+        "magicLinkSubmit": "إرسال رابط تسجيل الدخول",
+        "magicLinkSent": "إذا كان هناك حساب لهذا البريد الإلكتروني، فسيتم إرسال رابط تسجيل الدخول. تحقق من صندوق الوارد.",
+        "magicLinkUnavailable": "تسجيل الدخول عبر البريد الإلكتروني غير متاح على هذا الخادم.",
+        "magicLinkNetworkError": "تعذر الوصول إلى الخادم: {{message}}"
     },
     "storage": {
         "title": "التخزين",

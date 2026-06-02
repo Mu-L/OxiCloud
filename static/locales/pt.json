@@ -411,7 +411,14 @@
         "admin_create_error": "Erro ao criar conta de administrador",
         "or": "ou",
         "sso_login": "Entrar com SSO",
-        "sso_login_provider": "Entrar com {{provider}}"
+        "sso_login_provider": "Entrar com {{provider}}",
+        "magicLinkHint": "Sem senha? Digite seu e-mail e enviaremos um link de acesso único.",
+        "magicLinkEmailLabel": "Endereço de e-mail",
+        "magicLinkEmailPlaceholder": "voce@exemplo.com",
+        "magicLinkSubmit": "Enviar link de acesso",
+        "magicLinkSent": "Se existir uma conta para este e-mail, um link de acesso foi enviado. Verifique sua caixa de entrada.",
+        "magicLinkUnavailable": "O acesso por e-mail não está disponível neste servidor.",
+        "magicLinkNetworkError": "Não foi possível conectar ao servidor: {{message}}"
     },
     "storage": {
         "title": "Armazenamento",

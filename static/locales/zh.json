@@ -411,7 +411,14 @@
         "admin_create_error": "创建管理员账号时出错",
         "or": "或",
         "sso_login": "使用 SSO 登录",
-        "sso_login_provider": "使用 {{provider}} 登录"
+        "sso_login_provider": "使用 {{provider}} 登录",
+        "magicLinkHint": "没有密码？输入您的邮箱，我们将向您发送一次性登录链接。",
+        "magicLinkEmailLabel": "邮箱地址",
+        "magicLinkEmailPlaceholder": "you@example.com",
+        "magicLinkSubmit": "发送登录链接",
+        "magicLinkSent": "如果该邮箱存在账户，登录链接已发送。请查收您的收件箱。",
+        "magicLinkUnavailable": "此服务器不支持邮箱登录。",
+        "magicLinkNetworkError": "无法连接到服务器：{{message}}"
     },
     "storage": {
         "title": "存储空间",

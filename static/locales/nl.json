@@ -411,7 +411,14 @@
         "admin_create_error": "Fout bij het aanmaken van het administratoraccount",
         "or": "of",
         "sso_login": "Inloggen met SSO",
-        "sso_login_provider": "Inloggen met {{provider}}"
+        "sso_login_provider": "Inloggen met {{provider}}",
+        "magicLinkHint": "Geen wachtwoord? Voer uw e-mailadres in en we sturen u een eenmalige aanmeldlink.",
+        "magicLinkEmailLabel": "E-mailadres",
+        "magicLinkEmailPlaceholder": "jij@voorbeeld.nl",
+        "magicLinkSubmit": "Aanmeldlink versturen",
+        "magicLinkSent": "Als er een account bestaat voor dat e-mailadres, is een aanmeldlink verzonden. Controleer uw inbox.",
+        "magicLinkUnavailable": "Aanmelden per e-mail is niet beschikbaar op deze server.",
+        "magicLinkNetworkError": "Kan de server niet bereiken: {{message}}"
     },
     "storage": {
         "title": "Opslag",

@@ -411,7 +411,14 @@
         "admin_create_error": "管理者アカウントの作成エラー",
         "or": "または",
         "sso_login": "SSOでサインイン",
-        "sso_login_provider": "{{provider}}でサインイン"
+        "sso_login_provider": "{{provider}}でサインイン",
+        "magicLinkHint": "パスワードをお持ちでない方は、メールアドレスを入力するとワンタイムサインインリンクをお送りします。",
+        "magicLinkEmailLabel": "メールアドレス",
+        "magicLinkEmailPlaceholder": "you@example.com",
+        "magicLinkSubmit": "サインインリンクを送信",
+        "magicLinkSent": "そのメールアドレスのアカウントが存在する場合、サインインリンクが送信されました。受信トレイをご確認ください。",
+        "magicLinkUnavailable": "このサーバーではメールでのサインインは利用できません。",
+        "magicLinkNetworkError": "サーバーに接続できませんでした: {{message}}"
     },
     "storage": {
         "title": "ストレージ",

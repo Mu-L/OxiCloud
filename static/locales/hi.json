@@ -411,7 +411,14 @@
         "admin_create_error": "एडमिन खाता बनाने में त्रुटि",
         "or": "या",
         "sso_login": "SSO से साइन इन करें",
-        "sso_login_provider": "{{provider}} से साइन इन करें"
+        "sso_login_provider": "{{provider}} से साइन इन करें",
+        "magicLinkHint": "पासवर्ड नहीं है? अपना ईमेल दर्ज करें और हम आपको एक बार उपयोग होने वाला साइन-इन लिंक भेज देंगे।",
+        "magicLinkEmailLabel": "ईमेल पता",
+        "magicLinkEmailPlaceholder": "you@example.com",
+        "magicLinkSubmit": "साइन-इन लिंक भेजें",
+        "magicLinkSent": "यदि उस ईमेल के लिए कोई खाता मौजूद है, तो एक साइन-इन लिंक भेज दिया गया है। अपना इनबॉक्स देखें।",
+        "magicLinkUnavailable": "इस सर्वर पर ईमेल द्वारा साइन-इन उपलब्ध नहीं है।",
+        "magicLinkNetworkError": "सर्वर से कनेक्ट नहीं हो सका: {{message}}"
     },
     "storage": {
         "title": "स्टोरेज",

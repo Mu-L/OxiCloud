@@ -411,7 +411,14 @@
         "admin_create_error": "Fehler beim Erstellen des Administratorkontos",
         "or": "oder",
         "sso_login": "Mit SSO anmelden",
-        "sso_login_provider": "Mit {{provider}} anmelden"
+        "sso_login_provider": "Mit {{provider}} anmelden",
+        "magicLinkHint": "Kein Passwort? Geben Sie Ihre E-Mail-Adresse ein und wir senden Ihnen einen einmaligen Anmeldelink.",
+        "magicLinkEmailLabel": "E-Mail-Adresse",
+        "magicLinkEmailPlaceholder": "sie@beispiel.de",
+        "magicLinkSubmit": "Anmeldelink senden",
+        "magicLinkSent": "Wenn für diese E-Mail-Adresse ein Konto besteht, wurde ein Anmeldelink gesendet. Überprüfen Sie Ihren Posteingang.",
+        "magicLinkUnavailable": "Die Anmeldung per E-Mail ist auf diesem Server nicht verfügbar.",
+        "magicLinkNetworkError": "Server nicht erreichbar: {{message}}"
     },
     "storage": {
         "title": "Speicher",

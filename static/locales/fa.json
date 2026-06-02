@@ -411,7 +411,14 @@
         "admin_create_error": "خطا در ایجاد حساب کاربری مدیر",
         "or": "یا",
         "sso_login": "ورود با SSO",
-        "sso_login_provider": "ورود با {{provider}}"
+        "sso_login_provider": "ورود با {{provider}}",
+        "magicLinkHint": "رمز عبور ندارید؟ ایمیل خود را وارد کنید تا یک پیوند ورود یک‌بار‌مصرف برایتان ارسال شود.",
+        "magicLinkEmailLabel": "آدرس ایمیل",
+        "magicLinkEmailPlaceholder": "you@example.com",
+        "magicLinkSubmit": "ارسال پیوند ورود",
+        "magicLinkSent": "اگر برای این ایمیل حسابی وجود داشته باشد، پیوند ورود ارسال شده است. صندوق ورودی خود را بررسی کنید.",
+        "magicLinkUnavailable": "ورود با ایمیل در این سرور در دسترس نیست.",
+        "magicLinkNetworkError": "ارتباط با سرور برقرار نشد: {{message}}"
     },
     "storage": {
         "title": "فضای ذخیره‌سازی",

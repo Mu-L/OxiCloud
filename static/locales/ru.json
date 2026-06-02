@@ -411,7 +411,14 @@
         "admin_create_error": "Ошибка создания аккаунта администратора",
         "or": "или",
         "sso_login": "Войти через SSO",
-        "sso_login_provider": "Войти через {{provider}}"
+        "sso_login_provider": "Войти через {{provider}}",
+        "magicLinkHint": "Нет пароля? Введите ваш email, и мы пришлём вам одноразовую ссылку для входа.",
+        "magicLinkEmailLabel": "Адрес электронной почты",
+        "magicLinkEmailPlaceholder": "you@example.com",
+        "magicLinkSubmit": "Отправить ссылку для входа",
+        "magicLinkSent": "Если для этого адреса существует учётная запись, ссылка для входа отправлена. Проверьте входящие.",
+        "magicLinkUnavailable": "Вход по электронной почте недоступен на этом сервере.",
+        "magicLinkNetworkError": "Не удалось подключиться к серверу: {{message}}"
     },
     "storage": {
         "title": "Хранилище",
