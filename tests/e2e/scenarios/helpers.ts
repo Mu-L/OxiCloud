@@ -44,7 +44,7 @@ export async function loginAsAdmin(page: Page) {
   await goToLoginPage(page);
   await page.locator('#login-username').fill(TEST_ADMIN.username);
   await page.locator('#login-password').fill(TEST_ADMIN.password);
-  await page.locator('#login-panel button[type="submit"]').click();
+  await page.locator('#login-submit').click();
   await expect(page.locator('#sidebar')).toBeVisible({ timeout: 15_000 });
   // Wait for the JS app to initialise: avatar vignette present ⟹ click handler attached.
   await expect(page.locator('#user-avatar-btn .user-vignette')).toBeAttached({ timeout: 10_000 });

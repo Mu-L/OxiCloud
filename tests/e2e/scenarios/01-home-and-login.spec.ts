@@ -28,7 +28,7 @@ test('login with wrong password is rejected', async ({ page }) => {
 
   await page.locator('#login-username').fill(TEST_ADMIN.username);
   await page.locator('#login-password').fill('definitely-wrong-password');
-  await page.locator('#login-panel button[type="submit"]').click();
+  await page.locator('#login-submit').click();
 
   const loginError = page.locator('#login-error');
   await expect(loginError).toBeVisible();
