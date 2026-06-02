@@ -116,6 +116,7 @@ export default defineConfig({
             { text: "File and Blob lifecycle", link: "/architecture/file-and-blob-lifecycle" },
             { text: "ReBAC & Authorization", link: "/architecture/rebac-authorization" },
             { text: "User lifecycle", link: "/architecture/user-lifecycle" },
+            { text: "Authentication model", link: "/architecture/auth-model" },
             { text: "Magic-link auth", link: "/architecture/magic-link-auth" },
           ],
         },

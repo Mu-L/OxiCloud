@@ -2,7 +2,7 @@
 
 OxiCloud supports sharing resources with people who do not yet have an account on the instance, via per-email invitations and per-email sign-in links. Recipients are provisioned lazily as **external users** and authenticate exclusively through one-time URLs delivered by email, until they later set a password or link an OIDC identity.
 
-This page is the architectural overview. For configuration knobs, see [Environment Variables](/config/env). For how grants are evaluated, see [ReBAC Authorization](/architecture/rebac-authorization). For how shares relate to grants, see [Share Integration](/architecture/share-integration).
+This page is the architectural overview of the magic-link mechanism specifically. For the overall identity / login / registration model — what credential slots a user has, which login paths are available, anti-enumeration behaviour — see the canonical [Authentication model](/architecture/auth-model) page. For configuration knobs, see [Environment Variables](/config/env). For how grants are evaluated, see [ReBAC Authorization](/architecture/rebac-authorization).
 
 ## Why this exists
 
