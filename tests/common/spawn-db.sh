@@ -12,9 +12,38 @@ wait_for_port() {
   done
 }
 
+# Postgres opens its TCP socket during `initdb` (well before the server can
+# actually serve queries) and slams it back shut until startup completes —
+# that's the classic "server closed the connection unexpectedly" race when
+# a follow-up `psql` runs too quickly. The compose file has a `pg_isready`
+# healthcheck; we mirror it here so this script is the single source of
+# "the DB is ready" for callers (tests/api/run.sh, just test-integration).
+#
+# Tries the in-container pg_isready first (always available, no host deps),
+# then falls back to a SELECT-1 probe via psql.
+wait_for_postgres_ready() {
+  local timeout="${1:-60}"
+  local deadline=$(( $(date +%s) + timeout ))
+  until docker compose -f "$COMPOSE_FILE" exec -T postgres-test \
+          pg_isready -U oxicloud_test -d oxicloud_test -h 127.0.0.1 >/dev/null 2>&1; do
+    [[ $(date +%s) -ge $deadline ]] && echo "Timeout waiting for postgres readiness" >&2 && exit 1
+    sleep 0.5
+  done
+  # Belt-and-braces: pg_isready returns 0 as soon as the server accepts
+  # connections, but a query may still race the very first request. One
+  # successful SELECT confirms the round-trip works end-to-end.
+  PGPASSWORD=oxicloud_test psql -h 127.0.0.1 -p 5433 -U oxicloud_test -d oxicloud_test \
+    -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1 || {
+      echo "Postgres reported ready but a sample query failed" >&2
+      exit 1
+    }
+}
+
 echo "[setup] Starting test postgres..."
 docker compose -f "$COMPOSE_FILE" down -v 2>/dev/null || true
 docker compose -f "$COMPOSE_FILE" up -d
 echo "[setup] Waiting for postgres on port 5433..."
 wait_for_port 127.0.0.1 5433
+echo "[setup] Waiting for postgres to accept queries..."
+wait_for_postgres_ready
 echo "[setup] Postgres is ready."
