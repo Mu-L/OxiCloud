@@ -45,6 +45,24 @@ pub enum OidcCallbackResult {
 /// the same shape as a password login; the optional resource fields tell
 /// the handler whether to deep-link to the invited resource or fall back
 /// to the generic `/shared-with-me` landing.
+/// Outcome of a `register` call. The handler maps this to either an
+/// anti-enumerated uniform 200 (when SMTP is available — there's a
+/// "check your email" cover story for the user) or the classic
+/// 201/409 split (when SMTP is unavailable — without the cover story,
+/// uniform responses would just be misleading UX with no security
+/// benefit). Either way the service emits the same audit-log entries.
+#[derive(Debug, Clone)]
+pub enum RegisterResult {
+    /// Boxed to avoid the `large_enum_variant` clippy warning —
+    /// `UserDto` is ~250 bytes, the other variants are zero-sized,
+    /// so a heap-pointer indirection keeps the enum's stack size
+    /// small. `register` is called once per request; the
+    /// allocation cost is negligible.
+    Created(Box<UserDto>),
+    UsernameTaken,
+    EmailTaken,
+}
+
 #[derive(Debug, Clone)]
 pub struct MagicLinkRedemption {
     pub auth: AuthResponseDto,
@@ -254,7 +272,18 @@ impl AuthApplicationService {
         state.service.clone()
     }
 
-    pub async fn register(&self, dto: RegisterDto) -> Result<UserDto, DomainError> {
+    /// Public registration. Returns one of three outcomes:
+    /// - `Created(user)` — a user was actually created
+    /// - `UsernameTaken` / `EmailTaken` — collision; no DB write
+    ///
+    /// The handler decides the HTTP shape based on whether SMTP is
+    /// available (anti-enumeration uniform 200 vs classic 201/409).
+    /// The service emits the same audit-log entries either way — the
+    /// audit channel is the source of truth for the actual outcome.
+    ///
+    /// Real failures (DB error, password too short, etc.) surface as
+    /// `Err`.
+    pub async fn register(&self, dto: RegisterDto) -> Result<RegisterResult, DomainError> {
         // Username uniqueness (only when a username was supplied — None
         // is the "claim later" path, multiple NULLs are allowed by the
         // UNIQUE index per Postgres semantics).
@@ -265,11 +294,16 @@ impl AuthApplicationService {
                 .await
                 .is_ok()
         {
-            return Err(DomainError::new(
-                ErrorKind::AlreadyExists,
-                "User",
-                format!("User '{}' already exists", username),
-            ));
+            tracing::info!(
+                target: "audit",
+                event = "auth.register",
+                reason = "username_taken",
+                attempted_username = %username,
+                attempted_email = %dto.email,
+                "🛂 register collision: username '{}' already exists",
+                username,
+            );
+            return Ok(RegisterResult::UsernameTaken);
         }
 
         if self
@@ -278,11 +312,15 @@ impl AuthApplicationService {
             .await
             .is_ok()
         {
-            return Err(DomainError::new(
-                ErrorKind::AlreadyExists,
-                "User",
-                format!("Email '{}' is already registered", dto.email),
-            ));
+            tracing::info!(
+                target: "audit",
+                event = "auth.register",
+                reason = "email_taken",
+                attempted_email = %dto.email,
+                "🛂 register collision: email '{}' is already registered",
+                dto.email,
+            );
+            return Ok(RegisterResult::EmailTaken);
         }
 
         // SECURITY: Public registration ALWAYS creates regular users.
@@ -308,7 +346,6 @@ impl AuthApplicationService {
             }
             None => None,
         };
-        let was_passwordless = password_hash.is_none();
 
         let user = User::new(
             dto.email.clone(),
@@ -330,7 +367,6 @@ impl AuthApplicationService {
 
         // Save user
         let created_user = self.user_storage.create_user(user).await?;
-        let _ = was_passwordless; // handler dispatches the welcome mail on this path
 
         // Lifecycle: HomeFolderLifecycleHook handles personal-folder
         // creation (was inlined here pre-PR 3); audit log + future
@@ -339,8 +375,17 @@ impl AuthApplicationService {
             lc.dispatch_created(&created_user).await;
         }
 
-        tracing::info!("User registered: {}", created_user.id());
-        Ok(UserDto::from(created_user))
+        tracing::info!(
+            target: "audit",
+            event = "auth.register",
+            reason = "created",
+            user_id = %created_user.id(),
+            username = %created_user.display_for_audit(),
+            email = %created_user.email(),
+            is_external = false,
+            "🛂 user registered",
+        );
+        Ok(RegisterResult::Created(Box::new(UserDto::from(created_user))))
     }
 
     /// Create the first admin user during initial system setup.

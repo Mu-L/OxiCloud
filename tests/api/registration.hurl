@@ -25,8 +25,11 @@ alice_token: jsonpath "$.access_token"
 
 
 # ─────────────────────────────────────────────────────────────
-# Step 2 — Classic registration (with password) still works.
-#          Returns 201 + UserDto (existing behaviour, unchanged).
+# Step 2 — Classic registration (with password). PR 20 anti-
+#          enumeration mode (SMTP wired) returns a uniform 200
+#          regardless of success or collision. No UserDto in
+#          the response — the frontend logs the user in
+#          separately to get a session.
 # ─────────────────────────────────────────────────────────────
 POST {{base_url}}/api/auth/register
 Content-Type: application/json
@@ -36,13 +39,23 @@ Content-Type: application/json
   "password": "TestPassword1!"
 }
 
-HTTP 201
+HTTP 200
 [Asserts]
-jsonpath "$.username" == "charlie"
-jsonpath "$.email" == "charlie@example.com"
-jsonpath "$.is_external" == false
+jsonpath "$.message" contains "request received"
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 2b — Log in as charlie to confirm registration succeeded
+#           AND to capture her user_id for cleanup.
+# ─────────────────────────────────────────────────────────────
+POST {{base_url}}/api/auth/login
+Content-Type: application/json
+{ "username": "charlie", "password": "TestPassword1!" }
+
+HTTP 200
 [Captures]
-charlie_user_id: jsonpath "$.id"
+charlie_token: jsonpath "$.access_token"
+charlie_user_id: jsonpath "$.user.id"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -58,7 +71,7 @@ Content-Type: application/json
 
 HTTP 200
 [Asserts]
-jsonpath "$.message" contains "sign-in link"
+jsonpath "$.message" contains "request received"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -109,7 +122,7 @@ pr18_user_id: jsonpath "$.id"
 
 
 # ─────────────────────────────────────────────────────────────
-# Step 7 — Dave can request another magic-link (he has no
+# Step 7 — The new user can request another magic-link (no
 #          password configured → eligible). Anti-enumeration
 #          200 either way.
 # ─────────────────────────────────────────────────────────────
@@ -123,8 +136,66 @@ jsonpath "$.message" contains "sign-in link"
 
 
 # ─────────────────────────────────────────────────────────────
-# Cleanup — admin deletes charlie + dave so the DB-clean sweep
-#           at run.sh end sees no stragglers.
+# Step 8 — PR 20 anti-enumeration: register with charlie's
+#          email AGAIN (different password). Response is the
+#          same uniform 200 — attacker can't tell from the
+#          HTTP shape whether the email was already taken.
+# ─────────────────────────────────────────────────────────────
+POST {{base_url}}/api/auth/register
+Content-Type: application/json
+{
+  "username": "charlie-imposter",
+  "email": "charlie@example.com",
+  "password": "AttackerPassword99!"
+}
+
+HTTP 200
+[Asserts]
+jsonpath "$.message" contains "request received"
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 9 — Verify the collision was silently suppressed: the
+#          attacker's password does NOT work (the original
+#          row is intact, no rewrite happened).
+# ─────────────────────────────────────────────────────────────
+POST {{base_url}}/api/auth/login
+Content-Type: application/json
+{ "username": "charlie@example.com", "password": "AttackerPassword99!" }
+
+HTTP 403
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 10 — Charlie's original password still works — the
+#           collision didn't touch her account.
+# ─────────────────────────────────────────────────────────────
+POST {{base_url}}/api/auth/login
+Content-Type: application/json
+{ "username": "charlie", "password": "TestPassword1!" }
+
+HTTP 200
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 11 — Username collision (different email): same uniform
+#           200, no new user, audit `username_taken`.
+# ─────────────────────────────────────────────────────────────
+POST {{base_url}}/api/auth/register
+Content-Type: application/json
+{
+  "username": "charlie",
+  "email": "charlie-other@example.com",
+  "password": "AttackerPassword99!"
+}
+
+HTTP 200
+[Asserts]
+jsonpath "$.message" contains "request received"
+
+
+# ─────────────────────────────────────────────────────────────
+# Cleanup — admin deletes both test users.
 # ─────────────────────────────────────────────────────────────
 DELETE {{base_url}}/api/admin/users/{{charlie_user_id}}
 Authorization: Bearer {{alice_token}}

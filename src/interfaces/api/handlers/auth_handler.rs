@@ -13,7 +13,7 @@ use crate::application::dtos::user_dto::{
     AuthResponseDto, ChangePasswordDto, LoginDto, OidcCallbackQueryDto, OidcExchangeDto,
     OidcProviderInfoDto, RefreshTokenDto, RegisterDto, SetupAdminDto, UserDto,
 };
-use crate::application::services::auth_application_service::OidcCallbackResult;
+use crate::application::services::auth_application_service::{OidcCallbackResult, RegisterResult};
 use crate::common::di::AppState;
 use crate::interfaces::api::cookie_auth;
 use crate::interfaces::errors::AppError;
@@ -64,15 +64,39 @@ pub fn setup_route() -> Router<Arc<AppState>> {
 }
 
 /// Register a new user account.
+///
+/// **Response shape depends on SMTP availability**:
+///
+/// - **SMTP configured** (`magic_link_invite_service` is wired): the
+///   endpoint returns a **uniform 200** for both success and collision
+///   (anti-enumeration). The "Registration request received" message
+///   covers both branches honestly because successful email-only
+///   signups receive a welcome magic-link. Real outcome recorded in
+///   the `audit` channel as `auth.register` with `reason` one of
+///   `created`, `email_taken`, `username_taken`.
+/// - **SMTP not configured**: there is no welcome-mail cover story, so
+///   the classic `201 + UserDto` on success and `409` on collision
+///   apply. Anti-enumeration would just be misleading UX (telling the
+///   user to check an email that will never arrive). Email-only
+///   signup is **503** in this mode because the user would otherwise
+///   be stranded with an account they can't log into.
+///
+/// **Instance-wide policy stays visible** in both modes: when
+/// registration is disabled by the admin or password registration is
+/// disabled in OIDC-only mode, the endpoint returns **403** with a
+/// clear message. These are instance-wide settings, not per-user
+/// oracles — legitimate users deserve an actionable error.
 #[utoipa::path(
     post,
     path = "/api/auth/register",
     request_body = RegisterDto,
     responses(
-        (status = 201, description = "User registered successfully", body = UserDto),
-        (status = 400, description = "Validation error"),
-        (status = 403, description = "Registration disabled"),
-        (status = 409, description = "Username or email already taken"),
+        (status = 200, description = "Uniform registration response (SMTP configured, anti-enumeration mode)"),
+        (status = 201, description = "User registered successfully (SMTP not configured)", body = UserDto),
+        (status = 400, description = "Validation error (malformed request body)"),
+        (status = 403, description = "Registration disabled (admin setting or OIDC-only mode)"),
+        (status = 409, description = "Username or email already taken (SMTP not configured)"),
+        (status = 503, description = "Email-only signup requires SMTP to be configured"),
     ),
     tag = "auth"
 )]
@@ -80,15 +104,13 @@ pub async fn register(
     State(state): State<Arc<AppState>>,
     Json(dto): Json<RegisterDto>,
 ) -> Result<axum::response::Response, AppError> {
-    // Display the supplied identifier in operational logs without
-    // panicking on the None branch — the user may have registered
-    // email-only with no username yet.
-    let log_identifier = dto
-        .username
-        .as_deref()
-        .unwrap_or(dto.email.as_str())
-        .to_string();
-    tracing::info!("Registration attempt for: {}", log_identifier);
+    // Uniform 200 response used in anti-enumeration mode (SMTP wired).
+    let uniform_ok = || {
+        let payload = serde_json::json!({
+            "message": "Registration request received.",
+        });
+        (StatusCode::OK, Json(payload)).into_response()
+    };
 
     // Verify auth service exists
     let auth_service = match state.auth_service.as_ref() {
@@ -101,9 +123,9 @@ pub async fn register(
         }
     };
 
-    // Block password registration when OIDC-only mode is active. The
-    // email-only signup path is allowed because it doesn't store a
-    // password — the user later authenticates via magic-link.
+    // Block password registration when OIDC-only mode is active.
+    // Email-only signup still works in OIDC-only mode (no password
+    // stored; the user authenticates via magic-link).
     if dto.password.is_some()
         && auth_service
             .auth_application_service
@@ -116,7 +138,7 @@ pub async fn register(
         ));
     }
 
-    // Check if public registration has been disabled by the admin
+    // Admin disabled public registration globally — surface 403.
     if let Some(admin_svc) = state.admin_settings_service.as_ref()
         && !admin_svc.get_registration_enabled().await
     {
@@ -127,45 +149,81 @@ pub async fn register(
         ));
     }
 
+    // Email-only signup requires SMTP. Without it the welcome mail
+    // can't be dispatched and the user is stranded with no way to log
+    // in. 503 is the right response: instance-wide policy, no per-user
+    // oracle leaked.
+    let smtp_enabled = state.magic_link_invite_service.is_some();
+    if dto.password.is_none() && !smtp_enabled {
+        return Err(AppError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Email-only registration requires SMTP to be configured on this server.",
+            "SmtpRequired",
+        ));
+    }
+
     let was_passwordless = dto.password.is_none();
     let email = dto.email.clone();
 
-    // Registration logic (duplicate checks, hashing, user creation) is
-    // all inside the service layer.
-    let user = match auth_service.auth_application_service.register(dto).await {
-        Ok(u) => u,
+    let result = match auth_service.auth_application_service.register(dto).await {
+        Ok(r) => r,
         Err(err) => {
-            tracing::error!("Registration failed for {}: {}", log_identifier, err);
+            tracing::error!("Registration failed: {}", err);
             return Err(err.into());
         }
     };
-    tracing::info!("Registration successful for: {}", log_identifier);
 
-    // Email-only signup: dispatch a welcome magic-link so the user can
-    // land their first session without a password. Best-effort — SMTP
-    // failures don't fail the registration. Response shape is uniform
-    // (200 + anti-enumeration message) so the user is told to check
-    // their email regardless of whether SMTP was actually wired.
-    if was_passwordless {
-        if let Some(invite) = state.magic_link_invite_service.as_ref()
-            && let Err(e) = invite.send_login_link(&email).await
-        {
-            tracing::warn!(
-                target: "audit",
-                event = "auth.register_welcome_mail_failed",
-                user_id = %user.id,
-                email = %email,
-                error = %e,
-                "register: welcome magic-link send failed (user created)",
-            );
+    match result {
+        RegisterResult::Created(user) => {
+            // Email-only signup: dispatch the welcome magic-link.
+            // Best-effort — SMTP failures don't roll back the user.
+            if was_passwordless
+                && let Some(invite) = state.magic_link_invite_service.as_ref()
+                && let Err(e) = invite.send_login_link(&email).await
+            {
+                tracing::warn!(
+                    target: "audit",
+                    event = "auth.register_welcome_mail_failed",
+                    user_id = %user.id,
+                    email = %email,
+                    error = %e,
+                    "register: welcome magic-link send failed (user created)",
+                );
+            }
+            if smtp_enabled {
+                // Anti-enumeration mode: hide success-vs-collision behind
+                // the uniform "check your email" cover story.
+                Ok(uniform_ok())
+            } else {
+                // Classic mode: clear 201 + UserDto so the frontend can
+                // log the user in directly with the password they just
+                // submitted. Unbox the DTO for the JSON serialisation.
+                Ok((StatusCode::CREATED, Json(*user)).into_response())
+            }
         }
-        let payload = serde_json::json!({
-            "message": "Check your email for a sign-in link to complete registration.",
-        });
-        return Ok((StatusCode::OK, Json(payload)).into_response());
+        RegisterResult::UsernameTaken => {
+            if smtp_enabled {
+                Ok(uniform_ok())
+            } else {
+                Err(AppError::new(
+                    StatusCode::CONFLICT,
+                    "Username is already taken",
+                    "UsernameTaken",
+                ))
+            }
+        }
+        RegisterResult::EmailTaken => {
+            if smtp_enabled {
+                Ok(uniform_ok())
+            } else {
+                Err(AppError::new(
+                    StatusCode::CONFLICT,
+                    "Email is already registered",
+                    "EmailTaken",
+                ))
+            }
+        }
     }
-
-    Ok((StatusCode::CREATED, Json(user)).into_response())
 }
 
 /// Authenticate with username and password.
