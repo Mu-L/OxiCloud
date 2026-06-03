@@ -31,11 +31,15 @@ use askama::Template;
 use axum::{
     Router,
     extract::{Path, Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE, header::LOCATION},
+    http::{
+        HeaderMap, HeaderValue, StatusCode,
+        header::{CACHE_CONTROL, CONTENT_TYPE, HeaderName, LOCATION, PRAGMA, REFERRER_POLICY},
+    },
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use serde::Deserialize;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::application::services::auth_application_service::{
     MagicLinkRedeemResult, MagicLinkRedemption,
@@ -57,10 +61,68 @@ use crate::interfaces::middleware::rate_limit::extract_client_ip;
 /// recipient email is looked up server-side from the (expired/used)
 /// token row — no PII in the URL — and the rate limits attached to
 /// `POST /api/auth/magic-link/send` apply identically.
+///
+/// **Cache-Control: no-store** applies to every response from this
+/// router. Magic-link responses are auth-state-sensitive in three
+/// distinct ways and none of them should ever be persisted by a
+/// browser or intermediate proxy:
+///
+/// 1. The 410 / cross-browser-confirm pages reveal *that the token
+///    existed in some state*. Caching them across users of a shared
+///    machine is an information leak.
+/// 2. The successful-redemption 302 sets `oxicloud_access` /
+///    `oxicloud_refresh` / `oxicloud_csrf` cookies. A cached redirect
+///    response could replay those cookies in a wrong session context.
+/// 3. The resend-confirmation page can be re-submitted; serving a
+///    stale copy from cache could mask a fresh state on the server.
+///
+/// `Pragma: no-cache` is added alongside for HTTP/1.0-era proxies
+/// that ignore `Cache-Control` — harmless on modern stacks, defensive
+/// against the long tail.
+///
+/// **Referrer-Policy: no-referrer** overrides the global
+/// `strict-origin-when-cross-origin`. The magic-link URL itself
+/// contains the secret in the path; even "origin only" disclosure to
+/// a third party narrows the bearer's anonymity. Today the templates
+/// only carry a same-origin `<a href="/">` link, but defense-in-depth
+/// closes the door against any future external reference.
+///
+/// **X-Robots-Tag: noindex, nofollow** so search engines never index
+/// a leaked magic-link URL (e.g. one that ended up in a wiki page or
+/// pastebin). Crawlers that respect the directive skip both the
+/// indexing and the link-following side effect.
+///
+/// Global security headers (CSP / X-Frame-Options /
+/// X-Content-Type-Options / Permissions-Policy) come from the
+/// app-wide layer in `main.rs`; this router doesn't re-set them.
+///
+/// **Why no CSRF on the resend POST?** The endpoint takes no body
+/// and no auth — only the token in the URL path. A cross-site form
+/// submission would dispatch a magic-link mail to the *registered
+/// recipient* (which the attacker has no influence over), capped by
+/// the per-IP and per-target-email rate limits. There's no side
+/// effect the attacker can direct anywhere they benefit from, so a
+/// CSRF token would protect nothing.
 pub fn magic_link_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/magic/v1/{token}", get(redeem_magic_link))
         .route("/magic/v1/{token}/resend", post(resend_magic_link))
+        .layer(SetResponseHeaderLayer::overriding(
+            CACHE_CONTROL,
+            HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            PRAGMA,
+            HeaderValue::from_static("no-cache"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            HeaderName::from_static("x-robots-tag"),
+            HeaderValue::from_static("noindex, nofollow"),
+        ))
 }
 
 #[derive(Debug, Deserialize)]
