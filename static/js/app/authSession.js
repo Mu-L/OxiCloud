@@ -102,7 +102,10 @@ async function checkAuthentication() {
         // first load — `is_external` defaulting to falsy is correct
         // for the internal-user-by-default contract.
         app.isExternalUser = !!userData.is_external;
-        if (userData.username) {
+        // Gate on `id` — `username` is optional since PR 16 (users can
+        // sign in with no claimed handle, e.g. magic-link recipients).
+        // The UUID is the canonical signal that we have a populated DTO.
+        if (userData.id) {
             // We have cached user data — render immediately, refresh in background
             updateUserMenuData();
 
@@ -147,7 +150,12 @@ async function checkAuthentication() {
             console.log('No cached user data, fetching from server');
             try {
                 const freshData = await refreshUserData();
-                if (freshData?.username) {
+                // See the cached-branch comment above: gate on `id`, not
+                // `username`. A magic-link recipient who hasn't claimed
+                // a handle yet returns a valid DTO with `username`
+                // omitted, and treating that as "couldn't retrieve
+                // user data" produced an infinite login → home loop.
+                if (freshData?.id) {
                     updateUserMenuData();
                     updateStorageUsageDisplay(freshData);
                     await resolveHomeFolder();
