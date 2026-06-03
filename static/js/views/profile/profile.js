@@ -336,6 +336,8 @@ async function init() {
             document.getElementById('password-section').classList.add('hidden');
         }
 
+        _renderProfileEdit(user);
+
         loadAppPasswords();
 
         try {
@@ -597,6 +599,137 @@ async function revokeAppPassword(id, label) {
     }
 }
 
+/**
+ * Render the Edit Profile card based on the current user.
+ *
+ * For OIDC users: the entire form is hidden and a single alert tells
+ * them their profile is managed at the IdP. For local users: the form
+ * is populated from the current values, and the username input is
+ * disabled when a handle is already claimed (PR 24's claim-once
+ * policy).
+ *
+ * @param {import('../../core/types.js').User} user
+ */
+function _renderProfileEdit(user) {
+    const oidcNote = document.getElementById('profile-edit-oidc-note');
+    const form = document.getElementById('profile-edit-form');
+    if (!oidcNote || !form) return;
+
+    const isOidc = user.auth_provider && user.auth_provider !== 'local';
+    if (isOidc) {
+        oidcNote.classList.remove('hidden');
+        form.classList.add('hidden');
+        return;
+    }
+
+    oidcNote.classList.add('hidden');
+    form.classList.remove('hidden');
+
+    const usernameInput = /** @type {HTMLInputElement} */ (document.getElementById('profile-edit-username'));
+    const usernameHint = document.getElementById('profile-edit-username-hint');
+    const givenInput = /** @type {HTMLInputElement} */ (document.getElementById('profile-edit-given-name'));
+    const familyInput = /** @type {HTMLInputElement} */ (document.getElementById('profile-edit-family-name'));
+
+    if (user.username) {
+        usernameInput.value = user.username;
+        usernameInput.disabled = true;
+        if (usernameHint) {
+            usernameHint.textContent = i18n.t('profile.username_already_claimed');
+        }
+    } else {
+        usernameInput.value = '';
+        usernameInput.disabled = false;
+        if (usernameHint) {
+            usernameHint.textContent = i18n.t('profile.username_claim_hint');
+        }
+    }
+    givenInput.value = user.given_name || '';
+    familyInput.value = user.family_name || '';
+}
+
+/**
+ * Submit the profile edit form. Only sends fields the user can change:
+ *   - Username only if not already claimed (input wasn't disabled).
+ *   - Given/family names only when their value differs from the
+ *     current (avoids 400-rejecting an empty string the user never
+ *     touched).
+ *
+ * @param {Event} e
+ */
+async function submitProfile(e) {
+    e.preventDefault();
+
+    const statusEl = document.getElementById('profile-edit-status');
+    const btn = /** @type {HTMLButtonElement} */ (document.getElementById('profile-edit-submit'));
+    const usernameInput = /** @type {HTMLInputElement} */ (document.getElementById('profile-edit-username'));
+    const givenInput = /** @type {HTMLInputElement} */ (document.getElementById('profile-edit-given-name'));
+    const familyInput = /** @type {HTMLInputElement} */ (document.getElementById('profile-edit-family-name'));
+
+    /** @type {{ username?: string, given_name?: string, family_name?: string }} */
+    const body = {};
+    if (!usernameInput.disabled && usernameInput.value.trim()) {
+        body.username = usernameInput.value.trim();
+    }
+    const given = givenInput.value.trim();
+    if (given) body.given_name = given;
+    const family = familyInput.value.trim();
+    if (family) body.family_name = family;
+
+    if (Object.keys(body).length === 0) {
+        statusEl.innerHTML = `<div class="alert alert-info"><i class="fas fa-info-circle"></i> ${escapeHtml(i18n.t('profile.profile_no_changes'))}</div>`;
+        return false;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${escapeHtml(i18n.t('profile.updating'))}`;
+
+    try {
+        const resp = await fetch(`${API}/auth/me/profile`, {
+            method: 'PATCH',
+            headers: headers(),
+            credentials: 'same-origin',
+            body: JSON.stringify(body)
+        });
+
+        if (resp.ok) {
+            /** @type {import('../../core/types.js').User} */
+            const updated = await resp.json();
+            _renderProfileEdit(updated);
+            // Also refresh the read-only "Account Details" username field.
+            const detailUsername = document.getElementById('p-detail-username');
+            if (detailUsername) detailUsername.textContent = updated.username || '—';
+            const topUsername = document.getElementById('p-username');
+            if (topUsername && updated.username) topUsername.textContent = updated.username;
+            statusEl.innerHTML = `<div class="alert alert-success"><i class="fas fa-check-circle"></i> ${escapeHtml(i18n.t('profile.profile_saved'))}</div>`;
+        } else if (resp.status === 409) {
+            const err = await resp.json().catch(() => ({}));
+            // Distinguish "username taken" from "username immutable" using the
+            // human-readable message — both are 409. Server audit has the
+            // structured `reason` field; the JSON body just carries `message`.
+            const msg = (err.message || '').toLowerCase();
+            const key = msg.includes('already claimed') ? 'profile.username_immutable_error' : 'profile.username_taken_error';
+            statusEl.innerHTML = `<div class="alert alert-error"><i class="fas fa-exclamation-circle"></i> ${escapeHtml(i18n.t(key))}</div>`;
+        } else if (resp.status === 403) {
+            statusEl.innerHTML = `<div class="alert alert-error"><i class="fas fa-exclamation-circle"></i> ${escapeHtml(i18n.t('profile.edit_oidc_managed'))}</div>`;
+        } else {
+            const err = await resp.json().catch(() => ({}));
+            statusEl.innerHTML =
+                '<div class="alert alert-error"><i class="fas fa-exclamation-circle"></i> ' +
+                escapeHtml(err.message || i18n.t('profile.profile_save_failed')) +
+                '</div>';
+        }
+    } catch (err) {
+        statusEl.innerHTML =
+            '<div class="alert alert-error"><i class="fas fa-exclamation-circle"></i> ' +
+            escapeHtml(i18n.t('profile.error_network', { message: /** @type {Error} */ (err).message })) +
+            '</div>';
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = `<i class="fas fa-save"></i> ${escapeHtml(i18n.t('profile.save_profile'))}`;
+    return false;
+}
+
 /** @param {string} str */
 function escapeHtml(str) {
     var div = document.createElement('div');
@@ -608,6 +741,7 @@ init();
 
 /* Wire up event handlers (replaces inline onclick/onsubmit) */
 document.getElementById('password-form').addEventListener('submit', changePassword);
+document.getElementById('profile-edit-form')?.addEventListener('submit', submitProfile);
 document.getElementById('app-pw-generate').addEventListener('click', createAppPassword);
 document.getElementById('app-pw-copy-btn').addEventListener('click', copyAppPassword);
 document.getElementById('app-pw-auto-toggle').addEventListener('click', toggleAutoPasswords);

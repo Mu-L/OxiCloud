@@ -149,7 +149,7 @@
  *
  * @typedef {Object} User
  * @property {string} id
- * @property {string} username
+ * @property {string} [username]   Optional handle (PR 16); claim-once via /api/auth/me/profile (PR 24). Omitted from JSON when null.
  * @property {string} email
  * @property {string} role
  * @property {number} storage_quota_bytes
@@ -162,8 +162,9 @@
  * @property {string|null} [image]    Avatar URL or data URI
  * @property {boolean} can_edit_image  False for OIDC-only users
  * @property {boolean} is_external    True for magic-link / OIDC-only / OCM recipients
- * @property {string} [given_name]    OIDC `given_name` claim, when set
- * @property {string} [family_name]   OIDC `family_name` claim, when set
+ * @property {string} [given_name]    First/given name; set at OIDC JIT or via PATCH /api/auth/me/profile (PR 24)
+ * @property {string} [family_name]   Last/family name; set at OIDC JIT or via PATCH /api/auth/me/profile (PR 24)
+ * @property {string} [email_verified_at]  ISO 8601 timestamp of the first proof-of-email-control (PR 23). Omitted when unverified.
  */
 
 /**

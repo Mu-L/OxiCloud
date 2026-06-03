@@ -116,6 +116,36 @@
       </div>
     </div>
 
+    <div class="profile-card" id="profile-edit-section">
+      <h2><i class="fas fa-id-badge"></i> <span data-i18n="profile.edit_profile">Edit Profile</span></h2>
+
+      <div id="profile-edit-oidc-note" class="alert alert-info hidden">
+        <i class="fas fa-info-circle"></i>
+        <span data-i18n="profile.edit_oidc_managed">To change your information (name, first name, profile picture, …), please update it at your identity provider. Your changes will appear on your next sign-in.</span>
+      </div>
+
+      <form id="profile-edit-form">
+        <div class="form-group">
+          <label for="profile-edit-username" data-i18n="profile.username">Username</label>
+          <input type="text" id="profile-edit-username" maxlength="64" autocomplete="username"
+                 data-i18n-placeholder="profile.username_placeholder" placeholder="e.g. alice">
+          <small id="profile-edit-username-hint" data-i18n="profile.username_claim_hint">2–64 characters, letters/digits/dot/dash/underscore. Once chosen, the username can't be changed (DAV/NextCloud clients depend on it).</small>
+        </div>
+        <div class="form-group">
+          <label for="profile-edit-given-name" data-i18n="profile.given_name">First name</label>
+          <input type="text" id="profile-edit-given-name" maxlength="128" autocomplete="given-name">
+        </div>
+        <div class="form-group">
+          <label for="profile-edit-family-name" data-i18n="profile.family_name">Last name</label>
+          <input type="text" id="profile-edit-family-name" maxlength="128" autocomplete="family-name">
+        </div>
+        <button type="submit" class="btn btn-primary" id="profile-edit-submit">
+          <i class="fas fa-save"></i> <span data-i18n="profile.save_profile">Save changes</span>
+        </button>
+        <div id="profile-edit-status"></div>
+      </form>
+    </div>
+
     <div class="profile-card">
       <h2><i class="fas fa-hdd"></i> <span data-i18n="profile.storage">Storage</span></h2>
       <div class="storage-stats">
