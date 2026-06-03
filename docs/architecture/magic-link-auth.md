@@ -105,6 +105,38 @@ Salient properties:
 - **Token in path, not query** — `GET /magic/v1/{token}` so the secret stays out of `Referer` headers.
 - **302 immediately on success** — the URL is replaced in the address bar before the user can navigate away or screenshot it.
 - **Optional resource target** — `resource_type` + `resource_id` columns, with a `CHECK ((resource_type IS NULL) = (resource_id IS NULL))` constraint to make the two-or-neither rule explicit.
+- **Rows persist past `used` / `expired`** — the sweeper transitions status, it does not immediately DELETE. This is what makes the self-service resend (next section) possible: the token in the URL keeps working as a recipient-discovery key well after the credential it carried has stopped working.
+
+## Self-service resend
+
+The 410-Gone landing page for a stale link is **not a dead end**. The page server-side branches on whether the token row is recoverable:
+
+- Row exists, status is `expired` **or** `used`, owning user is still active → the page renders a one-click form: *"Send a fresh link to a…@example.com"* (POST to `/magic/v1/{token}/resend`).
+- Anything else (unknown token, pending, deactivated account, plumbing missing) → the page falls back to the existing generic "no longer valid" message. The two responses are deliberately indistinguishable to the caller — the rich page only differs when the row already proves the caller has legitimate context.
+
+### Why no PII in the URL
+
+An earlier sketch carried the recipient's email as `?r={base64(email)}` so the page could greet the user by address. We dropped it: a token is short-lived but a URL persists in browser history forever (and syncs to Chrome / Firefox cloud profiles), the address would leak via any future external Referer, and reverse-proxy access logs would gain a PII field they don't have today. Since the row already carries `user_id → users.email`, the server can recover the address on demand and the URL stays clean.
+
+### Why both `expired` and `used` qualify
+
+`used` covers the "I clicked the link on my phone, now I want to sign in on my laptop" case — the original link is dead by single-use design, but the recipient is real and the row still holds the recipient pointer. Offering resend on `used` is harmless (the new mail goes to the registered email, not the caller; rate limits are the same) and avoids a confusing dead-end for the most common second-device path.
+
+### Endpoint shape
+
+`POST /magic/v1/{token}/resend` mirrors `POST /api/auth/magic-link/send` in every operational respect:
+
+1. **Per-source-IP rate limit** (`OXICLOUD_MAGIC_LINK_SEND_PER_IP_PER_HOUR`, default 200/h) — runs first, unconditionally. Burns budget even when the token doesn't resolve so the endpoint can't be used to spread probes thin across many tokens.
+2. **Token resolution** — `MagicLinkInviteService::lookup_resend_recipient(token)`. Returns `Some(ResendRecipientHint)` only for `expired` / `used` rows whose owning user is active. `None` in every other case (pending, unknown, deactivated, repo absent).
+3. **Per-target-email rate limit** (`OXICLOUD_MAGIC_LINK_SEND_PER_EMAIL_PER_HOUR`, default 5/h) — keyed on the recipient we just resolved. Caps actual mail volume to the recipient regardless of how many IPs hammer the endpoint; effectively a per-token-recipient ceiling without a schema-level counter.
+4. **Fresh challenge + send** — generate a per-request challenge (cookie + token-row mirror, see PR 22), dispatch through `send_login_link`. The new token has the standard short login TTL, not the longer invite TTL — the recipient just clicked, so a slow second click is almost certainly someone else with mailbox access.
+5. **Uniform response** — every outcome (rate-limited, no-account, account deactivated, SMTP-failed, succeeded) renders the same "Check your inbox" HTML page. The real outcome is in the audit channel via `auth.magic_link_send` events.
+
+The handler is a sibling under the same `/magic/v1/*` router, **no CSRF middleware** (the page that triggers it is the 410 response itself — same-origin, plain HTML form, no JS, no third-party referrer realistically able to forge the POST against a per-token URL).
+
+### What the per-token ceiling looks like in practice
+
+A single recovered URL × per-target-email cap (5/h) × 24h = **120 magic-link mails per day maximum** to that recipient from that specific URL. Annoying but bounded; the recipient's inbox cannot be flooded into uselessness from one stable handle. A per-token counter column (`resend_count` with a hard maximum, e.g. 3) would tighten the bound further; it's deferred until real abuse is observed.
 
 ## User-profile visibility rule (`GET /api/users/{id}`)
 
@@ -127,7 +159,7 @@ Every denial or rejection in the magic-link path emits a structured event on the
 |------------------------------------|---------------------------------------------------------------------------------------------------|----------------------------------------------------------|
 | `authz.denied`                     | permission missing                                                                                | `AuthorizationEngine::require`                           |
 | `auth.login`                       | `user_not_found`, `bad_password`, `account_deactivated`                                           | `AuthApplicationService::login`                          |
-| `auth.magic_link_send`             | `sent`, `no_account`, `has_credential`, `account_deactivated`, `malformed_email`, `rate_limited_ip`, `rate_limited_email` | `MagicLinkInviteService::send_login_link` and the handler |
+| `auth.magic_link_send`             | `sent`, `no_account`, `has_credential`, `account_deactivated`, `malformed_email`, `rate_limited_ip`, `rate_limited_email`, `internal_error` | `MagicLinkInviteService::send_login_link`, `auth_handler::send_magic_link`, `magic_link_handler::resend_magic_link` |
 | `auth.magic_link_redeem`           | `redeemed`, `token_not_found`, `token_used`, `token_expired`, `account_deactivated`               | `MagicLinkInviteService::redeem`                         |
 | `user_profile.rejected`            | `external_no_relationship`, `target_external_hidden`, `target_hidden`                              | `AuthApplicationService::get_user_profile`               |
 | `grants.email_invite`              | `rate_limited`                                                                                    | `grant_handler::create_grant`                            |
@@ -147,6 +179,8 @@ Three caps protect the magic-link surface. Each is a moka sliding-window counter
 | Per-sharer email-invite                      | `caller_id`                    | 50 / hour | `OXICLOUD_MAGIC_LINK_INVITE_PER_CALLER_PER_HOUR`     | yes (429 + `Retry-After`) |
 | Per-target-email send                        | normalised email               | 5 / hour  | `OXICLOUD_MAGIC_LINK_SEND_PER_EMAIL_PER_HOUR`        | no (uniform 200) |
 | Per-source-IP send (backstop)                | trusted client IP              | 200 / hour | `OXICLOUD_MAGIC_LINK_SEND_PER_IP_PER_HOUR`           | no (uniform 200) |
+
+The two send caps are shared between `POST /api/auth/magic-link/send` and `POST /magic/v1/{token}/resend` — they're the same moka counters, so an attacker can't double their budget by alternating endpoints.
 
 Two distinct visibility regimes:
 

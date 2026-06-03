@@ -47,8 +47,11 @@ When you enter someone's email address, OxiCloud sends them a message
 with a sign-in link. Clicking that link signs them in and opens the
 file or folder you shared — no password to create, no form to fill in.
 
-The link expires after a day. If they miss it, you can resend it from
-the **My shares** section.
+The link expires after a day, and works only once. If the recipient
+clicks an old or already-used link, the page they land on offers a
+**"Send a fresh link"** button — one click and a new sign-in link is
+on its way to their inbox. They can also ask you to resend from your
+**My shares** section.
 
 ## Keeping track — *My shares*
 

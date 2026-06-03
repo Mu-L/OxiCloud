@@ -28,23 +28,33 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE, header::LOCATION},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use serde::Deserialize;
 
 use crate::application::services::auth_application_service::{
     MagicLinkRedeemResult, MagicLinkRedemption,
 };
+use crate::application::services::magic_link_invite_service::ResendRecipientHint;
 use crate::common::di::AppState;
 use crate::common::errors::ErrorKind;
 use crate::domain::entities::magic_link_token::MagicLinkResourceKind;
 use crate::interfaces::api::cookie_auth;
+use crate::interfaces::middleware::rate_limit::extract_client_ip;
 
 /// Build the `/magic/v1/{token}` router. Mounted at the top of the
 /// application tree in `main.rs` — no auth middleware, no CSRF (the
 /// token is the credential, the route is GET-only).
+///
+/// `POST /magic/v1/{token}/resend` is a sibling endpoint that lets the
+/// 410-Gone page offer a one-click "send me a fresh link" button. The
+/// recipient email is looked up server-side from the (expired/used)
+/// token row — no PII in the URL — and the rate limits attached to
+/// `POST /api/auth/magic-link/send` apply identically.
 pub fn magic_link_routes() -> Router<Arc<AppState>> {
-    Router::new().route("/magic/v1/{token}", get(redeem_magic_link))
+    Router::new()
+        .route("/magic/v1/{token}", get(redeem_magic_link))
+        .route("/magic/v1/{token}/resend", post(resend_magic_link))
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,11 +134,9 @@ async fn redeem_magic_link(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "Magic-link sign-in is not enabled on this server.",
                 ),
-                ErrorKind::NotFound | ErrorKind::AccessDenied => error_page(
-                    StatusCode::GONE,
-                    "This sign-in link is no longer valid. It may have already been \
-                     used or expired. Request a fresh link from the login page.",
-                ),
+                ErrorKind::NotFound | ErrorKind::AccessDenied => {
+                    expired_or_used_page(&state, &token).await
+                }
                 _ => error_page(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Something went wrong while signing you in. Please try again.",
@@ -136,6 +144,201 @@ async fn redeem_magic_link(
             }
         }
     }
+}
+
+/// `POST /magic/v1/{token}/resend` — one-click handler behind the
+/// "Send a fresh link" button on the 410-Gone page.
+///
+/// The token in the URL serves as a *recipient-discovery key*, never as
+/// a credential: the server looks up the (expired or used) row, walks
+/// to the owning user, and dispatches a fresh login-via-email magic-
+/// link to that user's email. The endpoint never trusts client-supplied
+/// email and never echoes the resolved address back, so the resend
+/// URL is safe to leave in browser history.
+///
+/// Anti-abuse:
+///   - **Per-source-IP** (200/h, shared with `/api/auth/magic-link/send`)
+///     bounds burst from a single attacker.
+///   - **Per-target-email** (5/h, also shared) caps actual mail volume
+///     to the recipient regardless of how many IPs hammer the endpoint.
+///   - **Uniform response** on every outcome — rate-limited, no-account,
+///     SMTP-failed, succeeded — so the page shape is not an oracle.
+///   - **Audit log** carries the truth via the `auth.magic_link_send`
+///     events emitted by `MagicLinkInviteService::send_login_link`.
+async fn resend_magic_link(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
+    let confirmation = || {
+        resend_confirmation_page(
+            "If the sign-in link belonged to an active account, a fresh \
+             link has just been sent. Please check your inbox.",
+        )
+    };
+
+    let Some(invite_svc) = state.magic_link_invite_service.as_ref() else {
+        return error_page(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Magic-link sign-in is not enabled on this server.",
+        );
+    };
+
+    let client_ip = extract_client_ip(&req);
+
+    // Per-IP backstop runs unconditionally — burns through the budget
+    // even when the token doesn't resolve, so the endpoint can't be
+    // used to spread probes thin across many tokens.
+    if state
+        .magic_link_send_per_ip_rate_limiter
+        .check_and_increment(&client_ip)
+        .is_err()
+    {
+        tracing::warn!(
+            target: "audit",
+            event = "auth.magic_link_send",
+            reason = "rate_limited_ip",
+            ip = %client_ip,
+            "Per-IP rate limit exceeded on /magic/v1/{{token}}/resend"
+        );
+        return confirmation();
+    }
+
+    let hint = match invite_svc.lookup_resend_recipient(&token).await {
+        Ok(Some(h)) => h,
+        _ => {
+            // Unknown / pending / deactivated — uniform response so the
+            // outcome is not an oracle for "is this a known token".
+            return confirmation();
+        }
+    };
+
+    // Per-target-email cap — keyed on the recipient we just resolved.
+    // Locks the mail volume to a single recipient regardless of how
+    // many distinct IPs the attacker spreads across.
+    if state
+        .magic_link_send_per_email_rate_limiter
+        .check_and_increment(&hint.email)
+        .is_err()
+    {
+        tracing::warn!(
+            target: "audit",
+            event = "auth.magic_link_send",
+            reason = "rate_limited_email",
+            ip = %client_ip,
+            "Per-target-email rate limit exceeded on /magic/v1/{{token}}/resend"
+        );
+        return confirmation();
+    }
+
+    let challenge = cookie_auth::generate_magic_request_challenge();
+    let login_ttl_secs = (state.core.config.magic_link.login_ttl_minutes * 60) as i64;
+
+    // Service swallows operational outcomes and audits the truth; we
+    // surface only DB / unexpected errors as 500.
+    if let Err(e) = invite_svc.send_login_link(&hint.email, &challenge).await {
+        tracing::error!(
+            target: "audit",
+            event = "auth.magic_link_send",
+            reason = "internal_error",
+            error = %e.message,
+            "Resend dispatch failed for an unexpected reason"
+        );
+        return error_page(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Something went wrong while sending the link. Please try again.",
+        );
+    }
+
+    let mut response = confirmation();
+    cookie_auth::append_magic_request_cookie(response.headers_mut(), &challenge, login_ttl_secs);
+    response
+}
+
+/// Plain HTML confirmation rendered after the resend button is clicked.
+/// Same shape on every outcome — see [`resend_magic_link`] for why.
+fn resend_confirmation_page(message: &str) -> Response {
+    let body = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>OxiCloud</title>\
+         <style>body{{font-family:system-ui,sans-serif;max-width:560px;margin:6em auto;\
+         padding:0 1em;color:#333;line-height:1.5}}h1{{font-size:1.4em}}\
+         .muted{{color:#666;font-size:.9em;margin-top:2em}}</style>\
+         </head><body>\
+         <h1>Check your inbox</h1>\
+         <p>{}</p>\
+         <p class=\"muted\"><a href=\"/\">Return to OxiCloud</a></p>\
+         </body></html>",
+        html_escape(message)
+    );
+    let mut response = (StatusCode::OK, body).into_response();
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response
+}
+
+/// Render the 410-Gone landing for a token that's either expired,
+/// already used, or unknown. When the token belongs to an active user
+/// (i.e. the redemption failed because the row exists but is past its
+/// useful state), the page carries a one-click "send a fresh link"
+/// form pre-targeted at the recipient's masked email. When the token
+/// is unknown, the user is deactivated, or any plumbing is missing,
+/// the page falls back to the existing generic message — by design
+/// the two responses are indistinguishable to the caller.
+async fn expired_or_used_page(state: &Arc<AppState>, token: &str) -> Response {
+    let generic = || {
+        error_page(
+            StatusCode::GONE,
+            "This sign-in link is no longer valid. It may have already been \
+             used or expired. Request a fresh link from the login page.",
+        )
+    };
+
+    let Some(invite_svc) = state.magic_link_invite_service.as_ref() else {
+        return generic();
+    };
+    let hint = match invite_svc.lookup_resend_recipient(token).await {
+        Ok(Some(h)) => h,
+        _ => return generic(),
+    };
+    resend_offer_page(token, &hint)
+}
+
+/// HTML body for the enriched 410 page: explains the outcome and
+/// offers a single-button form posting to `POST /magic/v1/{token}/resend`.
+/// Plain HTML — no JavaScript, no external assets — so it works the
+/// same in any mail-client embedded browser. The form action is the
+/// only place the token round-trips; the masked email is the only
+/// thing rendered, so screenshots / shoulder-surfing don't expose the
+/// full address.
+fn resend_offer_page(token: &str, hint: &ResendRecipientHint) -> Response {
+    let action = format!("/magic/v1/{}/resend", html_escape(token));
+    let masked = html_escape(&hint.masked_email);
+    let body = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>OxiCloud</title>\
+         <style>body{{font-family:system-ui,sans-serif;max-width:560px;margin:6em auto;\
+         padding:0 1em;color:#333;line-height:1.5}}h1{{font-size:1.4em}}\
+         .btn{{display:inline-block;padding:.7em 1.4em;background:#2563eb;color:#fff;\
+         border-radius:6px;text-decoration:none;font-weight:600;margin-top:.4em;\
+         border:0;cursor:pointer;font-size:1em}}.btn:hover{{background:#1d4ed8}}\
+         .muted{{color:#666;font-size:.9em;margin-top:2em}}</style>\
+         </head><body>\
+         <h1>This sign-in link is no longer valid</h1>\
+         <p>The link may have expired or already been used. \
+         We can send you a fresh one — it'll arrive in your inbox in a few seconds.</p>\
+         <form method=\"post\" action=\"{action}\">\
+           <button type=\"submit\" class=\"btn\">Send a fresh link to {masked}</button>\
+         </form>\
+         <p class=\"muted\"><a href=\"/\">Return to OxiCloud</a></p>\
+         </body></html>"
+    );
+    let mut response = (StatusCode::GONE, body).into_response();
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response
 }
 
 fn build_success_response(state: &Arc<AppState>, redemption: MagicLinkRedemption) -> Response {

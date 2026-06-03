@@ -35,7 +35,9 @@ use crate::application::ports::email_sender::{EmailMessage, EmailSender};
 use crate::application::services::user_lifecycle_service::UserLifecycleService;
 use crate::common::config::MagicLinkConfig;
 use crate::common::errors::{DomainError, ErrorKind};
-use crate::domain::entities::magic_link_token::{MagicLinkResourceKind, MagicLinkToken};
+use crate::domain::entities::magic_link_token::{
+    MagicLinkResourceKind, MagicLinkStatus, MagicLinkToken,
+};
 use crate::domain::entities::user::{User, UserRole};
 use crate::domain::repositories::magic_link_token_repository::MagicLinkTokenRepository;
 use crate::domain::repositories::user_repository::{UserRepository, UserRepositoryError};
@@ -495,6 +497,80 @@ impl MagicLinkInviteService {
 
         Ok(())
     }
+
+    /// Look up the resend-recipient hint for a token whose redemption
+    /// just failed. Returns `Some` exactly when:
+    ///
+    /// 1. the token row exists,
+    /// 2. its status is `Expired` (TTL elapsed) or `Used` (already
+    ///    redeemed once — recipient may be re-clicking on a different
+    ///    device), and
+    /// 3. the owning user account is still active.
+    ///
+    /// Returns `None` (no resend offered) for `Pending` tokens, unknown
+    /// tokens, and deactivated accounts. The `None` branches deliberately
+    /// look identical to the caller — anyone who can present a valid
+    /// token already has its access semantics, so the only "oracle"
+    /// surface is "did this token exist in some non-pending state",
+    /// which is moot.
+    pub async fn lookup_resend_recipient(
+        &self,
+        token: &str,
+    ) -> Result<Option<ResendRecipientHint>, DomainError> {
+        let Some(mlt) = self.magic_link_repo.find_by_token(token).await? else {
+            return Ok(None);
+        };
+        // Pending tokens are still redeemable — no reason to offer a
+        // resend. The user should just click the original link again.
+        if !matches!(
+            mlt.status(),
+            MagicLinkStatus::Expired | MagicLinkStatus::Used
+        ) {
+            return Ok(None);
+        }
+        let user = match UserRepository::get_user_by_id(&*self.user_storage, mlt.user_id()).await {
+            Ok(u) => u,
+            Err(UserRepositoryError::NotFound(_)) => return Ok(None),
+            Err(e) => return Err(DomainError::from(e)),
+        };
+        if !user.is_active() {
+            return Ok(None);
+        }
+        let email = user.email().to_string();
+        let masked_email = mask_email(&email);
+        Ok(Some(ResendRecipientHint {
+            email,
+            masked_email,
+        }))
+    }
+}
+
+/// Hint surfaced by the 410-Gone page to offer a one-click "send me a
+/// fresh link" affordance to a recipient whose magic-link is no longer
+/// usable. Carries the recipient's email twice: the raw form (used by
+/// the resend handler to dispatch the new mail) and a masked form
+/// (rendered into the HTML page so the user can confirm the destination
+/// without the full address being plastered in the URL or address bar).
+#[derive(Debug, Clone)]
+pub struct ResendRecipientHint {
+    pub email: String,
+    pub masked_email: String,
+}
+
+/// Mask an email for display: keep the first character of the local
+/// part, then `…`, then the full domain. `alice@example.com` →
+/// `a…@example.com`. Short local parts (1 char) collapse to just
+/// `…@domain`. Malformed input (no `@`) is masked entirely as `…`.
+pub fn mask_email(email: &str) -> String {
+    match email.rsplit_once('@') {
+        Some((local, domain)) if !local.is_empty() => {
+            let mut chars = local.chars();
+            let first = chars.next().unwrap_or('?');
+            format!("{first}…@{domain}")
+        }
+        Some((_, domain)) => format!("…@{domain}"),
+        None => "…".to_string(),
+    }
 }
 
 /// Lightweight conversion so the grant handler can derive a
@@ -543,6 +619,24 @@ mod tests {
             magic_link_eligibility(&u, true),
             Eligibility::Reject("oidc_user")
         );
+    }
+
+    #[test]
+    fn mask_email_keeps_one_char_of_local() {
+        assert_eq!(mask_email("alice@example.com"), "a…@example.com");
+        assert_eq!(mask_email("very-long-name@example.com"), "v…@example.com");
+    }
+
+    #[test]
+    fn mask_email_handles_edge_cases() {
+        // Single-char local part still leaks just the first char, by
+        // design — same masking rule applies uniformly so the output
+        // shape itself doesn't disclose local-part length.
+        assert_eq!(mask_email("a@b.co"), "a…@b.co");
+        // Malformed (no `@`) is masked entirely.
+        assert_eq!(mask_email("not-an-email"), "…");
+        // Pathological (starts with `@`) collapses the empty local.
+        assert_eq!(mask_email("@example.com"), "…@example.com");
     }
 
     #[test]
