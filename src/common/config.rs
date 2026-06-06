@@ -211,6 +211,12 @@ pub struct StorageConfig {
     /// Maximum upload file size in bytes (default: 10 GB).
     /// Applied as a hard limit to WebDAV PUT and streaming uploads.
     pub max_upload_size: usize,
+    /// Directory for upload spool temp files. When `Some`, large uploads are
+    /// spooled here instead of the OS default temp dir (often tmpfs/RAM in
+    /// containers, where the spool's page-cache counts against the cgroup
+    /// memory limit and can trigger OOMKill on large files). Env:
+    /// `OXICLOUD_UPLOAD_TMPDIR`.
+    pub upload_temp_dir: Option<PathBuf>,
     /// Which blob storage backend to use (`local`, `s3`, or `azure`).
     pub backend: StorageBackendType,
     /// S3-compatible backend configuration (used when `backend == S3`).
@@ -348,6 +354,7 @@ impl Default for StorageConfig {
             parallel_threshold: 100 * 1024 * 1024, // 100 MB
             trash_retention_days: 30,              // 30 days
             max_upload_size: MAX_UPLOAD_SIZE,
+            upload_temp_dir: None,
             backend: StorageBackendType::Local,
             s3: None,
             azure: None,
@@ -1210,6 +1217,14 @@ impl AppConfig {
             && let Ok(val) = max_upload
         {
             config.storage.max_upload_size = val;
+        }
+
+        // Upload spool directory — keep large upload temp files off tmpfs/RAM
+        // (otherwise their page-cache counts against the cgroup memory limit).
+        if let Ok(dir) = env::var("OXICLOUD_UPLOAD_TMPDIR")
+            && !dir.trim().is_empty()
+        {
+            config.storage.upload_temp_dir = Some(PathBuf::from(dir.trim()));
         }
 
         // Storage backend selection
