@@ -628,6 +628,11 @@ function initLanguageSelector() {
             }
         } else {
             showPanel(document.getElementById('login-panel'));
+            // Hide "Set up administrator" link since an admin already exists
+            const setupLink = document.getElementById('show-admin-setup');
+            if (setupLink && systemStatus.admin_count > 0) {
+                setupLink.parentElement.style.display = 'none';
+            }
             // Configure OIDC login UI if SSO is enabled
             await configureOidcLoginUI();
         }
