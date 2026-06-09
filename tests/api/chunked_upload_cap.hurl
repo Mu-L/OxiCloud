@@ -364,3 +364,202 @@ DELETE {{base_url}}/api/uploads/{{upload_id_short}}
 Authorization: Bearer {{token}}
 
 HTTP 204
+
+
+# ═════════════════════════════════════════════════════════════
+# End-to-end checksum on `/complete`
+# ═════════════════════════════════════════════════════════════
+# Optional body `{checksum, checksumalg}` on the complete request
+# lets the client lock in end-to-end integrity: if the assembled
+# file's hash doesn't match the value the client expected, the
+# blob is NOT promoted to storage and no DB row is created.
+# `blake3` is the recommended algorithm — same one the server
+# computes during hash-on-write assembly, so verification costs
+# nothing extra.
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 16 — `/complete` with matching BLAKE3 → 201.
+# ─────────────────────────────────────────────────────────────
+POST {{base_url}}/api/uploads
+Authorization: Bearer {{token}}
+Content-Type: application/json
+{
+  "filename": "complete-blake3-ok.txt",
+  "folder_id": "{{home_folder_id}}",
+  "content_type": "text/plain",
+  "total_size": 32,
+  "chunk_size": 1048576
+}
+
+HTTP 201
+[Captures]
+upload_id_b3_ok: jsonpath "$.upload_id"
+
+PATCH {{base_url}}/api/uploads/{{upload_id_b3_ok}}?chunk_index=0
+Authorization: Bearer {{token}}
+Content-Type: application/octet-stream
+file,fixtures/hello.txt;
+
+HTTP 200
+
+POST {{base_url}}/api/uploads/{{upload_id_b3_ok}}/complete
+Authorization: Bearer {{token}}
+Content-Type: application/json
+{
+  "checksum": "b2208c5dc33ff951227bd0c139f5eccb04105d6da6a7519ee23f7bc00a17bb5a",
+  "checksumalg": "blake3"
+}
+
+HTTP 201
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 17 — `/complete` with matching SHA-256 → 201 (re-hashes
+#           the assembled file on the blocking pool).
+# ─────────────────────────────────────────────────────────────
+POST {{base_url}}/api/uploads
+Authorization: Bearer {{token}}
+Content-Type: application/json
+{
+  "filename": "complete-sha256-ok.txt",
+  "folder_id": "{{home_folder_id}}",
+  "content_type": "text/plain",
+  "total_size": 32,
+  "chunk_size": 1048576
+}
+
+HTTP 201
+[Captures]
+upload_id_sha_ok: jsonpath "$.upload_id"
+
+PATCH {{base_url}}/api/uploads/{{upload_id_sha_ok}}?chunk_index=0
+Authorization: Bearer {{token}}
+Content-Type: application/octet-stream
+file,fixtures/hello.txt;
+
+HTTP 200
+
+POST {{base_url}}/api/uploads/{{upload_id_sha_ok}}/complete
+Authorization: Bearer {{token}}
+Content-Type: application/json
+{
+  "checksum": "0237134783df857fd9634c004341dbfccd374be0a1dd3c08e257522fa4d44e20",
+  "checksumalg": "sha256"
+}
+
+HTTP 201
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 18 — `/complete` with MISMATCHED BLAKE3 → 400. Blob is
+#           NOT promoted; session stays open for retry.
+# ─────────────────────────────────────────────────────────────
+POST {{base_url}}/api/uploads
+Authorization: Bearer {{token}}
+Content-Type: application/json
+{
+  "filename": "complete-blake3-bad.txt",
+  "folder_id": "{{home_folder_id}}",
+  "content_type": "text/plain",
+  "total_size": 32,
+  "chunk_size": 1048576
+}
+
+HTTP 201
+[Captures]
+upload_id_b3_bad: jsonpath "$.upload_id"
+
+PATCH {{base_url}}/api/uploads/{{upload_id_b3_bad}}?chunk_index=0
+Authorization: Bearer {{token}}
+Content-Type: application/octet-stream
+file,fixtures/hello.txt;
+
+HTTP 200
+
+POST {{base_url}}/api/uploads/{{upload_id_b3_bad}}/complete
+Authorization: Bearer {{token}}
+Content-Type: application/json
+{
+  "checksum": "00000000000000000000000000000000000000000000000000000000deadbeef",
+  "checksumalg": "blake3"
+}
+
+HTTP 400
+
+DELETE {{base_url}}/api/uploads/{{upload_id_b3_bad}}
+Authorization: Bearer {{token}}
+
+HTTP 204
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 19 — `/complete` with unknown `checksumalg` → 400.
+# ─────────────────────────────────────────────────────────────
+POST {{base_url}}/api/uploads
+Authorization: Bearer {{token}}
+Content-Type: application/json
+{
+  "filename": "complete-badalg.txt",
+  "folder_id": "{{home_folder_id}}",
+  "content_type": "text/plain",
+  "total_size": 32,
+  "chunk_size": 1048576
+}
+
+HTTP 201
+[Captures]
+upload_id_c_badalg: jsonpath "$.upload_id"
+
+PATCH {{base_url}}/api/uploads/{{upload_id_c_badalg}}?chunk_index=0
+Authorization: Bearer {{token}}
+Content-Type: application/octet-stream
+file,fixtures/hello.txt;
+
+HTTP 200
+
+POST {{base_url}}/api/uploads/{{upload_id_c_badalg}}/complete
+Authorization: Bearer {{token}}
+Content-Type: application/json
+{
+  "checksum": "deadbeef",
+  "checksumalg": "zoiberg"
+}
+
+HTTP 400
+
+DELETE {{base_url}}/api/uploads/{{upload_id_c_badalg}}
+Authorization: Bearer {{token}}
+
+HTTP 204
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 20 — `/complete` with NO body → 201 (backwards-compat).
+# ─────────────────────────────────────────────────────────────
+POST {{base_url}}/api/uploads
+Authorization: Bearer {{token}}
+Content-Type: application/json
+{
+  "filename": "complete-nobody.txt",
+  "folder_id": "{{home_folder_id}}",
+  "content_type": "text/plain",
+  "total_size": 32,
+  "chunk_size": 1048576
+}
+
+HTTP 201
+[Captures]
+upload_id_nobody: jsonpath "$.upload_id"
+
+PATCH {{base_url}}/api/uploads/{{upload_id_nobody}}?chunk_index=0
+Authorization: Bearer {{token}}
+Content-Type: application/octet-stream
+file,fixtures/hello.txt;
+
+HTTP 200
+
+POST {{base_url}}/api/uploads/{{upload_id_nobody}}/complete
+Authorization: Bearer {{token}}
+
+HTTP 201

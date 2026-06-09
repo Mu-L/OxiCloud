@@ -61,6 +61,41 @@ pub struct CompleteUploadResponse {
     pub path: String,
 }
 
+/// Optional body for `POST /api/uploads/{id}/complete`.
+///
+/// When the client supplies `checksum`, the server compares it against
+/// the assembled file's hash BEFORE promoting the blob to storage —
+/// failure aborts the upload atomically (no orphaned blob, no DB row).
+/// This is the end-to-end integrity check: per-chunk MD5 proves each
+/// chunk arrived intact, but only the final hash catches assembly /
+/// promotion bugs and mis-ordered chunks.
+///
+/// **`blake3` is highly recommended** — it's the algorithm the server
+/// already runs over the assembled file during hash-on-write
+/// assembly, so verification is a string comparison with zero extra
+/// I/O and zero extra CPU. It's also the same algorithm the server
+/// uses for blob-storage addressing, so the value the client sends
+/// equals the `content_hash` they'd later read back from
+/// `GET /api/files/{id}`. `md5` and `sha256` are accepted for
+/// compatibility with legacy client tooling but each triggers a
+/// second hash pass over the assembled file (~30–100 ms depending
+/// on size).
+///
+/// `Default` keeps the existing wire shape: clients that POST with no
+/// body get today's behavior (no verification, server just returns
+/// what it computed).
+#[derive(Debug, Default, Deserialize, ToSchema)]
+pub struct CompleteUploadRequest {
+    /// Lowercase hex digest the client expects the assembled file to
+    /// hash to. Compared case-insensitively. Omit to skip verification.
+    pub checksum: Option<String>,
+    /// Algorithm name. `blake3` is the recommended choice (default —
+    /// matches the server's hash-on-write algorithm, zero extra cost).
+    /// `md5`, `sha256` / `sha-256` are accepted but trigger an extra
+    /// hash pass. Unknown values return 400.
+    pub checksumalg: Option<String>,
+}
+
 /// Chunked Upload Handler
 ///
 /// The handler struct exists as a named grouping. All route functions are free
@@ -245,19 +280,97 @@ impl ChunkedUploadHandler {
         }
     }
 
+    /// Compute the requested checksum of the assembled file.
+    ///
+    /// For `Blake3` the server already has the hash from hash-on-write
+    /// assembly — we just return it (zero I/O, zero CPU). For `Md5` and
+    /// `Sha256` we re-read the assembled file on the blocking pool and
+    /// hash it; the cost (~30–100 ms for typical files) is the trade-off
+    /// for accepting non-default algorithms.
+    async fn compute_assembled_hash(
+        assembled_path: &std::path::Path,
+        alg: ChecksumAlg,
+        blake3_already_computed: &str,
+    ) -> Result<String, std::io::Error> {
+        match alg {
+            ChecksumAlg::Blake3 => Ok(blake3_already_computed.to_string()),
+            ChecksumAlg::Md5 | ChecksumAlg::Sha256 => {
+                let path = assembled_path.to_path_buf();
+                tokio::task::spawn_blocking(move || -> Result<String, std::io::Error> {
+                    use std::io::Read;
+                    let mut file = std::fs::File::open(&path)?;
+                    let mut buf = vec![0u8; 524_288];
+                    match alg {
+                        ChecksumAlg::Md5 => {
+                            use md5::Digest as _;
+                            let mut h = md5::Md5::new();
+                            loop {
+                                let n = file.read(&mut buf)?;
+                                if n == 0 {
+                                    break;
+                                }
+                                h.update(&buf[..n]);
+                            }
+                            Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+                        }
+                        ChecksumAlg::Sha256 => {
+                            use sha2::Digest as _;
+                            let mut h = sha2::Sha256::new();
+                            loop {
+                                let n = file.read(&mut buf)?;
+                                if n == 0 {
+                                    break;
+                                }
+                                h.update(&buf[..n]);
+                            }
+                            Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+                        }
+                        // Blake3 handled above — this branch is unreachable but
+                        // keeps the match exhaustive without an else-clause.
+                        ChecksumAlg::Blake3 => unreachable!(),
+                    }
+                })
+                .await
+                .map_err(|e| std::io::Error::other(format!("hash task join failed: {e}")))?
+            }
+        }
+    }
+
     /// POST /api/uploads/:upload_id/complete - Finalize upload
     ///
-    /// Assembles all chunks into the final file and creates the file record
-    // TODO: how is implemented security (owneship, permission ?)
+    /// Assembles all chunks into the final file and creates the file record.
+    /// When `body.checksum` is supplied, the assembled file's hash is
+    /// verified before the blob is promoted to storage — mismatch
+    /// returns 400 and the assembled temp is removed (the session
+    /// itself is kept so the client can re-issue complete after
+    /// diagnosing).
     pub(super) async fn complete_upload_impl(
         State(state): State<Arc<AppState>>,
         auth_user: AuthUser,
         Path(upload_id): Path<String>,
+        body: CompleteUploadRequest,
     ) -> impl IntoResponse {
         let chunked_service = &state.core.chunked_upload_service;
         let upload_service = &state.applications.file_upload_service;
 
-        // Assemble chunks (hash-on-write: SHA-256 computed during assembly)
+        // ── Parse the optional algorithm BEFORE assembly so a bad
+        //    `checksumalg` doesn't waste the (potentially expensive)
+        //    hash work on a request we'll reject anyway.
+        let alg = match body.checksumalg.as_deref() {
+            Some(name) => match ChecksumAlg::parse(name) {
+                Some(a) => Some(a),
+                None => {
+                    return AppError::bad_request(format!(
+                        "Unsupported checksumalg: {name} (supported: md5, sha256, blake3)"
+                    ))
+                    .into_response();
+                }
+            },
+            None => None,
+        };
+        let expected_checksum = body.checksum.as_deref();
+
+        // Assemble chunks (hash-on-write: BLAKE3 computed during assembly)
         let (assembled_path, filename, folder_id, content_type, total_size, hash) =
             match chunked_service
                 .complete_upload(&upload_id, auth_user.id)
@@ -268,6 +381,46 @@ impl ChunkedUploadHandler {
                     return AppError::from(e).into_response();
                 }
             };
+
+        // ── End-to-end integrity verification ───────────────────────
+        // Only fires when the client supplied an `expected` checksum.
+        // For BLAKE3 (the documented preferred choice) this is a string
+        // comparison against the hash assembly already produced. For
+        // MD5/SHA-256 we re-hash the assembled file on the blocking pool.
+        if let Some(expected) = expected_checksum {
+            let alg = alg.unwrap_or(ChecksumAlg::Blake3);
+            let computed = match Self::compute_assembled_hash(&assembled_path, alg, &hash).await {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tokio::fs::remove_file(&assembled_path).await;
+                    return AppError::internal_error(format!(
+                        "Failed to compute assembled checksum: {e}"
+                    ))
+                    .into_response();
+                }
+            };
+            if !computed.eq_ignore_ascii_case(expected) {
+                let _ = tokio::fs::remove_file(&assembled_path).await;
+                tracing::warn!(
+                    target: "audit",
+                    event = "chunked_upload.checksum_mismatch",
+                    reason = "final_checksum_mismatch",
+                    upload_id = %upload_id,
+                    user_id = %auth_user.id,
+                    alg = alg.as_str(),
+                    expected = %expected,
+                    actual = %computed,
+                    "👮🏻‍♂️ Chunked upload complete: client checksum mismatch — blob not promoted"
+                );
+                return AppError::bad_request(format!(
+                    "Checksum mismatch ({}): expected {}, got {}",
+                    alg.as_str(),
+                    expected,
+                    computed
+                ))
+                .into_response();
+            }
+        }
 
         // ── MIME detection (magic bytes + extension fallback) ─────
         let content_type = crate::common::mime_detect::refine_content_type_from_file(
@@ -546,10 +699,23 @@ pub async fn get_upload_status(
     params(
         ("upload_id" = String, Path, description = "Upload session ID"),
     ),
+    request_body(
+        content = CompleteUploadRequest,
+        content_type = "application/json",
+        description = "Optional. End-to-end integrity verification of the assembled file. \
+            **`blake3` is highly recommended** as the `checksumalg` value — the server already \
+            computes BLAKE3 over the assembled file during hash-on-write assembly, so \
+            verification is a string comparison with zero extra CPU/IO. \
+            Picking `md5` or `sha256` is supported for legacy client tooling but triggers a \
+            second full hash pass over the assembled file. \
+            Clients that POST with no body (or with an empty JSON object) get today's \
+            behavior: no verification, server returns the BLAKE3 it computed."
+    ),
     responses(
         (status = 201, description = "File assembled and created", body = CompleteUploadResponse),
+        (status = 400, description = "Unknown `checksumalg` or final-checksum mismatch"),
         (status = 404, description = "Upload session not found"),
-        (status = 500, description = "Assembly or file creation failed"),
+        (status = 500, description = "Assembly, hashing, or file creation failed"),
     ),
     tag = "uploads",
     security(("bearerAuth" = []))
@@ -558,8 +724,13 @@ pub async fn complete_upload(
     state: State<Arc<AppState>>,
     auth_user: AuthUser,
     path: Path<String>,
+    // Empty body → `None` → default `CompleteUploadRequest`, preserving the
+    // pre-checksum wire shape. Clients that DO send a body get strict
+    // parsing (a malformed JSON returns 400 via the Json extractor).
+    body: Option<Json<CompleteUploadRequest>>,
 ) -> impl IntoResponse {
-    ChunkedUploadHandler::complete_upload_impl(state, auth_user, path).await
+    let req = body.map(|Json(r)| r).unwrap_or_default();
+    ChunkedUploadHandler::complete_upload_impl(state, auth_user, path, req).await
 }
 
 #[utoipa::path(
