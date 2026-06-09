@@ -78,6 +78,7 @@ export default defineConfig({
           items: [
             { text: "Deployment & Docker", link: "/config/deployment" },
             { text: "Environment Variables", link: "/config/env" },
+            { text: "Storage Fine Tuning", link: "/config/storage-fine-tuning" },
             { text: "Authentication", link: "/config/authentication" },
             { text: "OIDC / SSO", link: "/config/oidc" },
             { text: "OIDC Config Examples", link: "/config/oidc-config-examples" },
