@@ -60,6 +60,38 @@ pub trait BlobStorageBackend: Send + Sync + 'static {
     /// without overwriting.  Returns the number of bytes stored.
     fn put_blob_from_bytes(&self, hash: &str, data: Bytes) -> BoxFut<'_, Result<u64, DomainError>>;
 
+    /// Store a blob from in-memory bytes **without forcing durability**.
+    ///
+    /// Same idempotency contract as [`Self::put_blob_from_bytes`], but the
+    /// bytes may still sit in volatile caches (e.g. the OS page cache) when
+    /// the future resolves. Durability is only guaranteed after a subsequent
+    /// [`Self::sync_blobs`] covering this hash returns `Ok`. Callers MUST NOT
+    /// record a durable reference to the blob (e.g. a PostgreSQL row) before
+    /// that sync completes.
+    ///
+    /// Default: delegates to `put_blob_from_bytes` (immediately durable),
+    /// pairing with the no-op `sync_blobs` default so backends that don't
+    /// opt in keep today's per-write durability semantics.
+    fn put_blob_from_bytes_unsynced(
+        &self,
+        hash: &str,
+        data: Bytes,
+    ) -> BoxFut<'_, Result<u64, DomainError>> {
+        self.put_blob_from_bytes(hash, data)
+    }
+
+    /// Make previously written blobs durable in one batched operation.
+    ///
+    /// Durability barrier for blobs written via `put_blob_from_bytes_unsynced`:
+    /// when this returns `Ok`, every listed blob is crash-safe. Local
+    /// filesystem backends fsync each listed blob file plus each distinct
+    /// parent directory once — one sweep per upload instead of two fsyncs
+    /// per chunk. Remote object stores are durable on PUT, so the default
+    /// is a no-op.
+    fn sync_blobs(&self, _hashes: &[String]) -> BoxFut<'_, Result<(), DomainError>> {
+        Box::pin(async { Ok(()) })
+    }
+
     /// Stream the full blob content in chunks.
     fn get_blob_stream(&self, hash: &str) -> BoxFut<'_, Result<BlobStream, DomainError>>;
 

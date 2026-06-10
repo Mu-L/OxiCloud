@@ -21,10 +21,13 @@
 //! **Write-first strategy** (store_from_file):
 //!   1. CDC-analyse the file (mmap → FastCDC boundaries + per-chunk BLAKE3).
 //!   2. Batch-check which chunk hashes already exist in PG (dedup skip).
-//!   3. Read + upload only *new* chunks to the blob backend (idempotent).
-//!   4. Bump ref_count for existing chunks (no disk I/O).
-//!   5. Single manifest INSERT (~few ms total).
-//!   6. PG connection is never held during disk I/O.
+//!   3. Bump ref_count for existing chunks (no disk I/O).
+//!   4. Read + write only *new* chunks to the blob backend (idempotent,
+//!      no per-chunk fsync).
+//!   5. One batched fsync sweep makes the new chunks durable, then ONE
+//!      batched INSERT registers them — durability before visibility.
+//!   6. Single manifest INSERT (~few ms total).
+//!   7. PG connection is never held during disk I/O.
 //!
 //! Benefits:
 //! - Sub-file dedup: edited files share unchanged chunks
@@ -457,10 +460,17 @@ impl DedupService {
     ///
     /// Phase 0: Batch-queries PG to discover which chunk hashes already
     /// exist in `storage.blobs`.
-    /// Phase 1: Reads only *new* chunks from the source file (the biggest
-    /// I/O saving for versioned files where most chunks are unchanged).
-    /// Uploads each new chunk and bumps `ref_count` for chunks that already
-    /// exist, with up to [`CHUNK_UPLOAD_CONCURRENCY`] uploads in flight.
+    /// Phase 1: Bumps `ref_count` for chunks that already exist (one
+    /// batched UPDATE, no disk I/O — the biggest saving for versioned
+    /// files where most chunks are unchanged).
+    /// Phase 2: Reads + writes only *new* chunks, with up to
+    /// [`CHUNK_UPLOAD_CONCURRENCY`] writes in flight and **no per-chunk
+    /// fsync**.
+    /// Phase 3: One batched `sync_blobs` sweep makes every new chunk
+    /// durable (no-op for remote backends, which are durable on PUT).
+    /// Phase 4: ONE batched INSERT registers the new chunks in PG. The
+    /// sweep runs first so a crash can never leave a `storage.blobs` row
+    /// pointing at bytes that were still in the page cache.
     ///
     /// `ref_count` is incremented once per *distinct* chunk (one reference per
     /// manifest), staying symmetric with `remove_manifest_reference` so a file
@@ -540,10 +550,13 @@ impl DedupService {
             DomainError::internal_error("Dedup", format!("Failed to open source file: {}", e))
         })?);
 
-        let results: Vec<Result<(), DomainError>> = stream::iter(new_ops)
+        // Writes are *unsynced*: no per-chunk fsync. Durability comes from
+        // the single batched sweep below, BEFORE any PG row references the
+        // new chunks — so a crash can never leave storage.blobs claiming a
+        // chunk whose bytes didn't reach the platter.
+        let results: Vec<Result<(String, i64), DomainError>> = stream::iter(new_ops)
             .map(|(hash, offset, length)| {
                 let source = source.clone();
-                let pool = pool.clone();
                 let backend = backend.clone();
                 async move {
                     // Positioned read of just this chunk (≤ CDC_MAX_CHUNK) off
@@ -563,36 +576,48 @@ impl DedupService {
                     })?;
 
                     backend
-                        .put_blob_from_bytes(&hash, Bytes::from(bytes))
+                        .put_blob_from_bytes_unsynced(&hash, Bytes::from(bytes))
                         .await?;
-                    // ON CONFLICT covers a concurrent uploader inserting the
-                    // same brand-new chunk between the existence check above and
-                    // this INSERT.
-                    sqlx::query(
-                        "INSERT INTO storage.blobs (hash, size, ref_count)
-                         VALUES ($1, $2, 1)
-                         ON CONFLICT (hash) DO UPDATE
-                           SET ref_count = storage.blobs.ref_count + 1",
-                    )
-                    .bind(&hash)
-                    .bind(length as i64)
-                    .execute(pool.as_ref())
-                    .await
-                    .map_err(|e| {
-                        DomainError::internal_error(
-                            "Dedup",
-                            format!("Failed to upsert chunk: {}", e),
-                        )
-                    })?;
-                    Ok(())
+                    Ok((hash, length as i64))
                 }
             })
             .buffer_unordered(Self::CHUNK_UPLOAD_CONCURRENCY)
             .collect()
             .await;
 
+        let mut new_rows: Vec<(String, i64)> = Vec::with_capacity(results.len());
         for result in results {
-            result?;
+            new_rows.push(result?);
+        }
+
+        if !new_rows.is_empty() {
+            // ── Phase 3: durability barrier — one batched fsync sweep ──────
+            // (was 2 fsyncs per chunk: ~8 200 for a 1 GB upload; now one
+            // parallel sweep over the new files + ≤256 prefix dirs).
+            // Remote backends are durable on PUT — sync_blobs is a no-op.
+            let new_hashes: Vec<String> = new_rows.iter().map(|(h, _)| h.clone()).collect();
+            backend.sync_blobs(&new_hashes).await?;
+
+            // ── Phase 4: register all new chunks in ONE batched INSERT ─────
+            // (was one round-trip per chunk). `new_rows` is built from
+            // `unique_chunks`, so no hash repeats within the batch — safe for
+            // ON CONFLICT DO UPDATE, which covers a concurrent uploader
+            // inserting the same brand-new chunk between the existence check
+            // in Phase 0 and this INSERT.
+            let new_sizes: Vec<i64> = new_rows.iter().map(|(_, s)| *s).collect();
+            sqlx::query(
+                "INSERT INTO storage.blobs (hash, size, ref_count)
+                 SELECT h, s, 1 FROM UNNEST($1::text[], $2::bigint[]) AS t(h, s)
+                 ON CONFLICT (hash) DO UPDATE
+                   SET ref_count = storage.blobs.ref_count + 1",
+            )
+            .bind(&new_hashes)
+            .bind(&new_sizes)
+            .execute(pool.as_ref())
+            .await
+            .map_err(|e| {
+                DomainError::internal_error("Dedup", format!("Failed to upsert chunks: {}", e))
+            })?;
         }
 
         // chunk_hashes/chunk_sizes keep the full per-occurrence CDC sequence —

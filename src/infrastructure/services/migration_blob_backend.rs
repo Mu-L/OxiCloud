@@ -121,6 +121,21 @@ impl BlobStorageBackend for MigrationBlobBackend {
         Box::pin(async move { self.target.put_blob_from_bytes(&hash, data).await })
     }
 
+    /// Unsynced writes go to **target** only (same as the synced variant).
+    fn put_blob_from_bytes_unsynced(
+        &self,
+        hash: &str,
+        data: Bytes,
+    ) -> BoxFut<'_, Result<u64, DomainError>> {
+        let hash = hash.to_string();
+        Box::pin(async move { self.target.put_blob_from_bytes_unsynced(&hash, data).await })
+    }
+
+    /// Durability sweep goes to **target**, where unsynced writes land.
+    fn sync_blobs(&self, hashes: &[String]) -> BoxFut<'_, Result<(), DomainError>> {
+        self.target.sync_blobs(hashes)
+    }
+
     /// Read from target first; fall back to source.
     fn get_blob_stream(&self, hash: &str) -> BoxFut<'_, Result<BlobStream, DomainError>> {
         let hash = hash.to_string();
