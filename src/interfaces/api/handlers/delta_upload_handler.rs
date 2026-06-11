@@ -14,8 +14,8 @@
 use axum::{
     Json,
     body::Body,
-    extract::State,
-    http::StatusCode,
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use bytes::{Buf, Bytes, BytesMut};
@@ -24,8 +24,8 @@ use std::sync::Arc;
 use tokio_stream::StreamExt;
 
 use crate::application::services::delta_upload_service::{
-    DeltaChunksResponse, DeltaCommitOutcome, DeltaCommitRequest, DeltaNegotiateRequest,
-    DeltaNegotiateResponse,
+    DeltaChunksResponse, DeltaCommitOutcome, DeltaCommitRequest, DeltaDownloadOutcome,
+    DeltaDownloadRequest, DeltaManifestResponse, DeltaNegotiateRequest, DeltaNegotiateResponse,
 };
 use crate::common::di::AppState;
 use crate::common::errors::DomainError;
@@ -44,7 +44,15 @@ pub struct DeltaStillMissingResponse {
     pub still_missing: Vec<String>,
 }
 
-/// Per-caller flood guard shared by the three delta endpoints.
+/// 404 body of `POST /api/files/delta/download` when some requested chunks
+/// are not reachable through the caller's files (or don't exist — the two
+/// are deliberately indistinguishable).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DeltaNotAvailableResponse {
+    pub not_available: Vec<String>,
+}
+
+/// Per-caller flood guard shared by the delta endpoints.
 fn check_rate_limit(state: &Arc<AppState>, auth_user: &AuthUser) -> Result<(), AppError> {
     if state
         .delta_upload_rate_limiter
@@ -241,6 +249,117 @@ pub async fn delta_commit(
         )
             .into_response(),
     })
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/files/{id}/manifest",
+    params(("id" = String, Path, description = "File ID")),
+    responses(
+        (status = 200, description = "Chunk recipe of the file (immutable per file_hash; served with ETag = file_hash)", body = DeltaManifestResponse),
+        (status = 304, description = "Not modified (If-None-Match matched the current file_hash)"),
+        (status = 404, description = "File not found, not accessible, or not owned by the caller"),
+        (status = 429, description = "Rate limited"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "delta-upload"
+)]
+pub async fn delta_file_manifest(
+    State(state): State<Arc<AppState>>,
+    auth_user: AuthUser,
+    Path(file_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    check_rate_limit(&state, &auth_user)?;
+    let manifest = state
+        .applications
+        .delta_upload_service
+        .file_manifest_with_perms(auth_user.id, &file_id)
+        .await
+        .map_err(AppError::from)?;
+
+    // A manifest is immutable for a given file_hash, so the hash IS the
+    // strong validator: sync clients polling a file revalidate for free.
+    let etag = format!("\"{}\"", manifest.file_hash);
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|inm| inm == etag)
+    {
+        return Ok(Response::builder()
+            .status(StatusCode::NOT_MODIFIED)
+            .header(header::ETAG, etag)
+            .body(Body::empty())
+            .unwrap());
+    }
+    Ok((
+        StatusCode::OK,
+        [
+            (header::ETAG, etag),
+            (header::CACHE_CONTROL, "private, no-cache".to_string()),
+        ],
+        Json(manifest),
+    )
+        .into_response())
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/files/delta/download",
+    request_body = DeltaDownloadRequest,
+    responses(
+        (status = 200, description = "Requested chunks as [u32 BE length][bytes] frames, in request order",
+            content_type = "application/octet-stream"),
+        (status = 400, description = "Malformed hashes, duplicates, or batch above the per-request ceiling"),
+        (status = 404, description = "Some chunks are not available to this caller", body = DeltaNotAvailableResponse),
+        (status = 429, description = "Rate limited"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "delta-upload"
+)]
+pub async fn delta_download_chunks(
+    State(state): State<Arc<AppState>>,
+    auth_user: AuthUser,
+    Json(request): Json<DeltaDownloadRequest>,
+) -> Result<Response, AppError> {
+    check_rate_limit(&state, &auth_user)?;
+    let service = state.applications.delta_upload_service.clone();
+    let outcome = service
+        .authorize_chunk_download_with_perms(auth_user.id, &request)
+        .await
+        .map_err(AppError::from)?;
+
+    let ordered = match outcome {
+        DeltaDownloadOutcome::NotAvailable(not_available) => {
+            return Ok((
+                StatusCode::NOT_FOUND,
+                Json(DeltaNotAvailableResponse { not_available }),
+            )
+                .into_response());
+        }
+        DeltaDownloadOutcome::Ready(ordered) => ordered,
+    };
+    let total: u64 = ordered.iter().map(|(_, s)| 4 + s).sum();
+
+    // Stream the frames: 4-byte length headers come from the (entitled)
+    // index sizes; bytes stream straight from the blob backend. Peak RAM
+    // is one backend read frame, independent of batch size.
+    let body_stream: std::pin::Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
+        Box::pin(async_stream::try_stream! {
+            for (hash, size) in ordered {
+                yield Bytes::copy_from_slice(&(size as u32).to_be_bytes());
+                let mut chunk = service.chunk_stream(&hash).await.map_err(std::io::Error::other)?;
+                while let Some(part) = chunk.next().await {
+                    yield part?;
+                }
+            }
+        });
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(header::CONTENT_LENGTH, total.to_string())
+        .body(Body::from_stream(body_stream))
+        .unwrap())
 }
 
 #[cfg(test)]

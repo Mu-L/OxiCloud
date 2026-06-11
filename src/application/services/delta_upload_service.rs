@@ -36,12 +36,13 @@ use uuid::Uuid;
 use crate::application::dtos::file_dto::FileDto;
 use crate::application::ports::authorization_ports::AuthorizationEngine;
 use crate::application::ports::file_ports::{FileUploadUseCase, StoredBlob};
-use crate::application::ports::storage_ports::StorageUsagePort;
+use crate::application::ports::storage_ports::{FileReadPort, StorageUsagePort};
 use crate::application::services::file_upload_service::FileUploadService;
 use crate::application::services::storage_usage_service::StorageUsageService;
 use crate::common::errors::DomainError;
 use crate::common::mime_detect::{MAGIC_BYTES_LEN, refine_content_type};
 use crate::domain::services::authorization::{Permission, Resource, Subject};
+use crate::infrastructure::repositories::pg::FileBlobReadRepository;
 use crate::infrastructure::services::dedup_service::{CDC_MAX_CHUNK, DedupService};
 use crate::infrastructure::services::pg_acl_engine::PgAclEngine;
 
@@ -97,6 +98,36 @@ pub struct DeltaCommitRequest {
     pub file_id: Option<String>,
 }
 
+/// Response of `GET /api/files/{id}/manifest` — the recipe to rebuild the
+/// file from chunks. Immutable for a given `file_hash`, so clients cache
+/// it keyed by hash (the endpoint also serves it with `ETag: file_hash`).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DeltaManifestResponse {
+    /// BLAKE3 of the whole file (verify the local reassembly against it).
+    pub file_hash: String,
+    /// Total size in bytes.
+    pub total_size: u64,
+    /// Full chunk sequence, in file order (per occurrence).
+    pub chunks: Vec<ChunkRef>,
+}
+
+/// Request body of `POST /api/files/delta/download` — distinct chunk
+/// hashes to fetch, served back as `[u32 BE length][bytes]` frames in
+/// request order (the same wire format the upload direction uses).
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct DeltaDownloadRequest {
+    pub hashes: Vec<String>,
+}
+
+/// Outcome of a chunk-download authorization.
+pub enum DeltaDownloadOutcome {
+    /// Every requested chunk is servable: `(hash, size)` in request order.
+    Ready(Vec<(String, u64)>),
+    /// Some chunks are not available to this caller (not reachable through
+    /// their files, or unknown — deliberately indistinguishable).
+    NotAvailable(Vec<String>),
+}
+
 /// Resolved commit mode after request validation.
 enum CommitMode {
     Create { name: String, folder_id: String },
@@ -121,26 +152,35 @@ pub enum DeltaCommitOutcome {
 pub struct DeltaUploadService {
     dedup: Arc<DedupService>,
     uploads: Arc<FileUploadService>,
+    file_read: Arc<FileBlobReadRepository>,
     quota: Arc<StorageUsageService>,
     authz: Arc<PgAclEngine>,
     /// Whole-file ceiling — same `max_upload_size` that bounds byte uploads.
     max_total_size: u64,
+    /// Per-request ceiling for batched chunk downloads — same budget as
+    /// the chunk-upload requests (`chunk_max_bytes`).
+    max_download_batch: u64,
 }
 
 impl DeltaUploadService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         dedup: Arc<DedupService>,
         uploads: Arc<FileUploadService>,
+        file_read: Arc<FileBlobReadRepository>,
         quota: Arc<StorageUsageService>,
         authz: Arc<PgAclEngine>,
         max_total_size: u64,
+        max_download_batch: u64,
     ) -> Self {
         Self {
             dedup,
             uploads,
+            file_read,
             quota,
             authz,
             max_total_size,
+            max_download_batch,
         }
     }
 
@@ -412,6 +452,151 @@ impl DeltaUploadService {
             file,
             created: matches!(mode, CommitMode::Create { .. }),
         })
+    }
+
+    // ── Delta download ("download only what changed") ────────────
+
+    /// The chunk recipe of a file the caller owns — step 1 of a delta
+    /// download. Owner-scoped like the rest of the delta protocol (shared
+    /// files use the regular download endpoints); a non-owned or unknown
+    /// file is `NotFound`, and the denial is audited.
+    pub async fn file_manifest_with_perms(
+        &self,
+        caller_id: Uuid,
+        file_id: &str,
+    ) -> Result<DeltaManifestResponse, DomainError> {
+        let file_uuid = Uuid::parse_str(file_id)
+            .map_err(|_| DomainError::not_found("File", file_id.to_string()))?;
+        // Engine check first (Read on the file): owners always pass and
+        // the engine audits denials; the ownership constraint below is the
+        // chunk layer's own entitlement standard.
+        self.authz
+            .require(
+                Subject::User(caller_id),
+                Permission::Read,
+                Resource::File(file_uuid),
+            )
+            .await?;
+
+        let file = self.file_read.get_file(file_id).await?;
+        let file_hash = file.content_hash().to_string();
+        if !self
+            .dedup
+            .user_owns_blob_reference(&file_hash, &caller_id.to_string())
+            .await
+        {
+            // Read permission without ownership (e.g. a grant): the delta
+            // surface is owner-scoped — the regular download endpoints
+            // serve shared content.
+            tracing::info!(
+                target: "audit",
+                event = "delta_download.rejected",
+                reason = "manifest_not_owner",
+                caller_id = %caller_id,
+                file_id = %file_id,
+                "👮🏻‍♂️ Delta download rejected: manifest requested by a non-owner",
+            );
+            return Err(DomainError::not_found("File", file_id.to_string()));
+        }
+
+        let Some((chunks, total_size)) = self.dedup.manifest_chunk_list(&file_hash).await? else {
+            return Err(DomainError::not_found("File", file_id.to_string()));
+        };
+        Ok(DeltaManifestResponse {
+            file_hash,
+            total_size,
+            chunks: chunks.into_iter().map(|(h, s)| ChunkRef { h, s }).collect(),
+        })
+    }
+
+    /// Authorize a batched chunk download — step 2. Every hash must be
+    /// reachable through the caller's own files; otherwise the full list of
+    /// unavailable hashes is returned (the same information N individual
+    /// requests would reveal, in one round-trip). The total payload is
+    /// bounded by the per-request budget so clients split large deltas.
+    pub async fn authorize_chunk_download_with_perms(
+        &self,
+        caller_id: Uuid,
+        request: &DeltaDownloadRequest,
+    ) -> Result<DeltaDownloadOutcome, DomainError> {
+        if request.hashes.is_empty() {
+            return Err(DomainError::validation_error("hashes must not be empty"));
+        }
+        if request.hashes.len() > self.max_chunk_count() {
+            return Err(DomainError::validation_error(format!(
+                "Too many chunks: {} (maximum {})",
+                request.hashes.len(),
+                self.max_chunk_count()
+            )));
+        }
+        let mut distinct_seen = HashSet::new();
+        for hash in &request.hashes {
+            if !is_valid_hash(hash) {
+                return Err(DomainError::validation_error(
+                    "Invalid chunk hash format. Expected BLAKE3 (64 hex characters)",
+                ));
+            }
+            if !distinct_seen.insert(hash.as_str()) {
+                return Err(DomainError::validation_error(
+                    "Duplicate hashes in download request",
+                ));
+            }
+        }
+
+        let entitled = self
+            .dedup
+            .claimable_chunks(caller_id, &request.hashes)
+            .await?;
+        let not_available: Vec<String> = request
+            .hashes
+            .iter()
+            .filter(|h| !entitled.contains(*h))
+            .cloned()
+            .collect();
+        if !not_available.is_empty() {
+            tracing::info!(
+                target: "audit",
+                event = "delta_download.rejected",
+                reason = "chunks_not_owned",
+                caller_id = %caller_id,
+                requested = request.hashes.len(),
+                denied = not_available.len(),
+                "👮🏻‍♂️ Delta download rejected: caller requested chunks outside their files",
+            );
+            return Ok(DeltaDownloadOutcome::NotAvailable(not_available));
+        }
+
+        let sizes = self.dedup.chunk_sizes(&request.hashes).await?;
+        let mut ordered = Vec::with_capacity(request.hashes.len());
+        let mut total: u64 = 0;
+        for hash in &request.hashes {
+            // Entitled implies indexed; a vanished row between the two
+            // queries surfaces as unavailable rather than a 500.
+            let Some(size) = sizes.get(hash) else {
+                return Ok(DeltaDownloadOutcome::NotAvailable(vec![hash.clone()]));
+            };
+            total = total.saturating_add(*size);
+            ordered.push((hash.clone(), *size));
+        }
+        if total > self.max_download_batch {
+            return Err(DomainError::validation_error(format!(
+                "Requested chunks total {total} bytes; the per-request ceiling is {} —                  split the download into smaller batches",
+                self.max_download_batch
+            )));
+        }
+        Ok(DeltaDownloadOutcome::Ready(ordered))
+    }
+
+    /// Stream one authorized chunk's bytes (entitlement was established by
+    /// [`authorize_chunk_download_with_perms`]).
+    pub async fn chunk_stream(
+        &self,
+        hash: &str,
+    ) -> Result<
+        std::pin::Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
+        DomainError,
+    > {
+        self.dedup.chunk_stream(hash).await
     }
 
     /// Create or update the file row against a blob reference the commit

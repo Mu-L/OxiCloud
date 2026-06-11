@@ -467,9 +467,11 @@ impl AppServiceFactory {
             crate::application::services::delta_upload_service::DeltaUploadService::new(
                 core.dedup_service.clone(),
                 file_upload_service.clone(),
+                repos.file_read_repository.clone(),
                 storage_usage.clone(),
                 authz.clone(),
                 self.config.storage.max_upload_size as u64,
+                self.config.storage.chunk_max_bytes as u64,
             ),
         );
 

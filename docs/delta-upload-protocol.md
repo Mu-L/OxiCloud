@@ -108,6 +108,33 @@ If the caller already owns the exact `file_hash`, the commit
 short-circuits to a pure reference bump — chunks aren't even looked at
 (same as `POST /api/files/by-hash`).
 
+## Delta download (sync clients)
+
+The inverse direction, for a client app that already holds an older
+version locally and wants the server's current one:
+
+1. `GET /api/files/{id}/manifest` → `{ file_hash, total_size, chunks }`
+   — the file's chunk recipe. **Owner-scoped** like the rest of the
+   delta surface (shared files use the regular download endpoints).
+   Served with `ETag: "<file_hash>"`; a manifest is immutable for a
+   given hash, so `If-None-Match` revalidation answers 304 — polling
+   sync clients pay one header round-trip per unchanged file.
+2. Diff the manifest against the local chunk inventory (chunk the local
+   copy with the same WASM module the upload direction ships).
+3. `POST /api/files/delta/download` with `{ "hashes": […] }` → the
+   requested chunks as `[u32 BE length][bytes]` frames in request order
+   (the same wire format as the upload direction). Entitlement is the
+   same possession rule as negotiate/commit: chunks must be reachable
+   through the caller's own files; anything else → 404
+   `{ "not_available": […] }` — deliberately indistinguishable from
+   "never existed". Batches are bounded by `OXICLOUD_CHUNK_MAX_BYTES`;
+   split large deltas across requests.
+4. Reassemble locally per the manifest order and verify the whole-file
+   BLAKE3 against `file_hash`.
+
+Editing 3 bytes of a 24 MB file on one device costs a second device one
+manifest GET plus ~1 chunk (~256 KB) instead of 24 MB.
+
 ## Security model
 
 - **No content oracle.** Possession is proven per chunk: without bytes
@@ -122,8 +149,9 @@ short-circuits to a pure reference bump — chunks aren't even looked at
   commit. Orphan chunks are GC-swept.
 - **Audit.** Rejections emit `delta_upload.rejected` with stable
   `reason` keys: `rate_limited`, `chunk_verification_failed`,
-  `file_hash_mismatch`. AuthZ denials surface as the engine's standard
-  `authz.denied`.
+  `file_hash_mismatch` — and `delta_download.rejected` with
+  `manifest_not_owner` / `chunks_not_owned`. AuthZ denials surface as
+  the engine's standard `authz.denied`.
 
 ## Error summary
 

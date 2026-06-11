@@ -516,6 +516,76 @@ impl DedupService {
     //    recomputes BLAKE3 before any manifest row exists. A forged hash
     //    would otherwise poison future whole-file dedup hits for OTHER
     //    users uploading the genuine content.
+    //
+    // The download direction reuses invariant 1: a chunk's bytes are only
+    // served to callers whose own files already reference it.
+
+    /// The ordered chunk list composing `file_hash`, for the delta-download
+    /// manifest: `(chunks[(hash, size)], total_size)`.
+    ///
+    /// Legacy whole-file blobs (pre-CDC, not yet re-chunked) are presented
+    /// as a single-chunk manifest of themselves — the chunk download path
+    /// can serve them directly, so sync clients need no special case.
+    pub async fn manifest_chunk_list(
+        &self,
+        file_hash: &str,
+    ) -> Result<Option<(Vec<(String, u64)>, u64)>, DomainError> {
+        let manifest = sqlx::query_as::<_, (Vec<String>, Vec<i64>, i64)>(
+            "SELECT chunk_hashes, chunk_sizes, total_size
+               FROM storage.chunk_manifests WHERE file_hash = $1",
+        )
+        .bind(file_hash)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| DomainError::internal_error("Dedup", format!("Manifest lookup: {e}")))?;
+
+        if let Some((hashes, sizes, total)) = manifest {
+            let chunks = hashes
+                .into_iter()
+                .zip(sizes.into_iter().map(|s| s as u64))
+                .collect();
+            return Ok(Some((chunks, total as u64)));
+        }
+
+        // Legacy fallback: the blob is its own single chunk.
+        let legacy = sqlx::query_scalar::<_, i64>("SELECT size FROM storage.blobs WHERE hash = $1")
+            .bind(file_hash)
+            .fetch_optional(self.pool.as_ref())
+            .await
+            .map_err(|e| {
+                DomainError::internal_error("Dedup", format!("Legacy blob lookup: {e}"))
+            })?;
+        Ok(legacy.map(|size| (vec![(file_hash.to_string(), size as u64)], size as u64)))
+    }
+
+    /// Sizes of the given chunk hashes from the dedup index, keyed by hash.
+    /// Hashes without a row are simply absent from the result.
+    pub async fn chunk_sizes(
+        &self,
+        hashes: &[String],
+    ) -> Result<std::collections::HashMap<String, u64>, DomainError> {
+        if hashes.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        sqlx::query_as::<_, (String, i64)>(
+            "SELECT hash, size FROM storage.blobs WHERE hash = ANY($1)",
+        )
+        .bind(hashes)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map(|rows| rows.into_iter().map(|(h, s)| (h, s as u64)).collect())
+        .map_err(|e| DomainError::internal_error("Dedup", format!("chunk_sizes query: {e}")))
+    }
+
+    /// Stream one chunk's raw bytes from the backend. The caller is
+    /// responsible for entitlement (see [`claimable_chunks`]).
+    pub async fn chunk_stream(
+        &self,
+        hash: &str,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, DomainError>
+    {
+        self.backend.get_blob_stream(hash).await
+    }
 
     /// Of `hashes` (distinct), the subset `caller_id` may claim without
     /// uploading bytes: chunks referenced by manifests of the caller's
