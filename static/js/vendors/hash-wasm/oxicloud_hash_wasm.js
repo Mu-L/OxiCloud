@@ -71,6 +71,99 @@ export class Blake3Hasher {
 if (Symbol.dispose) Blake3Hasher.prototype[Symbol.dispose] = Blake3Hasher.prototype.free;
 
 /**
+ * Incremental FastCDC chunker + whole-file BLAKE3, for the delta-upload
+ * worker. Feed the file in slices; every call returns the chunks that
+ * became FINAL; `finish()` flushes the tail and returns the file hash.
+ *
+ * ```js
+ * const c = new DeltaChunker();
+ * for (const slice of slices) {
+ *     for (const [h, s] of JSON.parse(c.update(bytes))) { … }
+ * }
+ * const { chunks, file_hash } = JSON.parse(c.finish());
+ * ```
+ *
+ * Correctness of the incremental split: FastCDC decides each cut by
+ * scanning at most `CDC_MAX_CHUNK` bytes from the chunk's start. When
+ * the chunker runs over the buffered prefix of a longer file, every
+ * produced chunk except the LAST ended on a content/max-size condition
+ * — its decision window was fully available, so the full-file chunker
+ * makes the same cut. Only the last chunk (cut by "end of buffer") is
+ * provisional: it stays buffered and is re-examined when more bytes
+ * arrive. By induction the emitted boundaries equal a single FastCDC
+ * pass over the whole file — the mirror test below proves it.
+ */
+export class DeltaChunker {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DeltaChunkerFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_deltachunker_free(ptr, 0);
+    }
+    /**
+     * Flush the provisional tail and return
+     * `{"chunks":[["<hex>",size]…],"file_hash":"<hex>","total":N}`.
+     * `chunks` holds at most one entry (the tail); an empty file has none
+     * and its `file_hash` is BLAKE3 of the empty input.
+     * @returns {string}
+     */
+    finish() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.deltachunker_finish(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred1_0 = r0;
+            deferred1_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export2(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Create a chunker with the server's CDC parameters.
+     */
+    constructor() {
+        const ret = wasm.deltachunker_new();
+        this.__wbg_ptr = ret;
+        DeltaChunkerFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Feed one slice. Returns a JSON array of the chunks that became
+     * final: `[["<blake3-hex>", size], …]` (possibly empty).
+     * @param {Uint8Array} data
+     * @returns {string}
+     */
+    update(data) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.deltachunker_update(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred2_0 = r0;
+            deferred2_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export2(deferred2_0, deferred2_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) DeltaChunker.prototype[Symbol.dispose] = DeltaChunker.prototype.free;
+
+/**
  * One-shot convenience for small buffers.
  * @param {Uint8Array} data
  * @returns {string}
@@ -96,28 +189,26 @@ export function blake3Hex(data) {
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
-        __wbg___wbindgen_throw_bbadd78c1bac3a77: (arg0, arg1) => {
+        __wbg___wbindgen_throw_bbadd78c1bac3a77: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
-        }
+        },
     };
     return {
         __proto__: null,
-        './oxicloud_hash_wasm_bg.js': import0
+        "./oxicloud_hash_wasm_bg.js": import0,
     };
 }
 
-const Blake3HasherFinalization =
-    typeof FinalizationRegistry === 'undefined'
-        ? { register: () => {}, unregister: () => {} }
-        : new FinalizationRegistry((ptr) => wasm.__wbg_blake3hasher_free(ptr, 1));
+const Blake3HasherFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_blake3hasher_free(ptr, 1));
+const DeltaChunkerFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_deltachunker_free(ptr, 1));
 
 let cachedDataViewMemory0 = null;
 function getDataViewMemory0() {
-    if (
-        cachedDataViewMemory0 === null ||
-        cachedDataViewMemory0.buffer.detached === true ||
-        (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)
-    ) {
+    if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
         cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
     }
     return cachedDataViewMemory0;
@@ -177,13 +268,9 @@ async function __wbg_load(module, imports) {
                 const validResponse = module.ok && expectedResponseType(module.type);
 
                 if (validResponse && module.headers.get('Content-Type') !== 'application/wasm') {
-                    console.warn(
-                        '`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n',
-                        e
-                    );
-                } else {
-                    throw e;
-                }
+                    console.warn("`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n", e);
+
+                } else { throw e; }
             }
         }
 
@@ -201,10 +288,7 @@ async function __wbg_load(module, imports) {
 
     function expectedResponseType(type) {
         switch (type) {
-            case 'basic':
-            case 'cors':
-            case 'default':
-                return true;
+            case 'basic': case 'cors': case 'default': return true;
         }
         return false;
     }
@@ -213,11 +297,12 @@ async function __wbg_load(module, imports) {
 function initSync(module) {
     if (wasm !== undefined) return wasm;
 
+
     if (module !== undefined) {
         if (Object.getPrototypeOf(module) === Object.prototype) {
-            ({ module } = module);
+            ({module} = module)
         } else {
-            console.warn('using deprecated parameters for `initSync()`; pass a single object instead');
+            console.warn('using deprecated parameters for `initSync()`; pass a single object instead')
         }
     }
 
@@ -232,11 +317,12 @@ function initSync(module) {
 async function __wbg_init(module_or_path) {
     if (wasm !== undefined) return wasm;
 
+
     if (module_or_path !== undefined) {
         if (Object.getPrototypeOf(module_or_path) === Object.prototype) {
-            ({ module_or_path } = module_or_path);
+            ({module_or_path} = module_or_path)
         } else {
-            console.warn('using deprecated parameters for the initialization function; pass a single object instead');
+            console.warn('using deprecated parameters for the initialization function; pass a single object instead')
         }
     }
 
@@ -245,11 +331,7 @@ async function __wbg_init(module_or_path) {
     }
     const imports = __wbg_get_imports();
 
-    if (
-        typeof module_or_path === 'string' ||
-        (typeof Request === 'function' && module_or_path instanceof Request) ||
-        (typeof URL === 'function' && module_or_path instanceof URL)
-    ) {
+    if (typeof module_or_path === 'string' || (typeof Request === 'function' && module_or_path instanceof Request) || (typeof URL === 'function' && module_or_path instanceof URL)) {
         module_or_path = fetch(module_or_path);
     }
 
@@ -258,4 +340,4 @@ async function __wbg_init(module_or_path) {
     return __wbg_finalize_init(instance, module);
 }
 
-export { __wbg_init as default, initSync };
+export { initSync, __wbg_init as default };

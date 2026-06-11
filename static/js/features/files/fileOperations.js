@@ -12,7 +12,7 @@ import { i18n } from '../../core/i18n.js';
 import { notifications } from '../../core/notifications.js';
 import { invalidateFolderMeta } from '../../model/filesModel.js';
 import { triggerBrowserDownload } from '../../utils/download.js';
-import { tryInstantUpload } from './instantUpload.js';
+import { formatSavedSummary, tryDeltaUpload } from './deltaUpload.js';
 
 /**
  * @typedef {Object} BatchResult
@@ -392,6 +392,7 @@ const fileOps = {
             let uploadedCount = 0;
             let successCount = 0;
             let quotaStop = false;
+            let savedBytesTotal = 0;
 
             const targetFolderId = app.currentPath || app.userHomeFolderId;
 
@@ -405,12 +406,19 @@ const fileOps = {
                 if (quotaStop) return;
                 const file = readableFiles[idx];
 
-                // ── Instant upload: when the server already has this exact
-                // content for this user, register it by hash — zero bytes
-                // on the wire. Any miss/failure falls back to a byte upload.
-                /** @type {UploadAnswer | null} */
-                let result = await tryInstantUpload(file, targetFolderId);
+                // ── Delta upload: chunk + hash locally (worker/WASM) and
+                // transfer only what the server doesn't already have for
+                // this user. Any miss/failure falls back to a byte upload.
+                /** @type {UploadAnswer & { savedBytes?: number } | null} */
+                let result = await tryDeltaUpload(file, targetFolderId, (pct) => {
+                    if (batchId) {
+                        try {
+                            notifications.updateFile(batchId, file.name, pct, 'uploading');
+                        } catch (_) {}
+                    }
+                });
                 if (result) {
+                    savedBytesTotal += result.savedBytes || 0;
                     if (batchId) {
                         try {
                             notifications.updateFile(batchId, file.name, 100, result.ok ? 'done' : 'error');
@@ -492,6 +500,14 @@ const fileOps = {
 
             // All done
             this._finishUploadToast(successCount, totalFiles);
+            if (savedBytesTotal > 0 && notifications) {
+                notifications.addNotification({
+                    icon: 'fa-bolt',
+                    iconClass: 'upload',
+                    title: i18n?.getCurrentLocale?.()?.startsWith('es') ? 'Subida delta' : 'Delta upload',
+                    text: formatSavedSummary(savedBytesTotal, i18n?.getCurrentLocale?.() || 'en')
+                });
+            }
 
             // Refresh storage usage display
             try {
@@ -643,6 +659,7 @@ const fileOps = {
             let uploadedCount = 0;
             let successCount = 0;
             let quotaStop = false;
+            let savedBytesTotal = 0;
 
             // ── Concurrent upload with limited parallelism ──────────
             // FIFOs are pre-caught by the 0-byte arrayBuffer guard,
@@ -672,13 +689,14 @@ const fileOps = {
                     const parentPath = parts.slice(0, -1).join('/');
                     const targetFolderId = folderMap.get(parentPath) || currentFolderId;
 
-                    // ── Instant upload (zero bytes on the wire) ──
+                    // ── Delta upload (only changed bytes on the wire) ──
                     // Same fallback contract as uploadFiles: a null result
                     // means "do the byte upload". The shared accounting
                     // after this try block handles both outcomes.
-                    const instant = await tryInstantUpload(file, targetFolderId);
-                    if (instant) {
-                        result = instant;
+                    const delta = await tryDeltaUpload(file, targetFolderId);
+                    if (delta) {
+                        result = delta;
+                        savedBytesTotal += delta.savedBytes || 0;
                     } else {
                         // ── FIFO/pipe guard (0-byte files only) ──
                         // Named pipes (runit supervise/control) report size=0
@@ -773,6 +791,14 @@ const fileOps = {
             await Promise.all(workers);
 
             this._finishUploadToast(successCount, totalFiles);
+            if (savedBytesTotal > 0 && notifications) {
+                notifications.addNotification({
+                    icon: 'fa-bolt',
+                    iconClass: 'upload',
+                    title: i18n?.getCurrentLocale?.()?.startsWith('es') ? 'Subida delta' : 'Delta upload',
+                    text: formatSavedSummary(savedBytesTotal, i18n?.getCurrentLocale?.() || 'en')
+                });
+            }
 
             try {
                 await refreshUserData();

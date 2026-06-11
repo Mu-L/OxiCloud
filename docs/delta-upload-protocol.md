@@ -12,15 +12,20 @@ Editing a few bytes of a 500 MB file re-uploads ~1 MiB instead of
 
 ## Who can use it
 
-Any authenticated API client. The OxiCloud web frontend adopts it in a
-later phase; generic WebDAV/NextCloud clients cannot (their protocols
-have no delta concept) — they keep uploading full bytes, and the server
-keeps deduplicating those on write.
+Any authenticated API client. The OxiCloud web frontend uses it
+automatically for files ≥ 8 MiB (`features/files/deltaUpload.js` +
+`workers/deltaWorker.js`, chunking with the vendored WASM build of the
+server's own FastCDC+BLAKE3 crates, falling back to a plain byte upload
+on any failure). Generic WebDAV/NextCloud clients cannot (their
+protocols have no delta concept) — they keep uploading full bytes, and
+the server keeps deduplicating those on write.
 
 Chunk boundaries are the **client's choice**: matching the server's
-FastCDC parameters maximizes cross-version sharing, but any split with
-chunks of 1 byte … 1 MiB is valid — correctness is guaranteed by
-server-side verification, not by the chunking scheme.
+FastCDC parameters (64 KB / 256 KB / 1 MiB, as the bundled WASM module
+does) maximizes cross-version sharing — including against versions that
+entered through plain byte uploads — but any split with chunks of
+1 byte … 1 MiB is valid; correctness is guaranteed by server-side
+verification, not by the chunking scheme.
 
 ## The three steps
 
