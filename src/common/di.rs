@@ -457,13 +457,28 @@ impl AppServiceFactory {
             authz.clone(),
         ));
 
+        // Built before the upload/management services so the plugin lifecycle
+        // bridge (which looks file metadata up by id) can be wired into the
+        // dispatcher they receive. It depends only on repos + core, never on
+        // the upload service, so the reorder is safe.
+        let file_retrieval_service = Arc::new(FileRetrievalService::new_with_cache(
+            repos.file_read_repository.clone(),
+            core.file_content_cache.clone(),
+            core.image_transcode_service.clone(),
+            authz.clone(),
+        ));
+
+        // Effective lifecycle dispatcher: the core hooks (thumbnails, metadata)
+        // plus, when the plugins feature is enabled, the WASM plugin bridge.
+        let file_lifecycle = self.effective_file_lifecycle(core, &file_retrieval_service);
+
         let file_upload_service = Arc::new(
             FileUploadService::new_with_read(
                 repos.file_write_repository.clone(),
                 repos.file_read_repository.clone(),
             )
             .with_content_cache(core.file_content_cache.clone())
-            .with_file_lifecycle_hook(core.file_lifecycle.clone())
+            .with_file_lifecycle_hook(file_lifecycle.clone())
             .with_instant_upload(
                 authz.clone(),
                 core.dedup_service.clone(),
@@ -485,13 +500,6 @@ impl AppServiceFactory {
             ),
         );
 
-        let file_retrieval_service = Arc::new(FileRetrievalService::new_with_cache(
-            repos.file_read_repository.clone(),
-            core.file_content_cache.clone(),
-            core.image_transcode_service.clone(),
-            authz.clone(),
-        ));
-
         // FileManagementService — ref_count handled by PG trigger, no dedup port needed
         let file_management_service = Arc::new(
             FileManagementService::with_trash(
@@ -502,7 +510,7 @@ impl AppServiceFactory {
                 Some(core.file_content_cache.clone()),
                 authz.clone(),
             )
-            .with_file_lifecycle_hook(core.file_lifecycle.clone()),
+            .with_file_lifecycle_hook(file_lifecycle.clone()),
         );
 
         let file_use_case_factory = Arc::new(AppFileUseCaseFactory::new(
@@ -547,6 +555,64 @@ impl AppServiceFactory {
             audio_metadata_service: core.audio_metadata_service.clone(),
             media_metadata_service: core.media_metadata_service.clone(),
         }
+    }
+
+    /// Builds the file lifecycle dispatcher handed to the upload/management
+    /// services. By default this is just the core dispatcher (thumbnails,
+    /// metadata). When the `plugins` feature is built and enabled, it wraps the
+    /// core dispatcher together with the WASM plugin bridge so plugins observe
+    /// `file.uploaded` events without any of the core hooks being aware of them.
+    fn effective_file_lifecycle(
+        &self,
+        core: &CoreServices,
+        file_retrieval: &Arc<FileRetrievalService>,
+    ) -> Arc<dyn crate::application::ports::file_lifecycle::FileLifecycleHook> {
+        #[cfg(feature = "plugins")]
+        if self.config.plugins.enabled
+            && let Some(manager) = self.create_plugin_manager()
+        {
+            use crate::application::adapters::plugin_lifecycle_hook::PluginLifecycleHook;
+            use crate::application::ports::plugin_ports::PluginDispatchPort;
+
+            let dispatch: Arc<dyn PluginDispatchPort> = manager;
+            let bridge = Arc::new(PluginLifecycleHook::new(dispatch, file_retrieval.clone()));
+            let composite = FileLifecycleService::new()
+                .with_hook(core.file_lifecycle.clone())
+                .with_hook(bridge);
+            return Arc::new(composite);
+        }
+
+        let _ = file_retrieval;
+        core.file_lifecycle.clone()
+    }
+
+    /// Discovers and loads WASM plugins when the `plugins` feature is enabled and
+    /// `OXICLOUD_ENABLE_PLUGINS=true`. Plugins live under
+    /// `OXICLOUD_PLUGINS_DIR` (default `{storage_path}/.plugins`); a missing or
+    /// empty directory simply yields no plugins.
+    #[cfg(feature = "plugins")]
+    fn create_plugin_manager(
+        &self,
+    ) -> Option<Arc<crate::infrastructure::services::plugins::ExtismPluginManager>> {
+        if !self.config.plugins.enabled {
+            return None;
+        }
+        let dir = self
+            .config
+            .plugins
+            .plugins_dir
+            .clone()
+            .unwrap_or_else(|| self.config.storage_path.join(".plugins"));
+        let manager = crate::infrastructure::services::plugins::ExtismPluginManager::load_from_dir(
+            self.config.plugins.clone(),
+            &dir,
+        );
+        tracing::info!(
+            target: "oxicloud::plugins",
+            loaded = manager.loaded_count(),
+            "plugin manager initialized"
+        );
+        Some(Arc::new(manager))
     }
 
     /// Creates the audio metadata service (extracts ID3 tags from audio files)

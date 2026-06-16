@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Rebuild the committed plugin .wasm fixtures used by the plugin-runtime tests
+# (src/infrastructure/services/plugins/runtime_test.rs).
+#
+# The generated artifacts ARE committed — like the vendored BLAKE3 module — so
+# regular builds and `cargo test --features plugins` never need the wasm
+# toolchain. Re-run this only when wasm/oxicloud-plugin-hello/ changes, and
+# commit the regenerated files. CI rebuilds them and fails on any diff.
+#
+# Requirements (one-time):
+#   - the wasm32-unknown-unknown target. In the devenv this is provided by
+#     `languages.rust.targets` in devenv.nix; otherwise:
+#         rustup target add wasm32-unknown-unknown
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+CRATE=wasm/oxicloud-plugin-hello
+OUT=tests/fixtures/plugins
+ARTIFACT="$CRATE/target/wasm32-unknown-unknown/release/oxicloud_plugin_hello.wasm"
+
+# Needs the wasm32-unknown-unknown target's std. In the devenv this comes from
+# `languages.rust.targets` in devenv.nix; otherwise run
+# `rustup target add wasm32-unknown-unknown`. cargo emits a clear "can't find
+# crate for `std`" error below if it is missing.
+
+mkdir -p "$OUT"
+
+build() {
+    local variant="$1"; shift
+    echo "building $variant.wasm ${*:+(features: ${*#--features })}"
+    cargo build \
+        --manifest-path "$CRATE/Cargo.toml" \
+        --target wasm32-unknown-unknown \
+        --release "$@"
+    cp "$ARTIFACT" "$OUT/$variant.wasm"
+}
+
+build hello
+build panic     --features panic
+build sleep     --features sleep
+build net       --features net
+build wrong_abi --features wrong_abi
+
+echo "Built fixtures:"
+ls -la "$OUT"/*.wasm | awk '{print "  " $9 " (" $5 " bytes)"}'

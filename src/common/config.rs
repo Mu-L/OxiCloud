@@ -936,6 +936,45 @@ impl Default for ContentSearchConfig {
     }
 }
 
+/// WASM plugin runtime configuration (M0 walking skeleton).
+///
+/// The runtime is doubly gated: it is only compiled when the `plugins` cargo
+/// feature is enabled, and only activated when `enabled` is `true`. The limits
+/// below are conservative starting defaults, not part of the plugin ABI — each
+/// deployment may tune them.
+#[derive(Debug, Clone)]
+pub struct PluginConfig {
+    /// Master switch. When disabled, no plugins are loaded and the lifecycle
+    /// bridge hook is never registered. Env: `OXICLOUD_ENABLE_PLUGINS`.
+    pub enabled: bool,
+    /// Directory scanned for plugins at startup; each plugin is a subdirectory
+    /// containing `plugin.toml` + its `.wasm`. Default: `{storage_path}/.plugins`.
+    /// Env: `OXICLOUD_PLUGINS_DIR`.
+    pub plugins_dir: Option<PathBuf>,
+    /// Wall-clock timeout for a single `handle` invocation. A runaway plugin
+    /// cannot stall the upload path beyond this. Default: 250.
+    /// Env: `OXICLOUD_PLUGIN_TIMEOUT_MS`.
+    pub invocation_timeout_ms: u64,
+    /// Max linear memory per plugin instance, in WASM pages (64 KiB each).
+    /// Default: 256 (≈ 16 MiB). Env: `OXICLOUD_PLUGIN_MAX_MEMORY_PAGES`.
+    pub max_memory_pages: u32,
+    /// Hard cap on the serialized event payload handed to a plugin. Default:
+    /// 256 KiB. Env: `OXICLOUD_PLUGIN_MAX_INPUT_BYTES`.
+    pub max_input_bytes: usize,
+}
+
+impl Default for PluginConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            plugins_dir: None,
+            invocation_timeout_ms: 250,
+            max_memory_pages: 256,
+            max_input_bytes: 256 * 1024,
+        }
+    }
+}
+
 /// Global application configuration
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -977,6 +1016,8 @@ pub struct AppConfig {
     pub i18n: I18nConfig,
     /// Content-search configuration (embedded full-text index)
     pub content_search: ContentSearchConfig,
+    /// WASM plugin runtime configuration
+    pub plugins: PluginConfig,
 }
 
 /// Server-side i18n knobs.
@@ -1029,6 +1070,7 @@ impl Default for AppConfig {
             magic_link: MagicLinkConfig::default(),
             i18n: I18nConfig::default(),
             content_search: ContentSearchConfig::default(),
+            plugins: PluginConfig::default(),
         }
     }
 }
@@ -1316,6 +1358,33 @@ impl AppConfig {
             && let Ok(val) = v
         {
             config.content_search.max_text_bytes = val;
+        }
+
+        // WASM plugin runtime
+        if let Ok(v) = env::var("OXICLOUD_ENABLE_PLUGINS").map(|v| v.parse::<bool>())
+            && let Ok(val) = v
+        {
+            config.plugins.enabled = val;
+        }
+        if let Ok(dir) = env::var("OXICLOUD_PLUGINS_DIR")
+            && !dir.trim().is_empty()
+        {
+            config.plugins.plugins_dir = Some(PathBuf::from(dir.trim()));
+        }
+        if let Ok(v) = env::var("OXICLOUD_PLUGIN_TIMEOUT_MS").map(|v| v.parse::<u64>())
+            && let Ok(val) = v
+        {
+            config.plugins.invocation_timeout_ms = val;
+        }
+        if let Ok(v) = env::var("OXICLOUD_PLUGIN_MAX_MEMORY_PAGES").map(|v| v.parse::<u32>())
+            && let Ok(val) = v
+        {
+            config.plugins.max_memory_pages = val;
+        }
+        if let Ok(v) = env::var("OXICLOUD_PLUGIN_MAX_INPUT_BYTES").map(|v| v.parse::<usize>())
+            && let Ok(val) = v
+        {
+            config.plugins.max_input_bytes = val;
         }
 
         if let Ok(v) = env::var("OXICLOUD_EXPOSE_SYSTEM_USERS").map(|v| v.parse::<bool>())

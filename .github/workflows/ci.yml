@@ -24,6 +24,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       backend: ${{ steps.filter.outputs.backend }}
       wasm: ${{ steps.filter.outputs.wasm }}
+      plugins: ${{ steps.filter.outputs.plugins }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -48,6 +49,13 @@ jobs:
             wasm:
               - 'wasm/**'
               - 'scripts/build-wasm.sh'
+            plugins:
+              - 'wasm/oxicloud-plugin-hello/**'
+              - 'scripts/build-plugin-hello.sh'
+              - 'tests/fixtures/plugins/**'
+              - 'src/infrastructure/services/plugins/**'
+              - 'src/application/ports/plugin_ports.rs'
+              - 'src/application/adapters/plugin_lifecycle_hook.rs'
 
   frontend-check:
     name: Frontend — CSS and JS checks (format, lint, css-rules, types)
@@ -170,6 +178,29 @@ jobs:
         with:
           workspaces: wasm/oxicloud-hash
       - run: cargo test --release
+
+  # Plugin runtime (Extism). Rebuilds the committed .wasm fixtures from
+  # wasm/oxicloud-plugin-hello/ and fails if they drift from what is
+  # committed (staleness guard), then runs the plugin-runtime tests with
+  # the `plugins` feature. The wasm32 target is needed only to rebuild the
+  # fixtures; the host tests themselves do not need it.
+  plugins:
+    name: Plugins — fixtures + runtime tests
+    needs: changes
+    if: needs.changes.outputs.plugins == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Rebuild committed wasm fixtures
+        run: bash scripts/build-plugin-hello.sh
+      - name: Fail if fixtures are stale (rebuild + commit them)
+        run: git diff --exit-code tests/fixtures/plugins/
+      - name: Run plugin runtime tests
+        run: cargo test --features plugins plugins::
 
   rust-test:
     name: Server Unit and Functionnal Tests

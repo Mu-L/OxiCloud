@@ -5,6 +5,10 @@
     enable = true;
     channel = "stable";   # edition 2024 needs a recent stable (CLAUDE.md: Rust 1.93+)
     components = [ "rustc" "cargo" "clippy" "rustfmt" "rust-analyzer" "rust-src" ];
+    # wasm32 std for building the WASM plugin fixtures and the vendored BLAKE3
+    # module (scripts/build-plugin-hello.sh, scripts/build-wasm.sh). Only needed
+    # to *rebuild* those committed artifacts, not for normal server builds/tests.
+    targets = [ "wasm32-unknown-unknown" ];
   };
 
   # Native build deps + the full justfile toolchain.

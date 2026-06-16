@@ -22,6 +22,8 @@ pub mod password_hasher;
 pub mod path_resolver_service;
 pub mod path_service;
 pub mod pg_acl_engine;
+#[cfg(feature = "plugins")]
+pub mod plugins;
 pub mod retry_blob_backend;
 pub mod s3_blob_backend;
 pub mod search_index;

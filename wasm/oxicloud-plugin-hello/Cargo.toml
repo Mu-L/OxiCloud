@@ -1,0 +1,31 @@
+[package]
+name = "oxicloud-plugin-hello"
+version = "0.1.0"
+edition = "2021"
+description = "Example OxiCloud plugin (ABI v0) — the artifact the plugin-runtime acceptance test loads. Cargo features build the misbehaving variants used by the failure-isolation tests."
+publish = false
+
+# Standalone workspace root: built only by scripts/build-plugin-hello.sh on the
+# wasm32 target, never by the server's `cargo test --workspace` / clippy.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+extism-pdk = "1"
+serde_json = "1"
+
+[features]
+default = []
+# Misbehaving variants for the failure-isolation tests. Each builds a separate
+# fixture under tests/fixtures/plugins/ via the build script.
+panic = []       # `handle` panics -> host must contain the trap
+sleep = []       # `handle` busy-loops past the timeout
+net = []         # `handle` attempts an outbound HTTP call (denied: no allowed_hosts)
+wrong_abi = []   # `abi_version` returns 1 -> host must reject at load
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
