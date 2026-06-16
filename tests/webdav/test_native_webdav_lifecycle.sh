@@ -332,44 +332,33 @@ LOCK_TOKEN=$(grep -i '^lock-token:' <<< "$HEADERS" | awk '{print $2}' | tr -d '\
 pass "N1: LOCK → 200 + Lock-Token=$LOCK_TOKEN"
 
 # ─────────────────────────────────────────────────────────────
-# N2 — PUT without the lock token → 423 Locked
-# ─────────────────────────────────────────────────────────────
-# ─────────────────────────────────────────────────────────────
-# N2 — PUT to a locked file without the token
+# N2 — PUT to a locked file without the token → 423 Locked
 #
 # RFC 4918 §9.10.4 + §6: a writeable resource under an
 # exclusive lock MUST reject conflicting writes with 423
-# Locked. OxiCloud's native handler currently does NOT consult
-# the lock store before writing — LOCK just produces a token,
-# and any PUT/DELETE/MOVE/PROPPATCH succeeds regardless. The
-# class-2 DAV advertisement in M1 is therefore aspirational:
-# the protocol surface exists, the enforcement doesn't.
-#
-# Where the fix lives:
-# `interfaces/api/handlers/webdav_handler.rs::handle_put` (and
-# the mutator paths in handle_delete / handle_move / handle_copy /
-# handle_proppatch) — each needs to check the WebDAV lock service
-# for an active lock on the target path and reject with 423 if
-# the request doesn't carry a matching `If: (<token>)` header.
-# The lock store itself already records tokens — confirmed by N1
-# capturing one — so the gap is purely on the read-side check.
+# Locked unless the request submits the lock token in `If:`.
+# N2b verifies the inverse: same PUT with the correct
+# `If: (<token>)` header succeeds, proving the gate isn't
+# blocking legitimate updates from the lock owner.
 # ─────────────────────────────────────────────────────────────
-echo "  N2: PUT /webdav/n-locked.txt without If:(<token>) — pinned: lock not enforced (RFC would 423)"
+echo "  N2: PUT /webdav/n-locked.txt without If:(<token>) → 423"
 STATUS=$(dav_curl -o /dev/null -w "%{http_code}" -X PUT \
     -H "Content-Type: text/plain" \
     --data-binary 'tampered contents' \
     "$DAV_BASE/n-locked.txt")
-case "$STATUS" in
-    204)
-        pass "N2: PUT succeeded despite active lock → 204 (KNOWN BUG: lock not enforced — pinned)"
-        ;;
-    423)
-        fail "N2: server now returns 423 Locked. Lock enforcement was added — update this pin to assert == 423."
-        ;;
-    *)
-        fail "N2: unexpected status $STATUS"
-        ;;
-esac
+[[ "$STATUS" == "423" ]] \
+    || fail "N2: expected 423 Locked for PUT to locked path without token, got $STATUS"
+pass "N2: PUT to locked path without token → 423"
+
+echo "  N2b: PUT /webdav/n-locked.txt WITH If:(<token>) → 204"
+STATUS=$(dav_curl -o /dev/null -w "%{http_code}" -X PUT \
+    -H "Content-Type: text/plain" \
+    -H "If: (<$LOCK_TOKEN>)" \
+    --data-binary 'authorised update' \
+    "$DAV_BASE/n-locked.txt")
+[[ "$STATUS" == "204" ]] \
+    || fail "N2b: expected 204 No Content for PUT with correct lock token, got $STATUS"
+pass "N2b: PUT with matching If:(<token>) → 204"
 
 # ─────────────────────────────────────────────────────────────
 # N3 — UNLOCK with token → 204; subsequent PUT succeeds

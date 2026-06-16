@@ -895,6 +895,66 @@ async fn handle_head(
         .unwrap())
 }
 
+/// Extract every `<...>` token from a WebDAV `If:` header value.
+///
+/// RFC 4918 §10.4 defines a richer grammar (tagged-list / no-tag-list of
+/// `(Condition)` items), but for our purposes the only thing that matters
+/// is what lock tokens the caller is claiming to hold. Forgivingly scoop
+/// every angle-bracketed value and let the caller compare against the
+/// active lock token(s).
+fn extract_if_header_tokens(if_header: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut inside = false;
+    for c in if_header.chars() {
+        match (inside, c) {
+            (false, '<') => {
+                inside = true;
+                current.clear();
+            }
+            (true, '>') => {
+                inside = false;
+                if !current.is_empty() {
+                    out.push(std::mem::take(&mut current));
+                }
+            }
+            (true, c) => current.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// RFC 4918 §9.10.4 — if `path` is locked, every mutating request MUST
+/// carry the lock's token in its `If:` header. Returns `Some(Response)`
+/// with a 423 Locked response when the request must be rejected; `None`
+/// when the path is unlocked or the caller's `If:` header carries the
+/// matching token (the cheap-and-cheerful submission check).
+///
+/// Shared by `handle_put` now and will be reused by `handle_delete`,
+/// `handle_move`, `handle_copy`, and `handle_proppatch` when each of
+/// those gets the same enforcement.
+fn enforce_native_lock(
+    lock_store: &crate::infrastructure::services::webdav_lock_service::WebDavLockStore,
+    if_header: Option<&str>,
+    path: &str,
+) -> Option<Response<Body>> {
+    let entry = lock_store.get_by_path(path)?;
+    if let Some(h) = if_header
+        && extract_if_header_tokens(h)
+            .iter()
+            .any(|t| t == &entry.info.token)
+    {
+        return None;
+    }
+    Some(
+        Response::builder()
+            .status(StatusCode::LOCKED)
+            .body(Body::empty())
+            .unwrap(),
+    )
+}
+
 /**
  * Handles PUT requests to create or update files.
  *
@@ -924,6 +984,23 @@ async fn handle_put(
     // Check if path is empty (root folder)
     if path.is_empty() || path == "/" {
         return Err(AppError::bad_request("Cannot PUT to root folder"));
+    }
+
+    // ── Active-lock guard (RFC 4918 §9.10.4) ──────────────────────────
+    // Reject a write that targets a locked resource unless the request
+    // carries the lock token in `If:`. Captured before we consume the
+    // body into the CDC ingester — a 423 mustn't waste any bandwidth.
+    let if_header_owned = req
+        .headers()
+        .get("If")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    if let Some(resp) = enforce_native_lock(
+        &state.webdav_lock_store,
+        if_header_owned.as_deref(),
+        &path,
+    ) {
+        return Ok(resp);
     }
 
     // ── Ownership guard ────────────────────────────────────────
