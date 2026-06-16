@@ -319,38 +319,43 @@ grep -q '<d:collection/>' <<< "$BODY" \
 pass "F10: MKCOL creates folder, PROPFIND sees it as a collection"
 
 # ─────────────────────────────────────────────────────────────
-# F11 — MKCOL with missing intermediate parent
+# F11 / F11b / F11c — MKCOL parent semantics (RFC 4918 §9.3.1)
 #
-# Pinned current behaviour: OxiCloud's MKCOL auto-creates
-# missing intermediate parents (effectively `mkdir -p`
-# semantics). Sending MKCOL on `/a/b/c/` where neither `a` nor
-# `b` exists succeeds with 201 — both intermediates are
-# silently created.
+# F11  : missing intermediate parent → 409 Conflict
+# F11b : parent exists, target new   → 201 Created (positive case)
+# F11c : target already exists       → 405 Method Not Allowed
 #
-# Strict RFC 4918 §9.3.1 requires 409 Conflict here ("when the
-# parent collection does not exist"). NC desktop tolerates
-# either behaviour (it always MKCOLs ancestors one at a time
-# during sync), so the auto-create behaviour is harmless in
-# practice — but if you ever want strict mode, the fix lives
-# in `interfaces/nextcloud/webdav_handler.rs::handle_mkcol`:
-# look up the parent path before creating; 409 if missing.
+# Sabre/DAV and the actual NC server both 409 on a missing
+# intermediate; our previous `mkdir -p` behaviour deviated. NC
+# desktop walks ancestors one MKCOL at a time during sync so
+# nothing real breaks from dropping the auto-create.
 # ─────────────────────────────────────────────────────────────
-echo "  F11: MKCOL with missing parent (pinned: auto-creates parents, RFC-4918 would 409)"
+echo "  F11: MKCOL with missing intermediate parent → 409"
 STATUS=$(nc_curl -o /dev/null -w "%{http_code}" -X MKCOL \
     "$NC_FILES_BASE/f11-nonexistent-parent/inner/")
-case "$STATUS" in
-    201)
-        pass "F11: MKCOL auto-created intermediate parents (201) — pinned current behaviour"
-        ;;
-    409)
-        fail "F11: server now returns 409 (RFC-4918 strict). Bug? Improvement? — review and update pin to strict assertion."
-        ;;
-    *)
-        fail "F11: unexpected status $STATUS"
-        ;;
-esac
-# Cleanup the auto-created parent so subsequent tests don't see it.
-nc_curl -o /dev/null -X DELETE "$NC_FILES_BASE/f11-nonexistent-parent/" > /dev/null 2>&1 || true
+[[ "$STATUS" == "409" ]] \
+    || fail "F11: expected 409 Conflict for MKCOL with missing parent, got $STATUS"
+# The non-existent parent must NOT have been auto-created either.
+[[ "$(nc_status_propfind_depth0 "$NC_FILES_BASE/f11-nonexistent-parent/")" == "404" ]] \
+    || fail "F11: intermediate parent was silently created — auto-create still happening"
+pass "F11: MKCOL with missing parent → 409, parent not silently created"
+
+echo "  F11b: MKCOL with existing parent + new target → 201"
+nc_curl -o /dev/null -X MKCOL "$NC_FILES_BASE/f11b-parent/" > /dev/null
+STATUS=$(nc_curl -o /dev/null -w "%{http_code}" -X MKCOL \
+    "$NC_FILES_BASE/f11b-parent/child/")
+[[ "$STATUS" == "201" ]] \
+    || fail "F11b: expected 201 Created for MKCOL with existing parent, got $STATUS"
+[[ "$(nc_status_propfind_depth0 "$NC_FILES_BASE/f11b-parent/child/")" == "207" ]] \
+    || fail "F11b: target collection not visible via PROPFIND after MKCOL"
+pass "F11b: MKCOL with existing parent → 201, target reachable"
+
+echo "  F11c: MKCOL with target that already exists → 405"
+STATUS=$(nc_curl -o /dev/null -w "%{http_code}" -X MKCOL \
+    "$NC_FILES_BASE/f11b-parent/child/")
+[[ "$STATUS" == "405" ]] \
+    || fail "F11c: expected 405 Method Not Allowed for MKCOL on existing collection, got $STATUS"
+pass "F11c: MKCOL on existing target → 405"
 
 # ─────────────────────────────────────────────────────────────
 # F12 — MKCOL on existing folder → 405

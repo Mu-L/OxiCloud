@@ -712,7 +712,18 @@ async fn handle_mkcol(
     let folder_service = &state.applications.folder_service;
     let internal_path = nc_to_internal_path(&user.username, subpath)?;
 
-    // If the folder already exists, return 405 per RFC 4918 §9.3.1
+    // RFC 4918 §9.3.1:
+    //   - target already exists                                → 405 Method Not Allowed
+    //   - parent collection of the target does NOT exist       → 409 Conflict
+    //   - parent exists and target does not                    → 201 Created
+    //
+    // Previous behaviour effectively performed `mkdir -p` and returned
+    // 201 even when intermediate ancestors were missing. Sabre/DAV and
+    // the actual NC server both return 409 here, so the legacy
+    // auto-create deviated from the reference implementation. NC desktop
+    // walks ancestors one MKCOL at a time anyway, so dropping the
+    // auto-create doesn't break real clients.
+
     if folder_service
         .get_folder_by_path(&internal_path)
         .await
@@ -724,56 +735,37 @@ async fn handle_mkcol(
             .unwrap());
     }
 
-    // Collect path segments that need to be created (walk from root to leaf)
     let segments: Vec<&str> = subpath.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.is_empty() {
+        return Err(AppError::bad_request("MKCOL on the user root is not allowed"));
+    }
+    let (target_name, parent_segments) = segments.split_last().expect("checked non-empty above");
 
     let user_root = nc_to_internal_path(&user.username, "")?;
-    let mut current_path = user_root.clone();
-    let mut parent_id = folder_service
-        .get_folder_by_path(&user_root)
-        .await
-        .map_err(|_| AppError::not_found("User root folder not found"))?
-        .id
-        .clone();
+    let parent_path = if parent_segments.is_empty() {
+        user_root.clone()
+    } else {
+        format!("{}/{}", user_root, parent_segments.join("/"))
+    };
 
-    for segment in &segments {
-        current_path = format!("{}/{}", current_path, segment);
-        match folder_service.get_folder_by_path(&current_path).await {
-            Ok(existing) => {
-                parent_id = existing.id.clone();
-            }
-            Err(_) => {
-                let dto = CreateFolderDto {
-                    name: segment.to_string(),
-                    parent_id: Some(parent_id.clone()),
-                };
-                match folder_service.create_folder_with_perms(dto, user.id).await {
-                    Ok(created) => {
-                        parent_id = created.id.clone();
-                    }
-                    Err(e)
-                        if e.message.contains("already exists")
-                            || e.message.contains("Already Exists") =>
-                    {
-                        // Race condition — folder created concurrently
-                        let folder = folder_service
-                            .get_folder_by_path(&current_path)
-                            .await
-                            .map_err(|_| {
-                                AppError::internal_error("Folder exists but cannot be found")
-                            })?;
-                        parent_id = folder.id.clone();
-                    }
-                    Err(e) => {
-                        return Err(AppError::internal_error(format!(
-                            "Failed to create folder: {}",
-                            e
-                        )));
-                    }
-                }
-            }
+    let parent_folder = match folder_service.get_folder_by_path(&parent_path).await {
+        Ok(folder) => folder,
+        Err(_) => {
+            return Ok(Response::builder()
+                .status(StatusCode::CONFLICT)
+                .body(Body::empty())
+                .unwrap());
         }
-    }
+    };
+
+    let dto = CreateFolderDto {
+        name: target_name.to_string(),
+        parent_id: Some(parent_folder.id.clone()),
+    };
+    folder_service
+        .create_folder_with_perms(dto, user.id)
+        .await
+        .map_err(|e| AppError::internal_error(format!("Failed to create folder: {}", e)))?;
 
     Ok(Response::builder()
         .status(StatusCode::CREATED)
