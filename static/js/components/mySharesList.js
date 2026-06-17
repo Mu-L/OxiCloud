@@ -454,7 +454,7 @@ class MySharesList {
             );
             menu.appendChild(this._menuSeparator());
 
-            for (const role of /** @type {('admin'|'editor'|'viewer')[]} */ (['admin', 'editor', 'viewer'])) {
+            for (const role of /** @type {('owner'|'editor'|'viewer')[]} */ (['owner', 'editor', 'viewer'])) {
                 const isCurrent = grant.role === role;
                 const mi = this._menuItem(isCurrent ? 'fas fa-check' : '', roleLabel(role), false, async () => {
                     menu.remove();

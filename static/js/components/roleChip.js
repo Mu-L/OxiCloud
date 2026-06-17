@@ -23,7 +23,7 @@ import { i18n } from '../core/i18n.js';
  * @returns {'manage'|'edit'|'view'}
  */
 function roleMod(role) {
-    if (role === 'admin') return 'manage';
+    if (role === 'owner') return 'manage';
     if (role === 'editor') return 'edit';
     return 'view';
 }
@@ -31,14 +31,17 @@ function roleMod(role) {
 /**
  * Translate a role identifier into a localized human-readable label.
  * Exported so callers that just want the label (e.g. context-menu rows)
- * can reuse the same wording the chip uses.
+ * can reuse the same wording the chip uses. Unknown roles fall back to
+ * the raw role string — `commenter` and `contributor` exist server-side
+ * but aren't surfaced in the UI today, so they'll display as-is until a
+ * future UI exposure adds proper labels.
  * @param {string} role
  * @returns {string}
  */
 export function roleLabel(role) {
     /** @type {Record<string,string>} */
     const m = {
-        admin: i18n.t('share.role.canManage', 'Can manage'),
+        owner: i18n.t('share.role.canManage', 'Can manage'),
         editor: i18n.t('share.role.canEdit', 'Can edit'),
         viewer: i18n.t('share.role.canView', 'Can view')
     };
@@ -51,7 +54,7 @@ export function roleLabel(role) {
  * @returns {string}
  */
 function roleIcon(role) {
-    if (role === 'admin') return 'fa-crown';
+    if (role === 'owner') return 'fa-crown';
     if (role === 'editor') return 'fa-pencil-alt';
     return 'fa-eye';
 }

@@ -140,18 +140,29 @@ pub enum Permission {
     Delete,
     /// Modify the resource (rename, move, edit content).
     Update,
+    /// Configure the resource's settings, add/remove members, change role
+    /// assignments. Used by:
+    /// - Drive owners managing drive membership and policies.
+    /// - Group owners managing the group itself (Group-as-Resource, future).
+    ///
+    /// Folder and file resources do not currently surface a `Manage` check;
+    /// the permission lives in the enum because the role bundle (`Owner`)
+    /// includes it, and the resource types that DO check it (`Drive`,
+    /// `Group`) are added in subsequent PRs (see `docs/plan/drive.md`).
+    Manage,
 }
 
 impl Permission {
     /// Every permission, in a stable order. Used by `Role::expand()` and SQL
     /// `permission = ANY(...)` lookups.
-    pub const ALL: [Permission; 6] = [
+    pub const ALL: [Permission; 7] = [
         Permission::Read,
         Permission::Create,
         Permission::Share,
         Permission::Comment,
         Permission::Delete,
         Permission::Update,
+        Permission::Manage,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -162,6 +173,7 @@ impl Permission {
             Permission::Comment => "comment",
             Permission::Delete => "delete",
             Permission::Update => "update",
+            Permission::Manage => "manage",
         }
     }
 
@@ -175,6 +187,7 @@ impl Permission {
             "comment" => Some(Permission::Comment),
             "delete" => Some(Permission::Delete),
             "update" => Some(Permission::Update),
+            "manage" => Some(Permission::Manage),
             _ => None,
         }
     }

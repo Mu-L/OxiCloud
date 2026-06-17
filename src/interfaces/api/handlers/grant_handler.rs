@@ -14,7 +14,7 @@ use axum::{
 use futures::future::join_all;
 use serde::Deserialize;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 use utoipa::IntoParams;
 use uuid::Uuid;
 
@@ -22,7 +22,7 @@ use crate::application::dtos::cursor::PageCursor;
 use crate::application::dtos::grant_dto::{
     CreateGrantDto, CreateGrantResponseDto, GrantDto, MySharesDto, NotifyOutcomeSetDto,
     OutgoingResourceGrantDto, OutgoingResourceItemDto, PermissionDto, ResourceContentDto,
-    ResourceDto, ResourceTypeDto, SharedWithMeDto, SharedWithMeItemDto, SharedWithMeQuery,
+    ResourceDto, ResourceTypeDto, Role, SharedWithMeDto, SharedWithMeItemDto, SharedWithMeQuery,
     SubjectDto, SubjectInputDto, UpdateRoleDto, role_from_permissions,
 };
 use crate::application::ports::authorization_ports::AuthorizationEngine;
@@ -66,10 +66,23 @@ pub async fn create_grant(
     let authz = &state.authorization;
     let caller_id = auth_user.id;
 
-    // Validate: exactly one of permissions/role
-    let permissions: Vec<Permission> = match (dto.permissions, dto.role) {
-        (Some(perms), None) if !perms.is_empty() => perms.into_iter().map(Into::into).collect(),
-        (None, Some(role)) => role.expand().to_vec(),
+    // Validate: exactly one of permissions/role. Capture BOTH the
+    // permission list (for the per-permission access_grants writes that
+    // keep the old engine read path working) AND the role (for the new
+    // role_grants `set_role` dual-write that lands after the per-
+    // permission loop).
+    let (permissions, role): (Vec<Permission>, Role) = match (dto.permissions, dto.role) {
+        (Some(perms), None) if !perms.is_empty() => {
+            let perms: Vec<Permission> = perms.into_iter().map(Into::into).collect();
+            // Derive the closest matching role from the raw permission set
+            // so we have ONE role to mirror into role_grants. `Role::parse`
+            // always succeeds here because `role_from_permissions` only
+            // emits known role strings.
+            let role = Role::parse(role_from_permissions(&perms))
+                .expect("role_from_permissions returns a known role string");
+            (perms, role)
+        }
+        (None, Some(role)) => (role.expand().to_vec(), role),
         (Some(_), Some(_)) => {
             return AppError::new(
                 StatusCode::BAD_REQUEST,
@@ -154,6 +167,16 @@ pub async fn create_grant(
 
     let mut results: Vec<GrantDto> = Vec::with_capacity(permissions.len());
     for perm in permissions {
+        // `storage.access_grants.permission` CHECK constraint predates
+        // `Permission::Manage`; it accepts only the original 6 values.
+        // Manage exists in the Owner bundle for engine read-path use
+        // (via `roles_implying`) and gets persisted via the role_grants
+        // dual-write below. Skipping it here keeps the access_grants
+        // safety net populated without tripping the CHECK; the cleanup
+        // PR that drops access_grants also drops this skip.
+        if perm == Permission::Manage {
+            continue;
+        }
         match authz
             .grant(caller_id, subject, perm, resource, expires_at)
             .await
@@ -165,12 +188,31 @@ pub async fn create_grant(
             }
         }
     }
-    info!(
-        "Created {} grant(s) for subject={:?} on resource={:?} by user {}",
-        results.len(),
-        subject,
-        resource,
-        caller_id
+
+    // D-Prep dual-write: mirror the role assignment into storage.role_grants.
+    // ON CONFLICT UPDATE makes this idempotent — repeated POSTs with the
+    // same (subject, resource) update the role in place, matching the
+    // PATCH-style semantics callers will get after the engine read pivot.
+    if let Err(err) = authz
+        .set_role(caller_id, subject, role, resource, expires_at)
+        .await
+    {
+        error!("set_role dual-write failed: {err}");
+        return AppError::from(err).into_response();
+    }
+
+    tracing::info!(
+        target: "audit",
+        event = "role_grant.created",
+        caller_id = %caller_id,
+        subject_type = subject.type_str(),
+        subject_id = %subject.id(),
+        resource_type = resource.type_str(),
+        resource_id = %resource.id(),
+        role = role.as_str(),
+        permission_count = results.len(),
+        expires_at = ?expires_at,
+        "🤝 grant created with role '{}'", role.as_str(),
     );
 
     // PR N1 — route the post-grant notification through the unified
@@ -274,17 +316,20 @@ pub async fn revoke_grant(
         Err(_) => return AppError::not_found(format!("Grant {id} not found")).into_response(),
     };
 
-    // Look up the grant to find the underlying resource (and granter).
-    let on_resource = match authz.find_grant_by_id(grant_id).await {
-        Ok(Some((res, granter))) => (res, granter),
+    // Look up the grant to find the subject, resource, and granter.
+    // `find_grant_full_by_id` returns the subject too — needed for the
+    // `clear_role` dual-write below (role_grants is keyed by (subject,
+    // resource), not by access_grants id).
+    let (subject, resource, granter) = match authz.find_grant_full_by_id(grant_id).await {
+        Ok(Some(triple)) => triple,
         Ok(None) => return StatusCode::NO_CONTENT.into_response(), // idempotent
         Err(e) => return AppError::from(e).into_response(),
     };
 
     // Caller is authorized if they are the granter OR have Share on the resource.
-    if on_resource.1 != caller_id
+    if granter != caller_id
         && let Err(e) = authz
-            .require(Subject::User(caller_id), Permission::Share, on_resource.0)
+            .require(Subject::User(caller_id), Permission::Share, resource)
             .await
     {
         return AppError::from(e).into_response();
@@ -293,7 +338,36 @@ pub async fn revoke_grant(
     if let Err(e) = authz.revoke(grant_id).await {
         return AppError::from(e).into_response();
     }
-    info!("Revoked grant {grant_id} (caller {caller_id})");
+
+    // D-Prep dual-write: clear the role_grants row for this (subject,
+    // resource). Idempotent — succeeds whether or not the row existed.
+    //
+    // Today's API revokes one access_grants row by id; the role_grants
+    // row models the WHOLE (subject, resource) cluster. Calling clear_role
+    // here effectively revokes the WHOLE role assignment in role_grants,
+    // even if other per-permission access_grants rows remain. This is the
+    // correct semantics for the eventual cleanup-PR model (role_grants is
+    // role-keyed; once access_grants goes away, "revoke" means "drop the
+    // role"). During the dual-write window the two tables can drift
+    // briefly if a caller revokes only some permissions of a role, but
+    // the engine still reads access_grants so behaviour is unchanged.
+    if let Err(e) = authz.clear_role(subject, resource).await {
+        return AppError::from(e).into_response();
+    }
+
+    tracing::info!(
+        target: "audit",
+        event = "role_grant.revoked",
+        caller_id = %caller_id,
+        grant_id = %grant_id,
+        subject_type = subject.type_str(),
+        subject_id = %subject.id(),
+        resource_type = resource.type_str(),
+        resource_id = %resource.id(),
+        granter_id = %granter,
+        self_revoke = (granter == caller_id),
+        "🗑️ grant revoked",
+    );
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -509,9 +583,22 @@ pub async fn set_role(
         .map(|g| g.permission)
         .collect();
 
-    // Diff and apply.
-    let to_add: Vec<Permission> = target_perms.difference(&current_perms).copied().collect();
-    let to_remove: Vec<Permission> = current_perms.difference(&target_perms).copied().collect();
+    // Diff and apply. `Permission::Manage` is excluded from both sides
+    // because the historical `access_grants.permission` CHECK doesn't
+    // accept it — see the matching skip in `create_grant`. The role
+    // assignment captures Manage via the role_grants `set_role` call
+    // further down; the engine's read-path uses `roles_implying(Manage)`
+    // → `[Owner]` and never goes through per-permission rows.
+    let to_add: Vec<Permission> = target_perms
+        .difference(&current_perms)
+        .copied()
+        .filter(|p| *p != Permission::Manage)
+        .collect();
+    let to_remove: Vec<Permission> = current_perms
+        .difference(&target_perms)
+        .copied()
+        .filter(|p| *p != Permission::Manage)
+        .collect();
 
     for perm in &to_remove {
         if let Some(g) = current
@@ -542,6 +629,19 @@ pub async fn set_role(
         return AppError::from(e).into_response();
     }
 
+    // D-Prep dual-write: mirror the resulting role into storage.role_grants.
+    // The per-permission diff above keeps access_grants converged; this
+    // single UPSERT keeps role_grants in sync with the OVERALL outcome
+    // (one row carrying the role + expiry). After the engine read pivot
+    // and the access_grants drop, the per-permission diff above goes
+    // away and this call becomes the only mutation the handler performs.
+    if let Err(e) = authz
+        .set_role(caller_id, subject, dto.role, resource, expires_at)
+        .await
+    {
+        return AppError::from(e).into_response();
+    }
+
     // Return the new full set.
     let after = match authz.list_grants_on_resource(resource).await {
         Ok(g) => g,
@@ -553,9 +653,22 @@ pub async fn set_role(
         .map(Into::into)
         .collect();
 
-    info!(
-        "Role applied: caller={} subject={:?} resource={:?} added={:?} removed={:?}",
-        caller_id, subject, resource, to_add, to_remove
+    tracing::info!(
+        target: "audit",
+        event = "role_grant.role_set",
+        caller_id = %caller_id,
+        subject_type = subject.type_str(),
+        subject_id = %subject.id(),
+        resource_type = resource.type_str(),
+        resource_id = %resource.id(),
+        role = dto.role.as_str(),
+        permissions_added = to_add.len(),
+        permissions_removed = to_remove.len(),
+        expires_at = ?expires_at,
+        "🔁 role set to '{}' (+{} -{})",
+        dto.role.as_str(),
+        to_add.len(),
+        to_remove.len(),
     );
     (StatusCode::OK, Json(mine)).into_response()
 }

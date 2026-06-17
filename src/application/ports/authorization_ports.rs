@@ -181,4 +181,40 @@ pub trait AuthorizationEngine: Send + Sync + 'static {
     /// Removes every grant whose `subject` matches. Called when a user/token
     /// /group is deleted. Returns the count of rows removed.
     async fn revoke_all_for_subject(&self, subject: Subject) -> Result<usize, DomainError>;
+
+    // ── Role-keyed grant operations (D-Prep dual-write) ────────────────────
+    // These manage `storage.role_grants`, the role-keyed table introduced
+    // by the D-Prep refactor (see `docs/plan/drive.md` §Prerequisite).
+    //
+    // During the dual-write window both tables stay populated; the engine
+    // reads from `access_grants` until the read-path pivot lands. After
+    // the cleanup PR (which drops `access_grants`), these two methods
+    // become the ONLY grant write path — the per-permission `grant` /
+    // `revoke` above are removed at that point.
+    //
+    // The handler layer drives these (it knows the Role); lifecycle hook
+    // bulk-deletes (`revoke_all_for_*` above) wipe role_grants in lockstep
+    // inside their own implementation, so callers using those paths don't
+    // need to invoke `clear_role` separately.
+
+    /// Set the role for a `(subject, resource)` pair. Idempotent via the
+    /// UNIQUE `(subject_type, subject_id, resource_type, resource_id)`
+    /// constraint — `ON CONFLICT` updates the role + expires_at if they
+    /// changed, which is exactly the right semantics for an atomic role
+    /// change (e.g. promoting Viewer → Editor in one UPDATE with no race
+    /// window, no DELETE+INSERT).
+    async fn set_role(
+        &self,
+        granted_by: Uuid,
+        subject: Subject,
+        role: crate::application::dtos::grant_dto::Role,
+        resource: Resource,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(), DomainError>;
+
+    /// Remove the role for a `(subject, resource)` pair. Idempotent —
+    /// succeeds whether or not the row existed. Called after `revoke`
+    /// succeeds to keep the two tables in sync during dual-write; after
+    /// cleanup this is the canonical role-revocation entry point.
+    async fn clear_role(&self, subject: Subject, resource: Resource) -> Result<(), DomainError>;
 }

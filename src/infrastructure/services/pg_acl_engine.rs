@@ -37,6 +37,7 @@ use uuid::Uuid;
 use moka::future::Cache;
 use sqlx::PgPool;
 
+use crate::application::dtos::grant_dto::roles_implying;
 use crate::application::ports::authorization_ports::AuthorizationEngine;
 use crate::common::errors::DomainError;
 use crate::domain::entities::subject_group::INTERNAL_GROUP_ID;
@@ -237,6 +238,22 @@ impl PgAclEngine {
         }
     }
 
+    /// Convert a `Permission` into the array of role strings whose bundle
+    /// includes it — used to bind the `g.role = ANY($N::text[])` filter on
+    /// every cascade / lookup query that reads `storage.role_grants`.
+    ///
+    /// This is the inverse of `Role::expand()`, precomputed via
+    /// `grant_dto::roles_implying()`. The mapping is small and static (≤5
+    /// roles per permission today); resolving it in code keeps the SQL
+    /// path simple and lets us add new roles without touching every
+    /// query site.
+    fn roles_implying_strings(permission: Permission) -> Vec<&'static str> {
+        roles_implying(permission)
+            .iter()
+            .map(|r| r.as_str())
+            .collect()
+    }
+
     /// Cascading check for folders: is there a grant on any ancestor folder
     /// (including the target itself) for any of the given subject IDs and
     /// any of the given subject types?
@@ -246,6 +263,12 @@ impl PgAclEngine {
     /// or a single-element slice for Token / External / Group-direct callers.
     /// `subject_ids` is the expanded set returned by `expand_user` (or a
     /// single-element vec for non-user callers).
+    ///
+    /// **D-Prep**: now reads `storage.role_grants` (1 row per role
+    /// assignment) instead of `storage.access_grants` (N rows per role).
+    /// The permission filter `g.permission = $3` becomes
+    /// `g.role = ANY($3::text[])` where the array is the set of roles whose
+    /// bundle includes the requested permission — see `roles_implying()`.
     ///
     /// Uses the GiST index on `storage.folders.lpath` for O(log N) cascade.
     async fn folder_cascade_grant_exists(
@@ -257,14 +280,15 @@ impl PgAclEngine {
         counters: &QueryCounters,
     ) -> Result<bool, DomainError> {
         counters.sql_queries.fetch_add(1, Ordering::Relaxed);
+        let roles = Self::roles_implying_strings(permission);
         let exists: Option<i32> = sqlx::query_scalar(
             r#"
             SELECT 1
-              FROM storage.access_grants g
+              FROM storage.role_grants g
               JOIN storage.folders gf ON gf.id = g.resource_id
              WHERE g.subject_type  = ANY($1)
                AND g.subject_id    = ANY($2)
-               AND g.permission    = $3
+               AND g.role          = ANY($3::text[])
                AND g.resource_type = 'folder'
                AND (g.expires_at IS NULL OR g.expires_at > NOW())
                AND gf.lpath @> (SELECT lpath FROM storage.folders WHERE id = $4)
@@ -273,7 +297,7 @@ impl PgAclEngine {
         )
         .bind(subject_types)
         .bind(subject_ids)
-        .bind(permission.as_str())
+        .bind(&roles)
         .bind(folder_id)
         .fetch_optional(self.pool.as_ref())
         .await
@@ -285,7 +309,7 @@ impl PgAclEngine {
     /// Cascading check for files: either a direct file grant OR a grant on
     /// any ancestor folder of the file's containing folder. See
     /// `folder_cascade_grant_exists` for the meaning of `subject_types` /
-    /// `subject_ids`.
+    /// `subject_ids` and the D-Prep role-array migration.
     async fn file_cascade_grant_exists(
         &self,
         subject_types: &[&str],
@@ -295,27 +319,28 @@ impl PgAclEngine {
         counters: &QueryCounters,
     ) -> Result<bool, DomainError> {
         counters.sql_queries.fetch_add(1, Ordering::Relaxed);
+        let roles = Self::roles_implying_strings(permission);
         let exists: Option<i32> = sqlx::query_scalar(
             r#"
             SELECT 1
               FROM (
                 -- direct file grant
                 SELECT 1
-                  FROM storage.access_grants
+                  FROM storage.role_grants
                  WHERE subject_type = ANY($1)
                    AND subject_id   = ANY($2)
-                   AND permission   = $3
+                   AND role         = ANY($3::text[])
                    AND resource_type = 'file' AND resource_id = $4
                    AND (expires_at IS NULL OR expires_at > NOW())
                 UNION ALL
                 -- cascading from any ancestor folder of the file's containing folder
                 SELECT 1
-                  FROM storage.access_grants g
+                  FROM storage.role_grants g
                   JOIN storage.folders gf     ON gf.id = g.resource_id
                   JOIN storage.files target_f ON target_f.id = $4
                  WHERE g.subject_type  = ANY($1)
                    AND g.subject_id    = ANY($2)
-                   AND g.permission    = $3
+                   AND g.role          = ANY($3::text[])
                    AND g.resource_type = 'folder'
                    AND (g.expires_at IS NULL OR g.expires_at > NOW())
                    AND target_f.folder_id IS NOT NULL
@@ -327,7 +352,7 @@ impl PgAclEngine {
         )
         .bind(subject_types)
         .bind(subject_ids)
-        .bind(permission.as_str())
+        .bind(&roles)
         .bind(file_id)
         .fetch_optional(self.pool.as_ref())
         .await
@@ -1680,6 +1705,19 @@ impl AuthorizationEngine for PgAclEngine {
     }
 
     async fn revoke_all_for_resource(&self, resource: Resource) -> Result<usize, DomainError> {
+        // D-Prep dual-write: wipe role_grants for this resource too.
+        // Idempotent — succeeds whether or not any row existed.
+        sqlx::query(
+            "DELETE FROM storage.role_grants WHERE resource_type = $1 AND resource_id = $2",
+        )
+        .bind(resource.type_str())
+        .bind(resource.id())
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| {
+            DomainError::internal_error("PgAcl", format!("revoke role_grants for resource: {e}"))
+        })?;
+
         let result = sqlx::query(
             "DELETE FROM storage.access_grants WHERE resource_type = $1 AND resource_id = $2",
         )
@@ -1693,6 +1731,16 @@ impl AuthorizationEngine for PgAclEngine {
     }
 
     async fn revoke_all_for_subject(&self, subject: Subject) -> Result<usize, DomainError> {
+        // D-Prep dual-write: wipe role_grants for this subject too.
+        sqlx::query("DELETE FROM storage.role_grants WHERE subject_type = $1 AND subject_id = $2")
+            .bind(subject.type_str())
+            .bind(subject.id())
+            .execute(self.pool.as_ref())
+            .await
+            .map_err(|e| {
+                DomainError::internal_error("PgAcl", format!("revoke role_grants for subject: {e}"))
+            })?;
+
         let result = sqlx::query(
             "DELETE FROM storage.access_grants WHERE subject_type = $1 AND subject_id = $2",
         )
@@ -1703,6 +1751,59 @@ impl AuthorizationEngine for PgAclEngine {
         .map_err(|e| DomainError::internal_error("PgAcl", format!("revoke for subject: {e}")))?;
 
         Ok(result.rows_affected() as usize)
+    }
+
+    // ── D-Prep role_grants writes ──────────────────────────────────────────
+
+    async fn set_role(
+        &self,
+        granted_by: Uuid,
+        subject: Subject,
+        role: crate::application::dtos::grant_dto::Role,
+        resource: Resource,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(), DomainError> {
+        sqlx::query(
+            r#"
+            INSERT INTO storage.role_grants
+                (subject_type, subject_id, resource_type, resource_id,
+                 role, granted_by, expires_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (subject_type, subject_id, resource_type, resource_id)
+            DO UPDATE SET role       = EXCLUDED.role,
+                          expires_at = EXCLUDED.expires_at,
+                          granted_by = EXCLUDED.granted_by
+            "#,
+        )
+        .bind(subject.type_str())
+        .bind(subject.id())
+        .bind(resource.type_str())
+        .bind(resource.id())
+        .bind(role.as_str())
+        .bind(granted_by)
+        .bind(expires_at)
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| DomainError::internal_error("PgAcl", format!("set_role: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn clear_role(&self, subject: Subject, resource: Resource) -> Result<(), DomainError> {
+        sqlx::query(
+            "DELETE FROM storage.role_grants \
+             WHERE subject_type = $1 AND subject_id = $2 \
+               AND resource_type = $3 AND resource_id = $4",
+        )
+        .bind(subject.type_str())
+        .bind(subject.id())
+        .bind(resource.type_str())
+        .bind(resource.id())
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| DomainError::internal_error("PgAcl", format!("clear_role: {e}")))?;
+
+        Ok(())
     }
 }
 

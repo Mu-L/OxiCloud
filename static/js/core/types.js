@@ -367,7 +367,7 @@
  * @property {'user'|'group'|'token'|'external'}   subject_type
  * @property {string}                              subject_id
  * @property {string}                              subject_display - Username (users) or share name (tokens).
- * @property {'viewer'|'editor'|'admin'}           role
+ * @property {'viewer'|'commenter'|'contributor'|'editor'|'owner'} role - Server-emitted role string. `commenter` and `contributor` are reserved for future UI exposure; today the share modal only renders `viewer`/`editor`/`owner` (see `ShareRoleEnum`).
  * @property {string}                              granted_at   - ISO-8601
  * @property {string|null}                         [expires_at] - ISO-8601 or absent.
  * @property {boolean}                             has_password - True when a token subject has a password set.
@@ -453,8 +453,11 @@
 // ------------------- share modal
 
 /**
- * Share roles (DTO-layer sugar for the ReBAC permission sets).
- * @typedef {'viewer'|'editor'|'admin'} ShareRoleEnum
+ * Share-modal-exposed roles. The server's `Role` enum also includes
+ * `commenter` and `contributor` (see `OutgoingResourceGrant.role`); those
+ * are reserved for future UI exposure and are not offered as picker options
+ * today. The "Can manage" UI label maps to `owner`.
+ * @typedef {'viewer'|'editor'|'owner'} ShareRoleEnum
  */
 
 /**

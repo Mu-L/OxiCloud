@@ -73,11 +73,21 @@ function _looksLikeEmail(q) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q);
 }
 
-/** Permissions that belong to each role (must mirror the Rust DTO). */
+/**
+ * Permissions that belong to each role (mirrors `Role::expand()` in
+ * `src/application/dtos/grant_dto.rs`). The share modal only renders
+ * Viewer/Editor/Owner as picker buttons today; `commenter` and
+ * `contributor` are kept here for fidelity with the server-side enum so
+ * a future UI exposure doesn't need a mirror-table update. The `manage`
+ * permission in the owner bundle is reserved for Drive- and Group-level
+ * admin actions (no-op on file/folder resources).
+ */
 const ROLE_PERMISSIONS = {
     viewer: ['read'],
+    commenter: ['read', 'comment'],
+    contributor: ['read', 'create'],
     editor: ['read', 'comment', 'create', 'update'],
-    admin: ['read', 'comment', 'create', 'update', 'share', 'delete']
+    owner: ['read', 'comment', 'create', 'update', 'share', 'delete', 'manage']
 };
 
 /**
@@ -113,7 +123,7 @@ async function _searchGroups(q) {
  */
 function _roleFromGrants(subjectGrants) {
     const perms = new Set(subjectGrants.map((g) => g.permission));
-    if (perms.has('delete') || perms.has('share')) return 'admin';
+    if (perms.has('delete') || perms.has('share')) return 'owner';
     if (perms.has('create') || perms.has('update')) return 'editor';
     return 'viewer';
 }
@@ -363,7 +373,7 @@ const shareModal = {
         for (const [val, label] of [
             ['viewer', i18n.t('share.role.canView', 'Can view')],
             ['editor', i18n.t('share.role.canEdit', 'Can edit')],
-            ['admin', i18n.t('share.role.canManage', 'Can manage')]
+            ['owner', i18n.t('share.role.canManage', 'Can manage')]
         ]) {
             const opt = document.createElement('option');
             opt.value = val;
@@ -649,7 +659,7 @@ const shareModal = {
         // matching the UX contract and the kebab-menu / role-select dropdown
         // order. Renaming the labels from "Manager"/"Editor"/"Viewer" to
         // "Can manage"/"Can edit"/"Can view" left this iteration order stale.
-        const groups = /** @type {ShareRoleEnum[]} */ (['admin', 'editor', 'viewer']);
+        const groups = /** @type {ShareRoleEnum[]} */ (['owner', 'editor', 'viewer']);
         let memberIndex = 0;
 
         for (const role of groups) {
@@ -663,7 +673,7 @@ const shareModal = {
             header.className = 'smd-group-header';
 
             const labelMap = {
-                admin: i18n.t('share.role.canManage', 'Can manage'),
+                owner: i18n.t('share.role.canManage', 'Can manage'),
                 editor: i18n.t('share.role.canEdit', 'Can edit'),
                 viewer: i18n.t('share.role.canView', 'Can view')
             };
@@ -711,7 +721,7 @@ const shareModal = {
         for (const [val, label] of [
             ['viewer', i18n.t('share.role.canView', 'Can view')],
             ['editor', i18n.t('share.role.canEdit', 'Can edit')],
-            ['admin', i18n.t('share.role.canManage', 'Can manage')]
+            ['owner', i18n.t('share.role.canManage', 'Can manage')]
         ]) {
             const opt = document.createElement('option');
             opt.value = val;
