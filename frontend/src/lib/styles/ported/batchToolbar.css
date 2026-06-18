@@ -1,0 +1,101 @@
+/* Multi-Select – batch action toolbar
+ * Per-item checkbox styles (.file-item .checkbox-cell, .list-header.selection-mode)
+ * live in resourceList.css alongside the item renderer. */
+
+.batch-selection-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    min-width: 0;
+}
+
+.batch-selection-bar {
+    display: flex;
+    align-items: center;
+    background: var(--color-multiselect-bg);
+    color: var(--color-multiselect-text);
+    padding: var(--space-2-5) var(--space-5);
+    border-radius: var(--radius-2xl);
+    overflow: hidden;
+    margin-right: var(--space-3);
+    height: 60px;
+    transform: translateY(-8px);
+    transition:
+        opacity 0.2s,
+        max-height 0.25s,
+        transform 0.2s,
+        margin 0.2s,
+        padding 0.2s;
+    pointer-events: auto;
+}
+
+.batch-bar-close {
+    background: none;
+    border: none;
+    color: var(--color-multiselect-text-faint);
+    cursor: pointer;
+    font-size: var(--text-base);
+    padding: var(--space-1) var(--space-1-5);
+    border-radius: var(--radius-md);
+    transition:
+        background 0.15s,
+        color 0.15s;
+}
+
+.batch-bar-close:hover {
+    background: var(--color-multiselect-hover-bg);
+    color: var(--color-multiselect-text);
+}
+
+.batch-bar-count {
+    font-size: var(--text-base);
+    font-weight: var(--weight-semibold);
+    white-space: nowrap;
+}
+
+.batch-bar-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1-5);
+}
+
+.batch-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    padding: 7px var(--space-3-5);
+    border: none;
+    border-radius: var(--radius-lg);
+    background: var(--color-multiselect-hover-bg);
+    color: var(--color-multiselect-action-text);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+}
+
+.batch-btn:hover {
+    background: var(--color-multiselect-action-hover);
+}
+
+.batch-btn-danger {
+    background: var(--color-multiselect-danger-bg);
+    color: var(--color-multiselect-danger-text);
+}
+
+.batch-btn-danger:hover {
+    background: var(--color-multiselect-danger-active);
+    color: var(--color-multiselect-danger-text-active);
+}
+
+@media (max-width: 640px) {
+    .batch-btn span {
+        display: none;
+    }
+
+    .batch-btn {
+        padding: 7px var(--space-2-5);
+    }
+}

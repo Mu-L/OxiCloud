@@ -14,7 +14,7 @@ import { apiFetch } from '$lib/api/client';
 import { getCsrfHeaders } from '$lib/api/csrf';
 
 // Keep in sync with the locale files in static/locales (and, post-cutover,
-// frontend/static/locales). Mirrors AVAILABLE_LOCALES in the legacy selector.
+// frontend/static/locales). Mirrors AVAILABLE_LOCALES in the language selector.
 export const SUPPORTED_LOCALES = [
 	'en',
 	'es',
@@ -36,7 +36,53 @@ export const SUPPORTED_LOCALES = [
 
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
+/** Locales that render right-to-left. */
+const RTL_LOCALES: readonly Locale[] = ['fa', 'ar'];
+
+export interface LanguageMeta {
+	code: Locale;
+	/** Endonym (native language name). */
+	name: string;
+	/** Flag emoji. */
+	flag: string;
+}
+
+/**
+ * Display metadata for the language selector — native names + flags, ported
+ * from ALL_LANGUAGES in static/js/features/auth/auth.js. Order matches
+ * SUPPORTED_LOCALES so the rich dropdown lists the same set as `t()` resolves.
+ */
+export const LANGUAGES: readonly LanguageMeta[] = [
+	{ code: 'en', name: 'English', flag: '🇬🇧' },
+	{ code: 'es', name: 'Español', flag: '🇪🇸' },
+	{ code: 'zh', name: '简体中文', flag: '🇨🇳' },
+	{ code: 'zh-TW', name: '繁體中文', flag: '🇹🇼' },
+	{ code: 'fa', name: 'فارسی', flag: '🇮🇷' },
+	{ code: 'fr', name: 'Français', flag: '🇫🇷' },
+	{ code: 'de', name: 'Deutsch', flag: '🇩🇪' },
+	{ code: 'pt', name: 'Português', flag: '🇧🇷' },
+	{ code: 'nl', name: 'Nederlands', flag: '🇳🇱' },
+	{ code: 'it', name: 'Italiano', flag: '🇮🇹' },
+	{ code: 'hi', name: 'हिन्दी', flag: '🇮🇳' },
+	{ code: 'ar', name: 'العربية', flag: '🇸🇦' },
+	{ code: 'ru', name: 'Русский', flag: '🇷🇺' },
+	{ code: 'ja', name: '日本語', flag: '🇯🇵' },
+	{ code: 'ko', name: '한국어', flag: '🇰🇷' },
+	{ code: 'pl', name: 'Polski', flag: '🇵🇱' }
+];
+
 const STORAGE_KEY = 'oxicloud-locale';
+
+/**
+ * Reflect the active locale on `<html>`: sets `lang` and flips `dir` to `rtl`
+ * for Farsi/Arabic (and `ltr` otherwise) so the ported [dir="rtl"] CSS engages.
+ */
+function applyHtmlLang(locale: string): void {
+	if (typeof document === 'undefined') return;
+	const html = document.documentElement;
+	html.setAttribute('lang', locale);
+	html.setAttribute('dir', (RTL_LOCALES as readonly string[]).includes(locale) ? 'rtl' : 'ltr');
+}
 
 type Dict = Record<string, unknown>;
 
@@ -162,6 +208,7 @@ export async function initI18n(): Promise<void> {
 	}
 	await loadDict(store.locale);
 	if (store.locale !== 'en') await loadDict('en');
+	applyHtmlLang(store.locale);
 	store.loaded = true;
 }
 
@@ -172,6 +219,7 @@ export async function setLocale(locale: Locale): Promise<boolean> {
 	}
 	await loadDict(locale);
 	store.locale = locale;
+	applyHtmlLang(locale);
 	if (typeof localStorage !== 'undefined') localStorage.setItem(STORAGE_KEY, locale);
 	persistLocaleToServer(locale);
 	return true;

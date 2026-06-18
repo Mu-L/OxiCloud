@@ -52,6 +52,127 @@ export async function login(emailOrUsername: string, password: string): Promise<
 	return (await res.json()) as AuthResponse;
 }
 
+export interface OidcProviders {
+	enabled: boolean;
+	provider_name?: string;
+	password_login_enabled?: boolean;
+	authorize_endpoint?: string;
+}
+
+/** Public OIDC provider info for the login page. */
+export async function getOidcProviders(): Promise<OidcProviders> {
+	try {
+		const res = await fetch('/api/auth/oidc/providers');
+		if (!res.ok) return { enabled: false };
+		return (await res.json()) as OidcProviders;
+	} catch {
+		return { enabled: false };
+	}
+}
+
+export interface AuthStatus {
+	initialized: boolean;
+	admin_count: number;
+	registration_allowed: boolean;
+}
+
+/**
+ * System bootstrap probe. When `initialized === false` no admin exists yet and
+ * the login page must offer the first-run admin-setup flow. Raw `fetch` (NOT
+ * apiFetch): this is unauthenticated and a non-2xx must not bounce through the
+ * refresh interceptor. Defaults to "initialized" on any failure so a transient
+ * error never strands operators on the setup wizard.
+ */
+export async function getAuthStatus(): Promise<AuthStatus> {
+	try {
+		const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
+		if (!res.ok) return { initialized: true, admin_count: 1, registration_allowed: true };
+		return (await res.json()) as AuthStatus;
+	} catch {
+		return { initialized: true, admin_count: 1, registration_allowed: true };
+	}
+}
+
+/**
+ * First-run admin bootstrap. POSTs to `/api/setup`, which creates the admin
+ * user and marks the system initialized. Raw `fetch` (NOT apiFetch) so a 401
+ * surfaces as a genuine failure instead of triggering the refresh-and-redirect.
+ */
+export async function setupAdmin(email: string, password: string): Promise<void> {
+	const res = await fetch('/api/setup', {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: { ...JSON_HEADERS, ...getCsrfHeaders() },
+		body: JSON.stringify({ username: 'admin', email, password })
+	});
+	if (!res.ok) {
+		const e = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+		throw new Error(e.error || e.message || `setup failed: ${res.status}`);
+	}
+}
+
+/**
+ * OIDC code-exchange fallback. When the IdP round-trip lands back on the login
+ * page with `?oidc_code=`, exchange it for a session (cookies are set
+ * server-side). Raw `fetch` (NOT apiFetch) — a 401 here is a genuine exchange
+ * failure, not an expired access token. Returns the user on success, null on
+ * any failure so the caller can fall through to the normal login UI.
+ */
+export async function exchangeOidcCode(code: string): Promise<User | null> {
+	try {
+		const res = await fetch('/api/auth/oidc/exchange', {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { ...JSON_HEADERS, ...getCsrfHeaders() },
+			body: JSON.stringify({ code })
+		});
+		if (!res.ok) return null;
+		const data = (await res.json()) as { user?: User };
+		return data.user ?? null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Register a new user. Raw `fetch` (NOT apiFetch) so a 401/validation failure
+ * surfaces to the caller instead of tripping the global refresh-and-redirect
+ * interceptor — mirrors the login primitive.
+ */
+export async function register(username: string, email: string, password: string): Promise<void> {
+	const res = await fetch('/api/auth/register', {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: { ...JSON_HEADERS, ...getCsrfHeaders() },
+		body: JSON.stringify({ username, email, password, role: 'user' })
+	});
+	if (!res.ok) {
+		const e = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+		throw new Error(e.error || e.message || `register failed: ${res.status}`);
+	}
+}
+
+export type MagicLinkResult = 'sent' | 'unavailable';
+
+/**
+ * Anti-enumeration sign-in by email. Any 2xx resolves to `sent` with a uniform
+ * message regardless of whether the email maps to an account. 503 means SMTP
+ * isn't configured (`unavailable`) — operators need to see that. Other non-2xx
+ * throw so the caller can show a generic error. Raw `fetch` (NOT apiFetch):
+ * unauthenticated, must not enter the refresh interceptor.
+ */
+export async function sendMagicLink(email: string): Promise<MagicLinkResult> {
+	const res = await fetch('/api/auth/magic-link/send', {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: { ...JSON_HEADERS, ...getCsrfHeaders() },
+		body: JSON.stringify({ email })
+	});
+	if (res.status === 503) return 'unavailable';
+	if (!res.ok) throw new Error(`magic-link failed: ${res.status}`);
+	return 'sent';
+}
+
 export async function logout(): Promise<void> {
 	await apiFetch('/api/auth/logout', {
 		method: 'POST',

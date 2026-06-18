@@ -1,9 +1,25 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { changePassword, updateProfile } from '$lib/api/endpoints/profile';
+	import {
+		changePassword,
+		createAppPassword,
+		isAutoAppPassword,
+		listAppPasswords,
+		revokeAppPassword,
+		updateAvatar,
+		updateProfile,
+		type AppPassword,
+		type ProfilePatch
+	} from '$lib/api/endpoints/profile';
+	import { getOidcProviders } from '$lib/api/endpoints/auth';
 	import { SUPPORTED_LOCALES, setLocale, t, type Locale } from '$lib/i18n/index.svelte';
+	import Icon from '$lib/icons/Icon.svelte';
+	import { confirmDialog } from '$lib/stores/dialogs.svelte';
 	import { session } from '$lib/stores/session.svelte';
 	import { ui } from '$lib/stores/ui.svelte';
+	import { formatBytes } from '$lib/utils/format';
+	import { formatDate } from '$lib/utils/display';
+	import { resizeImageToDataUrl } from '$lib/utils/imageResize';
 
 	let givenName = $state('');
 	let familyName = $state('');
@@ -18,6 +34,71 @@
 	let savingProfile = $state(false);
 	let savingPassword = $state(false);
 
+	let avatarBusy = $state(false);
+	let passwordLoginEnabled = $state(true);
+
+	// Avatar edit panel.
+	let avatarEditOpen = $state(false);
+	let avatarTab = $state<'url' | 'upload'>('url');
+	let avatarUrl = $state('');
+	let avatarPreview = $state<string | null>(null);
+	let uploadedDataUrl = $state<string | null>(null);
+	let avatarImgFailed = $state(false);
+
+	let appPasswords = $state<AppPassword[]>([]);
+	let appPwLoadFailed = $state(false);
+	let generated = $state<{ label: string; password: string } | null>(null);
+	let newLabel = $state('');
+	let creatingPw = $state(false);
+	let autoExpanded = $state(false);
+
+	const isOidc = $derived(!!session.user?.auth_provider && session.user.auth_provider !== 'local');
+	const isLocal = $derived(!isOidc);
+	const usernameClaimed = $derived(!!session.user?.username);
+	const isAdmin = $derived(session.user?.role === 'admin');
+	const canEditImage = $derived(session.user?.can_edit_image === true && isLocal);
+	const showPasswordCard = $derived(isLocal && passwordLoginEnabled);
+
+	const storagePct = $derived(
+		session.user && session.user.storage_quota_bytes > 0
+			? Math.min(
+					100,
+					Math.round((session.user.storage_used_bytes / session.user.storage_quota_bytes) * 100)
+				)
+			: 0
+	);
+	const storageBarClass = $derived(
+		storagePct > 90 ? 'bar__fill--red' : storagePct > 70 ? 'bar__fill--orange' : 'bar__fill--green'
+	);
+	const initials = $derived(
+		(session.user?.username || session.user?.email || '?').slice(0, 2).toUpperCase()
+	);
+
+	const userPasswords = $derived(appPasswords.filter((p) => !isAutoAppPassword(p)));
+	const autoPasswords = $derived(appPasswords.filter((p) => isAutoAppPassword(p)));
+
+	/** Relative time (e.g. "3 days ago"); "Never" when absent. */
+	function timeAgo(value: string | null | undefined): string {
+		if (!value) return t('profile.never', 'Never');
+		const date = new Date(value);
+		if (Number.isNaN(date.getTime())) return String(value);
+		const diffSec = Math.round((date.getTime() - Date.now()) / 1000);
+		const abs = Math.abs(diffSec);
+		const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+		const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+			['year', 31536000],
+			['month', 2592000],
+			['week', 604800],
+			['day', 86400],
+			['hour', 3600],
+			['minute', 60]
+		];
+		for (const [unit, secs] of units) {
+			if (abs >= secs) return rtf.format(Math.round(diffSec / secs), unit);
+		}
+		return rtf.format(diffSec, 'second');
+	}
+
 	function hydrate() {
 		const u = session.user;
 		if (!u) return;
@@ -30,17 +111,32 @@
 
 	async function saveProfile(e: SubmitEvent) {
 		e.preventDefault();
+		const u = session.user;
+		if (!u) return;
+
+		// Build a sparse patch of only the fields the user actually changed.
+		// Sending empty strings the user never touched would 400 on the server.
+		const patch: ProfilePatch = {};
+		if (!usernameClaimed && username.trim() && username.trim() !== (u.username ?? '')) {
+			patch.username = username.trim();
+		}
+		if (givenName.trim() !== (u.given_name ?? '')) patch.given_name = givenName.trim();
+		if (familyName.trim() !== (u.family_name ?? '')) patch.family_name = familyName.trim();
+		if ((preferredLocale || '') !== (u.preferred_locale ?? '')) {
+			patch.preferred_locale = preferredLocale || undefined;
+		}
+		if (notifyOnShare !== u.notify_on_share) patch.notify_on_share = notifyOnShare;
+
+		if (Object.keys(patch).length === 0) {
+			ui.notify(t('profile.profile_no_changes', 'No changes to save.'), 'info');
+			return;
+		}
+
 		savingProfile = true;
 		try {
-			const updated = await updateProfile({
-				given_name: givenName,
-				family_name: familyName,
-				username: username || undefined,
-				preferred_locale: preferredLocale || undefined,
-				notify_on_share: notifyOnShare
-			});
+			const updated = await updateProfile(patch);
 			session.user = updated;
-			if (preferredLocale) await setLocale(preferredLocale as Locale);
+			if (patch.preferred_locale) await setLocale(patch.preferred_locale as Locale);
 			ui.notify(t('profile.saved', 'Profile saved'), 'success');
 		} catch (err) {
 			ui.notify(err instanceof Error ? err.message : String(err), 'error');
@@ -55,6 +151,13 @@
 			ui.notify(t('profile.password_mismatch', 'Passwords do not match'), 'error');
 			return;
 		}
+		if (newPw.length < 8) {
+			ui.notify(
+				t('profile.password_too_short', 'Password must be at least 8 characters.'),
+				'error'
+			);
+			return;
+		}
 		savingPassword = true;
 		try {
 			await changePassword(currentPw, newPw);
@@ -67,9 +170,132 @@
 		}
 	}
 
+	// ── Avatar edit panel ──────────────────────────────────────────────────
+	function openAvatarEdit() {
+		avatarEditOpen = true;
+		avatarTab = 'url';
+		avatarUrl = '';
+		avatarPreview = null;
+		uploadedDataUrl = null;
+	}
+
+	function closeAvatarEdit() {
+		avatarEditOpen = false;
+		uploadedDataUrl = null;
+		avatarPreview = null;
+	}
+
+	async function onAvatarFile(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		try {
+			const dataUrl = await resizeImageToDataUrl(file);
+			uploadedDataUrl = dataUrl;
+			avatarPreview = dataUrl;
+		} catch (err) {
+			uploadedDataUrl = null;
+			avatarPreview = null;
+			ui.notify(err instanceof Error ? err.message : String(err), 'error');
+		} finally {
+			input.value = '';
+		}
+	}
+
+	async function commitAvatar(image: string | null) {
+		avatarBusy = true;
+		try {
+			await updateAvatar(image);
+			if (session.user) session.user = { ...session.user, image };
+			avatarImgFailed = false;
+			closeAvatarEdit();
+		} catch (err) {
+			ui.notify(err instanceof Error ? err.message : String(err), 'error');
+		} finally {
+			avatarBusy = false;
+		}
+	}
+
+	async function saveAvatar() {
+		if (avatarTab === 'url') {
+			await commitAvatar(avatarUrl.trim() || null);
+		} else {
+			if (!uploadedDataUrl) {
+				ui.notify(t('profile.photo_no_file', 'Choose a photo first.'), 'error');
+				return;
+			}
+			await commitAvatar(uploadedDataUrl);
+		}
+	}
+
+	// ── App passwords ──────────────────────────────────────────────────────
+	async function loadAppPasswords() {
+		try {
+			appPasswords = await listAppPasswords();
+			appPwLoadFailed = false;
+		} catch {
+			appPwLoadFailed = true;
+		}
+	}
+
+	async function createPw() {
+		const label = newLabel.trim();
+		if (!label) {
+			ui.notify(t('profile.error_label_required', 'Enter a label.'), 'error');
+			return;
+		}
+		creatingPw = true;
+		try {
+			const password = await createAppPassword(label);
+			generated = { label, password };
+			newLabel = '';
+			await loadAppPasswords();
+		} catch (err) {
+			ui.notify(err instanceof Error ? err.message : String(err), 'error');
+		} finally {
+			creatingPw = false;
+		}
+	}
+
+	async function revokePw(p: AppPassword) {
+		const ok = await confirmDialog({
+			title: t('profile.app_pw_revoke', 'Revoke app password'),
+			message: t('profile.confirm_revoke', { label: p.label }, 'Revoke "{{label}}"?'),
+			confirmText: t('profile.app_pw_revoke', 'Revoke'),
+			danger: true
+		});
+		if (!ok) return;
+		try {
+			await revokeAppPassword(p.id);
+			generated = null;
+			await loadAppPasswords();
+		} catch (err) {
+			ui.notify(err instanceof Error ? err.message : String(err), 'error');
+		}
+	}
+
+	async function copyGenerated() {
+		if (!generated) return;
+		try {
+			await navigator.clipboard.writeText(generated.password);
+			ui.notify(t('profile.copied', 'Copied'), 'success');
+		} catch {
+			ui.notify(t('profile.copy_failed', 'Could not copy'), 'error');
+		}
+	}
+
 	onMount(async () => {
 		if (!session.loaded) await session.load();
 		hydrate();
+		void loadAppPasswords();
+		try {
+			const providers = await getOidcProviders();
+			// Only an explicit `false` hides the password card; an absent flag
+			// (no OIDC configured) leaves local password login available.
+			if (providers.password_login_enabled === false) passwordLoginEnabled = false;
+		} catch {
+			/* leave password login enabled */
+		}
 	});
 </script>
 
@@ -79,57 +305,390 @@
 	<h1>{t('nav.profile', 'Profile')}</h1>
 
 	{#if session.user}
-		<p class="profile__email">{session.user.email}</p>
+		<!-- Avatar / identity -->
+		<div class="card avatar-card">
+			<div class="avatar-section">
+				{#if session.user.image && !avatarImgFailed}
+					<img
+						class="avatar-lg"
+						src={session.user.image}
+						alt={initials}
+						onerror={() => (avatarImgFailed = true)}
+					/>
+				{:else}
+					<span class="avatar-lg avatar-lg--initials">{initials}</span>
+				{/if}
+				<div class="avatar-info">
+					<h2>{session.user.username || session.user.email || '—'}</h2>
+					<div class="muted">{session.user.email}</div>
+					<span class="role-badge" class:role-badge--admin={isAdmin}>
+						<Icon name={isAdmin ? 'shield-alt' : 'user'} />
+						{isAdmin ? t('profile.role_admin', 'Administrator') : t('profile.role_user', 'User')}
+					</span>
+					{#if isOidc && session.user.image}
+						<p class="muted">
+							{t('profile.photo_managed_by_oidc', 'Photo managed by your identity provider.')}
+						</p>
+					{/if}
+				</div>
+				{#if canEditImage}
+					<button
+						class="btn btn-secondary avatar-edit-btn"
+						title={t('profile.edit_photo', 'Edit photo')}
+						onclick={openAvatarEdit}
+					>
+						<Icon name="pencil-alt" />
+					</button>
+				{/if}
+			</div>
 
-		<form class="card" onsubmit={saveProfile}>
-			<h2>{t('profile.details', 'Profile details')}</h2>
+			{#if canEditImage && avatarEditOpen}
+				<div class="avatar-edit">
+					<div class="avatar-tabs">
+						<button
+							class="avatar-tab"
+							class:avatar-tab--active={avatarTab === 'url'}
+							onclick={() => (avatarTab = 'url')}
+						>
+							{t('profile.photo_tab_url', 'URL')}
+						</button>
+						<button
+							class="avatar-tab"
+							class:avatar-tab--active={avatarTab === 'upload'}
+							onclick={() => (avatarTab = 'upload')}
+						>
+							{t('profile.photo_tab_upload', 'Upload')}
+						</button>
+					</div>
 
-			<label>
-				<span>{t('profile.username', 'Username')}</span>
-				<input bind:value={username} autocomplete="username" />
-			</label>
-			<label>
-				<span>{t('profile.given_name', 'Given name')}</span>
-				<input bind:value={givenName} autocomplete="given-name" />
-			</label>
-			<label>
-				<span>{t('profile.family_name', 'Family name')}</span>
-				<input bind:value={familyName} autocomplete="family-name" />
-			</label>
-			<label>
-				<span>{t('profile.language', 'Language')}</span>
-				<select bind:value={preferredLocale}>
-					<option value="">{t('profile.language_auto', 'Automatic')}</option>
-					{#each SUPPORTED_LOCALES as loc (loc)}
-						<option value={loc}>{loc}</option>
-					{/each}
-				</select>
-			</label>
-			<label class="checkbox">
-				<input type="checkbox" bind:checked={notifyOnShare} />
-				<span>{t('profile.notify_on_share', 'Email me when something is shared with me')}</span>
-			</label>
+					{#if avatarTab === 'url'}
+						<input type="url" bind:value={avatarUrl} placeholder="https://example.com/photo.jpg" />
+						<small class="muted">
+							{t('profile.photo_url_hint', 'https://, http://, or data:image/…;base64,… accepted')}
+						</small>
+					{:else}
+						<label class="avatar-file-label btn btn-secondary">
+							<Icon name="user-plus" />
+							<span>{t('profile.photo_choose_file', 'Choose a photo (PNG, JPEG, WebP)')}</span>
+							<input
+								type="file"
+								accept="image/png,image/jpeg,image/webp"
+								hidden
+								onchange={onAvatarFile}
+							/>
+						</label>
+						{#if avatarPreview}
+							<img class="avatar-preview" src={avatarPreview} alt={t('profile.avatar', 'Avatar')} />
+						{/if}
+						<small class="muted">
+							{t(
+								'profile.photo_resize_note',
+								'Images larger than 512 × 512 px are automatically resized.'
+							)}
+						</small>
+					{/if}
 
-			<button type="submit" disabled={savingProfile}>{t('common.save', 'Save')}</button>
-		</form>
+					<div class="avatar-edit-actions">
+						<button class="btn btn-primary" disabled={avatarBusy} onclick={saveAvatar}>
+							{t('profile.photo_save', 'Save')}
+						</button>
+						{#if session.user.image}
+							<button
+								class="btn link-btn link-btn--danger"
+								disabled={avatarBusy}
+								onclick={() => commitAvatar(null)}
+							>
+								{t('profile.photo_remove', 'Remove photo')}
+							</button>
+						{/if}
+						<button class="btn btn-secondary" disabled={avatarBusy} onclick={closeAvatarEdit}>
+							{t('common.cancel', 'Cancel')}
+						</button>
+					</div>
+				</div>
+			{/if}
+		</div>
 
-		{#if session.user.can_edit_image !== false && session.user.auth_provider === 'local'}
+		<!-- Account details -->
+		<div class="card">
+			<h2><Icon name="id-card" /> {t('profile.account_details', 'Account Details')}</h2>
+			<div class="info-grid">
+				<div class="info-item">
+					<div class="info-label"><Icon name="user" /> {t('profile.username', 'Username')}</div>
+					<div class="info-value">{session.user.username || '—'}</div>
+				</div>
+				<div class="info-item">
+					<div class="info-label"><Icon name="envelope" /> {t('profile.email', 'Email')}</div>
+					<div class="info-value">{session.user.email}</div>
+				</div>
+				<div class="info-item">
+					<div class="info-label"><Icon name="shield-alt" /> {t('profile.role', 'Role')}</div>
+					<div class="info-value">
+						{isAdmin ? t('profile.role_admin', 'Administrator') : t('profile.role_user', 'User')}
+					</div>
+				</div>
+				<div class="info-item">
+					<div class="info-label">
+						<Icon name="clock" />
+						{t('profile.last_login', 'Last Login')}
+					</div>
+					<div class="info-value">{timeAgo(session.user.last_login_at)}</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Storage -->
+		<div class="card">
+			<h2><Icon name="hdd" /> {t('profile.storage', 'Storage')}</h2>
+			<div class="storage-stats">
+				<div class="storage-stat">
+					<div class="stat-value">{formatBytes(session.user.storage_used_bytes)}</div>
+					<div class="muted">{t('profile.used', 'Used')}</div>
+				</div>
+				<div class="storage-stat">
+					<div class="stat-value">
+						{session.user.storage_quota_bytes > 0
+							? formatBytes(session.user.storage_quota_bytes)
+							: '∞'}
+					</div>
+					<div class="muted">{t('profile.quota', 'Quota')}</div>
+				</div>
+				<div class="storage-stat">
+					<div class="stat-value">
+						{session.user.storage_quota_bytes > 0 ? `${storagePct}%` : '—'}
+					</div>
+					<div class="muted">{t('profile.usage', 'Usage')}</div>
+				</div>
+			</div>
+			<div class="bar">
+				<div class={`bar__fill ${storageBarClass}`} style:width="{storagePct}%"></div>
+			</div>
+		</div>
+
+		<!-- Edit profile (hidden for OIDC users) -->
+		<div class="card">
+			<h2><Icon name="id-badge" /> {t('profile.edit_profile', 'Edit Profile')}</h2>
+			{#if isOidc}
+				<div class="alert alert--info">
+					<Icon name="info-circle" />
+					<span>
+						{t(
+							'profile.edit_oidc_managed',
+							'To change your information (name, profile picture, …), please update it at your identity provider. Your changes will appear on your next sign-in.'
+						)}
+					</span>
+				</div>
+			{:else}
+				<form onsubmit={saveProfile}>
+					<label>
+						<span>{t('profile.username', 'Username')}</span>
+						<input
+							bind:value={username}
+							maxlength="64"
+							autocomplete="username"
+							disabled={usernameClaimed}
+						/>
+						<small class="muted">
+							{usernameClaimed
+								? t('profile.username_already_claimed', "Username can't be changed once set.")
+								: t(
+										'profile.username_claim_hint',
+										"2–64 characters. Once chosen, the username can't be changed."
+									)}
+						</small>
+					</label>
+					<label>
+						<span>{t('profile.given_name', 'First name')}</span>
+						<input bind:value={givenName} maxlength="128" autocomplete="given-name" />
+					</label>
+					<label>
+						<span>{t('profile.family_name', 'Last name')}</span>
+						<input bind:value={familyName} maxlength="128" autocomplete="family-name" />
+					</label>
+					<label>
+						<span>{t('profile.language', 'Language')}</span>
+						<select bind:value={preferredLocale}>
+							<option value="">{t('profile.language_auto', 'Automatic')}</option>
+							{#each SUPPORTED_LOCALES as loc (loc)}
+								<option value={loc}>{loc}</option>
+							{/each}
+						</select>
+					</label>
+					<label class="checkbox">
+						<input type="checkbox" bind:checked={notifyOnShare} />
+						<span>{t('profile.notify_on_share', 'Email me when someone shares with me')}</span>
+					</label>
+					<button type="submit" disabled={savingProfile}
+						>{t('profile.save_profile', 'Save changes')}</button
+					>
+				</form>
+			{/if}
+		</div>
+
+		<!-- App passwords -->
+		{#if !appPwLoadFailed}
+			<div class="card">
+				<h2><Icon name="key" /> {t('profile.app_passwords', 'App Passwords')}</h2>
+				<p class="muted">
+					{t(
+						'profile.app_pw_desc',
+						'Generate passwords for WebDAV, CalDAV, and CardDAV clients. Each password is shown only once.'
+					)}
+				</p>
+
+				<div class="app-pw-create">
+					<input
+						bind:value={newLabel}
+						maxlength="128"
+						placeholder={t('profile.app_pw_label_placeholder', 'Label (e.g. Thunderbird, macOS)')}
+					/>
+					<button class="btn btn-primary" disabled={creatingPw} onclick={createPw}>
+						<Icon name="user-plus" />
+						{t('profile.generate', 'Generate')}
+					</button>
+				</div>
+
+				{#if generated}
+					<div class="generated">
+						<div>
+							{t('profile.new_password_for', 'New password for')}
+							<strong>{generated.label}</strong>:
+						</div>
+						<div class="generated__value">
+							<code>{generated.password}</code>
+							<button
+								class="btn-action"
+								title={t('profile.copy_to_clipboard', 'Copy to clipboard')}
+								onclick={copyGenerated}
+							>
+								<Icon name="copy" />
+							</button>
+						</div>
+						<small class="muted">
+							{t(
+								'profile.copy_warning',
+								"Copy this password now. You won't be able to see it again."
+							)}
+						</small>
+					</div>
+				{/if}
+
+				{#if userPasswords.length === 0}
+					<p class="muted">{t('profile.no_app_passwords', 'No app passwords yet.')}</p>
+				{:else}
+					<table class="pw-table">
+						<thead>
+							<tr>
+								<th>{t('profile.col_label', 'Label')}</th>
+								<th>{t('profile.col_created', 'Created')}</th>
+								<th>{t('profile.col_last_used', 'Last Used')}</th>
+								<th>{t('profile.col_status', 'Status')}</th>
+								<th></th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each userPasswords as p (p.id)}
+								<tr>
+									<td>{p.label}</td>
+									<td>{formatDate(p.created_at)}</td>
+									<td>{p.last_used_at ? timeAgo(p.last_used_at) : t('profile.never', 'Never')}</td>
+									<td>
+										{#if p.active !== false}
+											<span class="badge badge--active">{t('profile.active', 'Active')}</span>
+										{:else}
+											<span class="badge badge--revoked">{t('profile.revoked', 'Revoked')}</span>
+										{/if}
+									</td>
+									<td>
+										{#if p.active !== false}
+											<button
+												class="btn-action btn-action--danger"
+												title={t('profile.revoke_title', 'Revoke')}
+												onclick={() => revokePw(p)}
+											>
+												<Icon name="trash-alt" />
+											</button>
+										{/if}
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				{/if}
+
+				{#if autoPasswords.length > 0}
+					<div class="app-pw-auto">
+						<button class="app-pw-auto__toggle" onclick={() => (autoExpanded = !autoExpanded)}>
+							<Icon name={autoExpanded ? 'chevron-down' : 'chevron-right'} />
+							<span>{t('profile.client_sessions', 'Client sessions')}</span>
+							<span class="badge badge--count">{autoPasswords.length}</span>
+						</button>
+						{#if autoExpanded}
+							<p class="muted">
+								{t(
+									'profile.client_sessions_desc',
+									'Auto-generated when you connect a Nextcloud-compatible client.'
+								)}
+							</p>
+							<table class="pw-table">
+								<thead>
+									<tr>
+										<th>{t('profile.col_client', 'Client')}</th>
+										<th>{t('profile.col_created', 'Created')}</th>
+										<th>{t('profile.col_last_used', 'Last Used')}</th>
+										<th></th>
+									</tr>
+								</thead>
+								<tbody>
+									{#each autoPasswords as p (p.id)}
+										<tr>
+											<td>{p.label}</td>
+											<td>{formatDate(p.created_at)}</td>
+											<td
+												>{p.last_used_at
+													? timeAgo(p.last_used_at)
+													: t('profile.never', 'Never')}</td
+											>
+											<td>
+												{#if p.active !== false}
+													<button
+														class="btn-action btn-action--danger"
+														title={t('profile.revoke_title', 'Revoke')}
+														onclick={() => revokePw(p)}
+													>
+														<Icon name="trash-alt" />
+													</button>
+												{/if}
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						{/if}
+					</div>
+				{/if}
+			</div>
+		{/if}
+
+		<!-- Change password -->
+		{#if showPasswordCard}
 			<form class="card" onsubmit={savePassword}>
-				<h2>{t('profile.change_password', 'Change password')}</h2>
+				<h2><Icon name="key" /> {t('profile.change_password', 'Change Password')}</h2>
 				<label>
-					<span>{t('profile.current_password', 'Current password')}</span>
+					<span>{t('profile.current_password', 'Current Password')}</span>
 					<input type="password" bind:value={currentPw} autocomplete="current-password" />
 				</label>
 				<label>
-					<span>{t('profile.new_password', 'New password')}</span>
-					<input type="password" bind:value={newPw} autocomplete="new-password" />
+					<span>{t('profile.new_password', 'New Password')}</span>
+					<input type="password" bind:value={newPw} minlength="8" autocomplete="new-password" />
+					<small class="muted">{t('profile.min_8_chars', 'At least 8 characters')}</small>
 				</label>
 				<label>
-					<span>{t('profile.confirm_password', 'Confirm new password')}</span>
-					<input type="password" bind:value={confirmPw} autocomplete="new-password" />
+					<span>{t('profile.confirm_password', 'Confirm New Password')}</span>
+					<input type="password" bind:value={confirmPw} minlength="8" autocomplete="new-password" />
 				</label>
 				<button type="submit" disabled={savingPassword}>
-					{t('profile.update_password', 'Update password')}
+					{t('profile.update_password', 'Update Password')}
 				</button>
 			</form>
 		{/if}
@@ -140,17 +699,12 @@
 
 <style>
 	.profile {
-		max-width: 36rem;
+		max-width: 40rem;
 		margin: 0 auto;
 		padding: 1.5rem 1rem;
 		display: flex;
 		flex-direction: column;
 		gap: 1.5rem;
-	}
-
-	.profile__email {
-		margin: -1rem 0 0;
-		color: var(--color-text-muted);
 	}
 
 	.card {
@@ -166,6 +720,301 @@
 	.card h2 {
 		margin: 0 0 0.25rem;
 		font-size: 1.125rem;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.avatar-section {
+		display: flex;
+		align-items: center;
+		gap: 1.25rem;
+	}
+
+	.avatar-lg {
+		width: 72px;
+		height: 72px;
+		border-radius: 50%;
+		object-fit: cover;
+		flex: none;
+	}
+
+	.avatar-lg--initials {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		background: var(--color-accent-gradient, var(--color-accent));
+		color: var(--color-on-accent);
+		font-size: 1.5rem;
+		font-weight: var(--weight-bold);
+	}
+
+	.avatar-info {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.avatar-info h2 {
+		margin: 0;
+		font-size: 1.25rem;
+	}
+
+	.avatar-edit-btn {
+		align-self: flex-start;
+		flex: none;
+	}
+
+	.role-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		align-self: flex-start;
+		padding: 0.1rem 0.55rem;
+		border-radius: var(--radius-full);
+		font-size: var(--text-sm);
+		font-weight: var(--weight-semibold, 600);
+		background: var(--color-bg-muted);
+		color: var(--color-text);
+	}
+
+	.role-badge--admin {
+		background: var(--color-warning-bg);
+		color: var(--color-warning-text);
+	}
+
+	.avatar-edit {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		padding-top: 1rem;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.avatar-tabs {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.avatar-tab {
+		padding: 0.35rem 0.75rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-bg-surface);
+		color: var(--color-text-muted);
+		cursor: pointer;
+	}
+
+	.avatar-tab--active {
+		background: var(--color-bg-hover);
+		color: var(--color-text);
+	}
+
+	.avatar-file-label {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		align-self: flex-start;
+		cursor: pointer;
+	}
+
+	.avatar-preview {
+		width: 96px;
+		height: 96px;
+		border-radius: 50%;
+		object-fit: cover;
+	}
+
+	.avatar-edit-actions {
+		display: flex;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+		align-items: center;
+	}
+
+	.info-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 1rem;
+	}
+
+	.info-item {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+
+	.info-label {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		color: var(--color-text-muted);
+		font-size: var(--text-sm);
+	}
+
+	.info-value {
+		font-weight: var(--weight-medium, 500);
+		word-break: break-word;
+	}
+
+	.storage-stats {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 0.5rem;
+		text-align: center;
+	}
+
+	.storage-stat {
+		display: flex;
+		flex-direction: column;
+		gap: 0.125rem;
+		padding: 0.75rem 0.5rem;
+		background: var(--color-bg-muted);
+		border-radius: var(--radius-md);
+	}
+
+	.stat-value {
+		font-size: 1.25rem;
+		font-weight: var(--weight-bold, 700);
+	}
+
+	.bar {
+		height: 8px;
+		background: var(--color-bg-muted);
+		border-radius: var(--radius-full);
+		overflow: hidden;
+	}
+
+	.bar__fill {
+		height: 100%;
+	}
+
+	.bar__fill--green {
+		background: var(--color-success-text, var(--color-accent));
+	}
+
+	.bar__fill--orange {
+		background: var(--color-warning-text);
+	}
+
+	.bar__fill--red {
+		background: var(--color-danger-text);
+	}
+
+	.muted {
+		color: var(--color-text-muted);
+		font-size: var(--text-sm);
+		margin: 0;
+	}
+
+	.alert {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
+		padding: 0.75rem 1rem;
+		border-radius: var(--radius-md);
+	}
+
+	.alert--info {
+		background: var(--color-info-bg);
+		color: var(--color-info-text);
+	}
+
+	.app-pw-create {
+		display: flex;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+
+	.app-pw-create input {
+		flex: 1;
+		min-width: 12rem;
+	}
+
+	.generated {
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+		padding: 0.75rem;
+		background: var(--color-bg-hover);
+		border-radius: var(--radius-md);
+	}
+
+	.generated__value {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+
+	.generated code {
+		font-family: var(--font-mono, monospace);
+	}
+
+	.pw-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: var(--text-sm);
+	}
+
+	.pw-table th,
+	.pw-table td {
+		text-align: left;
+		padding: 0.4rem 0.5rem;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.pw-table th {
+		color: var(--color-text-muted);
+		font-weight: var(--weight-semibold, 600);
+	}
+
+	.badge {
+		display: inline-block;
+		padding: 0.05rem 0.45rem;
+		border-radius: var(--radius-sm);
+		font-size: var(--text-xs, 0.7rem);
+		font-weight: var(--weight-semibold, 600);
+	}
+
+	.badge--active {
+		background: var(--color-success-bg, var(--color-bg-muted));
+		color: var(--color-success-text, var(--color-text));
+	}
+
+	.badge--revoked {
+		background: var(--color-bg-muted);
+		color: var(--color-text-muted);
+	}
+
+	.badge--count {
+		background: var(--color-bg-muted);
+		color: var(--color-text-muted);
+	}
+
+	.app-pw-auto {
+		padding-top: 0.5rem;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.app-pw-auto__toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		background: none;
+		border: none;
+		color: var(--color-text);
+		cursor: pointer;
+		font-size: 1rem;
+		padding: 0.25rem 0;
+	}
+
+	form {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
 	}
 
 	label {
@@ -196,7 +1045,45 @@
 		width: auto;
 	}
 
-	button {
+	.btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		padding: 0.5rem 0.875rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-bg-surface);
+		color: var(--color-text);
+		cursor: pointer;
+	}
+
+	.btn-secondary {
+		background: var(--color-bg-hover);
+	}
+
+	.btn-primary {
+		background: var(--color-primary);
+		color: var(--color-text-light);
+		border-color: transparent;
+	}
+
+	.btn-action {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.3rem;
+		border: none;
+		border-radius: var(--radius-md);
+		background: none;
+		color: var(--color-text-muted);
+		cursor: pointer;
+	}
+
+	.btn-action--danger {
+		color: var(--color-danger-text);
+	}
+
+	button[type='submit'] {
 		align-self: flex-start;
 		padding: 0.5rem 1.25rem;
 		border: none;
@@ -206,7 +1093,21 @@
 		cursor: pointer;
 	}
 
-	button:disabled {
-		opacity: 0.6;
+	.link-btn {
+		background: none;
+		border: none;
+		color: var(--color-primary);
+		cursor: pointer;
+		font-size: 0.8125rem;
+	}
+
+	.link-btn--danger {
+		color: var(--color-danger-text);
+	}
+
+	@media (width <= 32rem) {
+		.info-grid {
+			grid-template-columns: 1fr;
+		}
 	}
 </style>

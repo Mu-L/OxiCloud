@@ -1,7 +1,7 @@
 /**
  * Theme store — light / dark / auto.
  *
- * Mirrors the legacy behaviour: persists to the `oxicloud_theme` localStorage
+ * Mirrors the established behaviour: persists to the `oxicloud_theme` localStorage
  * key and reflects the choice on `<html data-color-scheme>`. `auto` removes the
  * attribute so the OS `prefers-color-scheme` takes over. The anti-FOUC inline
  * script in app.html applies the stored value before first paint; this store

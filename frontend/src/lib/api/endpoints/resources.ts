@@ -1,6 +1,6 @@
 /**
  * Shared cursor-pagination helper for the favorites/recent/trash "resources"
- * endpoints, which all take the same query params. Ported from the legacy
+ * endpoints, which all take the same query params. Ported from the original
  * favoritesModel/recentModel/trashModel.
  */
 import { apiFetch } from '$lib/api/client';

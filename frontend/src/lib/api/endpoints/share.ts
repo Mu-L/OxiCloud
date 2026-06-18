@@ -31,7 +31,8 @@ export interface ShareListing {
 export type ShareMetaResult =
 	| { status: 'ok'; data: ShareMeta }
 	| { status: 'password' }
-	| { status: 'expired' };
+	| { status: 'expired' }
+	| { status: 'invalid' };
 
 const enc = encodeURIComponent;
 
@@ -44,6 +45,8 @@ export async function getShareMeta(token: string): Promise<ShareMetaResult> {
 		throw new Error('Unauthorized');
 	}
 	if (res.status === 410) return { status: 'expired' };
+	// 404 means the token doesn't resolve to any share — a bad/typo'd link.
+	if (res.status === 404) return { status: 'invalid' };
 	throw new Error(`HTTP ${res.status}`);
 }
 

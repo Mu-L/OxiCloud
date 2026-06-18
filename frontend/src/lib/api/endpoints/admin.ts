@@ -1,7 +1,7 @@
 /**
- * Admin endpoints — ported from views/admin/admin.js. Covers users + plugins
- * (the core management surfaces). Settings (OIDC/storage/SMTP), storage
- * migration, and plugin logs/retention are not yet ported — see the admin route.
+ * Admin endpoints — ported from views/admin/admin.js. Covers users, plugins
+ * (incl. logs/retention/live SSE tail), dashboard, settings (OIDC/storage/SMTP),
+ * and storage migration (incl. the verify integrity check).
  */
 import { apiFetch, apiJson } from '$lib/api/client';
 import { getCsrfHeaders } from '$lib/api/csrf';
@@ -38,7 +38,8 @@ export function listUsers(limit: number, offset: number): Promise<AdminUsersPage
 export interface CreateUserInput {
 	username: string;
 	password: string;
-	email: string;
+	/** Optional — the backend auto-generates an address when null/empty. */
+	email: string | null;
 	role: string;
 	quota_bytes: number;
 }
@@ -67,6 +68,207 @@ export function deleteUser(userId: string): Promise<void> {
 	return mutate(`/api/admin/users/${userId}`, 'DELETE');
 }
 
+// ── Dashboard ───────────────────────────────────────────────────────────
+
+export interface AdminDashboard {
+	total_users: number;
+	active_users: number;
+	admin_users: number;
+	server_version: string;
+	total_used_bytes: number;
+	total_quota_bytes: number;
+	storage_usage_percent: number;
+	auth_enabled: boolean;
+	oidc_configured: boolean;
+	quotas_enabled: boolean;
+	registration_enabled?: boolean;
+	users_over_80_percent: number;
+	users_over_quota: number;
+}
+
+export function getDashboard(): Promise<AdminDashboard> {
+	return apiJson<AdminDashboard>('/api/admin/dashboard', { credentials: 'same-origin' });
+}
+
+export function setRegistrationEnabled(enabled: boolean): Promise<void> {
+	return mutate('/api/admin/settings/registration', 'PUT', { registration_enabled: enabled });
+}
+
+// ── SMTP ────────────────────────────────────────────────────────────────
+
+export interface SmtpInfo {
+	enabled: boolean;
+	host: string;
+	port: number;
+	tls: string;
+	from: string;
+	user_state: string;
+}
+
+export function getSmtpInfo(): Promise<SmtpInfo> {
+	return apiJson<SmtpInfo>('/api/admin/smtp/info', { credentials: 'same-origin' });
+}
+
+export interface SmtpTestResult {
+	success: boolean;
+	code?: string | number;
+	message?: string;
+	error?: string;
+}
+
+/** Result of POST .../settings/storage/test — the S3 connection probe. */
+export interface StorageTestResult {
+	connected?: boolean;
+	success?: boolean;
+	backend_type?: string;
+	available_bytes?: number | null;
+	message?: string;
+}
+
+export async function sendSmtpTest(to: string): Promise<SmtpTestResult> {
+	const res = await apiFetch('/api/admin/smtp/test', {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: { ...JSON_HEADERS, ...getCsrfHeaders() },
+		body: JSON.stringify({ to })
+	});
+	if (res.status === 503)
+		return { success: false, message: 'SMTP is not configured on this server.' };
+	return (await res.json().catch(() => ({ success: false }))) as SmtpTestResult;
+}
+
+// ── OIDC settings ─────────────────────────────────────────────────────────
+
+export interface OidcSettings {
+	enabled: boolean;
+	issuer_url: string;
+	client_id: string;
+	scopes: string | null;
+	auto_provision: boolean;
+	admin_groups: string | null;
+	disable_password_login: boolean;
+	provider_name: string | null;
+	callback_url?: string;
+	client_secret_set?: boolean;
+	env_overrides?: string[];
+}
+
+export interface OidcTestResult {
+	success: boolean;
+	message: string;
+	issuer?: string;
+	authorization_endpoint?: string;
+	provider_name_suggestion?: string;
+}
+
+export function getOidcSettings(): Promise<OidcSettings> {
+	return apiJson<OidcSettings>('/api/admin/settings/oidc', { credentials: 'same-origin' });
+}
+
+export async function testOidc(issuerUrl: string): Promise<OidcTestResult> {
+	const res = await apiFetch('/api/admin/settings/oidc/test', {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: { ...JSON_HEADERS, ...getCsrfHeaders() },
+		body: JSON.stringify({ issuer_url: issuerUrl })
+	});
+	return (await res
+		.json()
+		.catch(() => ({ success: false, message: 'Request failed' }))) as OidcTestResult;
+}
+
+export function saveOidc(body: Record<string, unknown>): Promise<void> {
+	return mutate('/api/admin/settings/oidc', 'PUT', body);
+}
+
+// ── Storage settings + migration ───────────────────────────────────────────
+
+export interface StorageSettings {
+	backend: string;
+	s3_endpoint_url?: string | null;
+	s3_bucket?: string | null;
+	s3_region?: string | null;
+	s3_access_key_set?: boolean;
+	s3_secret_key_set?: boolean;
+	s3_force_path_style?: boolean;
+	env_overrides?: string[];
+	current_backend?: string;
+	total_blobs?: number;
+	total_bytes_stored?: number;
+	dedup_ratio?: number;
+}
+
+export function getStorageSettings(): Promise<StorageSettings> {
+	return apiJson<StorageSettings>('/api/admin/settings/storage', { credentials: 'same-origin' });
+}
+
+export function saveStorage(body: Record<string, unknown>): Promise<void> {
+	return mutate('/api/admin/settings/storage', 'PUT', body);
+}
+
+export async function testStorage(body: Record<string, unknown>): Promise<StorageTestResult> {
+	const res = await apiFetch('/api/admin/settings/storage/test', {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: { ...JSON_HEADERS, ...getCsrfHeaders() },
+		body: JSON.stringify(body)
+	});
+	return (await res.json().catch(() => ({ connected: false }))) as StorageTestResult;
+}
+
+export interface MigrationStatus {
+	status: 'idle' | 'running' | 'paused' | 'completed' | 'failed';
+	total_blobs: number;
+	migrated_blobs: number;
+	migrated_bytes: number;
+	throughput_bytes_per_sec?: number;
+	failed_blobs?: string[];
+}
+
+export function getMigration(): Promise<MigrationStatus> {
+	return apiJson<MigrationStatus>('/api/admin/storage/migration', { credentials: 'same-origin' });
+}
+
+export function migrationAction(action: 'start' | 'pause' | 'resume' | 'complete'): Promise<void> {
+	const body = action === 'start' ? { concurrency: 4 } : {};
+	return mutate(`/api/admin/storage/migration/${action}`, 'POST', body);
+}
+
+/** Result of a `verify` integrity check (POST .../migration/verify). */
+export interface MigrationVerifyResult {
+	passed: boolean;
+	sample_checked: number;
+	pg_blob_count: number;
+	missing_in_target: string[];
+	size_mismatches: string[];
+}
+
+/**
+ * Run an integrity verification pass over a sample of migrated blobs. Unlike
+ * the other migration actions this returns a structured result that the caller
+ * renders (passed / sample-checked / missing / size-mismatch counts).
+ */
+export async function verifyMigration(sampleSize = 100): Promise<MigrationVerifyResult> {
+	const res = await apiFetch('/api/admin/storage/migration/verify', {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: { ...JSON_HEADERS, ...getCsrfHeaders() },
+		body: JSON.stringify({ sample_size: sampleSize })
+	});
+	if (!res.ok) {
+		const e = (await res.json().catch(() => ({}))) as { message?: string };
+		throw new Error(e.message || `verify failed: ${res.status}`);
+	}
+	const r = (await res.json()) as Partial<MigrationVerifyResult>;
+	return {
+		passed: r.passed ?? false,
+		sample_checked: r.sample_checked ?? 0,
+		pg_blob_count: r.pg_blob_count ?? 0,
+		missing_in_target: r.missing_in_target ?? [],
+		size_mismatches: r.size_mismatches ?? []
+	};
+}
+
 // ── Plugins ─────────────────────────────────────────────────────────────
 
 export interface PluginInfo {
@@ -75,6 +277,49 @@ export interface PluginInfo {
 	version?: string;
 	enabled: boolean;
 	description?: string;
+	abi?: string | number;
+	subscriptions?: string[];
+}
+
+export interface PluginRetention {
+	retention_days: number;
+	max_bytes: number;
+}
+
+/**
+ * Install a plugin from a .zip bundle. The browser sets the multipart
+ * Content-Type (with boundary) — do not override it here.
+ */
+export async function installPlugin(bundle: File): Promise<PluginInfo> {
+	const form = new FormData();
+	form.append('bundle', bundle);
+	const res = await apiFetch('/api/admin/plugins', {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: { ...getCsrfHeaders() },
+		body: form
+	});
+	if (!res.ok) {
+		const e = (await res.json().catch(() => ({}))) as { message?: string };
+		throw new Error(e.message || `install failed: ${res.status}`);
+	}
+	return (await res.json()) as PluginInfo;
+}
+
+export async function getPluginRetention(id: string): Promise<PluginRetention | null> {
+	const res = await apiFetch(`/api/admin/plugins/${encodeURIComponent(id)}/retention`, {
+		credentials: 'same-origin'
+	});
+	if (!res.ok) return null;
+	return (await res.json()) as PluginRetention;
+}
+
+export function savePluginRetention(id: string, r: PluginRetention): Promise<void> {
+	return mutate(`/api/admin/plugins/${encodeURIComponent(id)}/retention`, 'PUT', r);
+}
+
+export function clearPluginLogs(id: string): Promise<void> {
+	return mutate(`/api/admin/plugins/${encodeURIComponent(id)}/logs`, 'DELETE');
 }
 
 export interface PluginsResult {
@@ -98,4 +343,37 @@ export function setPluginEnabled(id: string, enabled: boolean): Promise<void> {
 
 export function deletePlugin(id: string): Promise<void> {
 	return mutate(`/api/admin/plugins/${encodeURIComponent(id)}`, 'DELETE');
+}
+
+export interface PluginLogEntry {
+	timestamp?: string;
+	ts?: string;
+	level?: string;
+	message?: string;
+	/** Streamed-entry message field (SSE / persisted logs use `msg`). */
+	msg?: string;
+	/** "outcome" | "log" — outcome entries carry a `reason`. */
+	kind?: string;
+	reason?: string;
+	invocation_id?: string;
+	[k: string]: unknown;
+}
+
+export interface PluginLogPage {
+	total: number;
+	entries: PluginLogEntry[];
+}
+
+export function getPluginLogs(
+	id: string,
+	opts: { limit?: number; offset?: number; level?: string; search?: string } = {}
+): Promise<PluginLogPage> {
+	const params = new URLSearchParams();
+	params.set('limit', String(opts.limit ?? 50));
+	params.set('offset', String(opts.offset ?? 0));
+	if (opts.level) params.set('level', opts.level);
+	if (opts.search) params.set('search', opts.search);
+	return apiJson<PluginLogPage>(`/api/admin/plugins/${encodeURIComponent(id)}/logs?${params}`, {
+		credentials: 'same-origin'
+	});
 }

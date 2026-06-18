@@ -16,13 +16,17 @@
 <style>
 	.toaster {
 		position: fixed;
-		bottom: 1rem;
+		/* Offset clears any bottom-right FAB the file view may mount; the
+		   --toaster-offset hook lets a page lift the stack further if needed. */
+		bottom: calc(1rem + env(safe-area-inset-bottom, 0px) + var(--toaster-offset, 0px));
 		right: 1rem;
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
-		z-index: 1000;
+		z-index: 1200;
 		max-width: min(92vw, 24rem);
+		/* Let clicks pass through the gaps; individual toasts re-enable below. */
+		pointer-events: none;
 	}
 
 	.toast {
@@ -35,6 +39,7 @@
 		color: var(--color-text);
 		box-shadow: var(--shadow-md);
 		border-left: 4px solid var(--color-border);
+		pointer-events: auto;
 	}
 
 	.toast--success {

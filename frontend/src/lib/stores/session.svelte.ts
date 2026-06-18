@@ -1,7 +1,7 @@
 /**
  * Session store — the authenticated user and derived flags.
  *
- * Replaces the user-related fields of the legacy `app` state object
+ * Replaces the user-related fields of the original `app` state object
  * (isExternalUser, userHomeFolderId/Name). `isExternalUser` drives default
  * routing: externals (magic-link / OIDC-only / OCM recipients) have no home
  * folder and land on the shared-with-me view.

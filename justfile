@@ -156,7 +156,7 @@ api-test:
     bash tests/webdav/run.sh
 
 # ---------------------------------------------------------------------------
-# New SvelteKit frontend (frontend/). The legacy vanilla frontend (static/)
+# New SvelteKit frontend (frontend/). The original vanilla frontend (static/)
 # and its `front-*` recipes remain until the Phase 5 cutover; these `fe-*`
 # recipes drive the rewrite in the meantime.
 # ---------------------------------------------------------------------------

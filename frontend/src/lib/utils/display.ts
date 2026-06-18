@@ -1,7 +1,7 @@
 /** Display helpers shared across list views. */
 
 /**
- * Map a legacy `icon_class` (e.g. "fas fa-folder", "fa-file-pdf") to an icon
+ * Map an `icon_class` (e.g. "fas fa-folder", "fa-file-pdf") to an icon
  * registry name (the FA token without the `fa-` prefix).
  */
 export function iconNameFromClass(iconClass: string | undefined | null): string {

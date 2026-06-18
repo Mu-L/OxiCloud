@@ -1,8 +1,8 @@
 /**
  * Typed API client with transparent 401 → token-refresh → retry.
  *
- * Ported from static/js/core/fetchWrapper.js. Unlike the legacy version this
- * does NOT monkeypatch `window.fetch`; every endpoint module calls `apiFetch`
+ * Ported from static/js/core/fetchWrapper.js. Unlike that wrapper, this does
+ * NOT monkeypatch `window.fetch`; every endpoint module calls `apiFetch`
  * explicitly. The behavioural invariants are preserved exactly:
  *
  *  - A captured raw `fetch` is used for the real network calls so the refresh

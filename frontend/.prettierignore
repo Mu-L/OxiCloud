@@ -7,7 +7,9 @@ package-lock.json
 src/lib/i18n/locales/
 # vendored / generated — kept byte-faithful to their source
 src/lib/styles/base/
-src/lib/styles/legacy/
-src/lib/styles/legacy.css
+src/lib/styles/ported/
+src/lib/styles/ported.css
 src/lib/icons/registry.ts
 static/locales/
+static/vendors/
+static/workers/

@@ -4,5 +4,5 @@ node_modules/
 # Ported verbatim from static/css/base — treated as vendored design tokens.
 # New component styles (Svelte <style> + app.css) still get the full ruleset.
 src/lib/styles/base/
-src/lib/styles/legacy/
-src/lib/styles/legacy.css
+src/lib/styles/ported/
+src/lib/styles/ported.css

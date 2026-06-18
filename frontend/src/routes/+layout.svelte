@@ -4,9 +4,10 @@
 	import { onMount } from 'svelte';
 	import '$lib/styles/app.css';
 	import AppShell from '$lib/components/AppShell.svelte';
+	import DialogHost from '$lib/components/DialogHost.svelte';
 	import Toaster from '$lib/components/Toaster.svelte';
 	import { session } from '$lib/stores/session.svelte';
-	import { legacyHashToPath } from '$lib/utils/legacyHash';
+	import { hashUrlToPath } from '$lib/utils/hashRedirect';
 
 	let { children } = $props();
 
@@ -20,9 +21,9 @@
 	let ready = $state(false);
 
 	onMount(async () => {
-		// Redirect legacy `#/...` bookmarks to the new path before anything else.
+		// Redirect old `#/...` bookmarks to the new path before anything else.
 		if (typeof location !== 'undefined' && location.hash.startsWith('#/')) {
-			const mapped = legacyHashToPath(location.hash);
+			const mapped = hashUrlToPath(location.hash);
 			if (mapped) await goto(mapped, { replaceState: true });
 		}
 		await session.load();
@@ -51,6 +52,7 @@
 {/if}
 
 <Toaster />
+<DialogHost />
 
 <style>
 	.app-loading {

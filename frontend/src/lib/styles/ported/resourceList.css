@@ -392,6 +392,12 @@
     text-align: right;
 }
 
+/* List rows expose the individual action buttons inline (on hover), so the
+   corner kebab is redundant here — it's the grid view's affordance. */
+.files-list-view .file-item .action-cell .file-actions {
+    display: none;
+}
+
 /* Styles for the built-in action-cell buttons (favorite-star, kebab).
  * `.btn-action` is excluded — it owns its own colors via the generic
  * `.btn-action` rule + variant modifiers (e.g. `.btn-action--delete`). */
@@ -639,6 +645,20 @@
 }
 
 /* More actions button (three dots) — top-right of the thumbnail on a scrim. */
+/* Grid cards surface actions through the corner kebab (.file-actions) + the
+   favorite star, both absolutely positioned below. The inline per-row action
+   buttons (share/move/rename/delete) belong to the list view only — hide them
+   here so they don't stack up along the bottom edge of the card. */
+.files-grid-view .file-item .action-cell .btn-action {
+    display: none;
+}
+
+/* The favorite state is already shown by the corner star button, so the inline
+   name-cell favorite badge is redundant on grid cards. */
+.files-grid-view .file-item .name-cell .item-badge {
+    display: none;
+}
+
 .files-grid-view .file-item .file-actions {
     position: absolute;
     top: calc(var(--space-3) + 8px);

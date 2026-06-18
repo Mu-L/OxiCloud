@@ -1,0 +1,294 @@
+/* User Menu */
+.user-menu-wrapper {
+    position: relative;
+}
+
+.user-avatar-btn {
+    background: none;
+    border: none;
+    border-radius: 50%;
+    padding: 0;
+    cursor: pointer;
+    transition: transform var(--motion-base) var(--ease-standard);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Premium hover: ONE soft accent ring hugging the avatar + a gentle warm glow
+   + a subtle pop — replaces the old heavy double halo (button border ring with
+   a gap + a second avatar ring). */
+.user-avatar-btn:hover {
+    transform: scale(1.05);
+}
+
+.user-avatar-btn:hover .user-vignette__avatar {
+    box-shadow:
+        0 0 0 3px var(--color-accent-ring),
+        0 3px 12px -2px var(--color-accent-shadow);
+}
+
+/* Menu open: a slightly firmer ring (same clean single-ring language). */
+.user-menu-wrapper.open .user-avatar-btn .user-vignette__avatar {
+    box-shadow: 0 0 0 3px var(--color-accent-ring-strong);
+}
+
+/* ── Avatar vignette overrides ────────────────────────────────────────────── */
+
+/* The toolbar button and dropdown header mount avatar-only userVignette
+   components.  Sizing is owned by userVignette.css (--menu / --xl variants);
+   the rules below add the decoration that is specific to this context. */
+
+.user-avatar-btn .user-vignette__avatar {
+    letter-spacing: 0.5px;
+    user-select: none;
+    /* Animate the ring/glow smoothly in AND out (transition on the base, not
+       :hover). */
+    transition: box-shadow var(--motion-base) var(--ease-standard);
+}
+
+.user-menu-header .user-vignette__avatar {
+    letter-spacing: 0.5px;
+    box-shadow: 0 4px 12px var(--color-accent-shadow);
+}
+
+.user-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    left: auto;
+    width: 300px;
+    background: var(--color-bg-surface);
+    border-radius: var(--radius-3xl);
+    box-shadow:
+        0 12px 40px var(--color-shadow-md),
+        0 0 0 1px var(--color-shadow-xs);
+    z-index: 2000;
+    overflow: hidden;
+    animation: userMenuIn 0.2s ease-out;
+}
+
+.user-menu-wrapper.open .user-menu {
+    display: block;
+}
+
+[dir="rtl"] .user-menu {
+    right: auto;
+    left: 0;
+}
+
+@keyframes userMenuIn {
+    from {
+        opacity: 0;
+        transform: translateY(-8px) scale(0.97);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.user-menu-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3-5);
+    padding: var(--space-5) var(--space-5) var(--space-4);
+    background: var(--color-user-menu-header-bg);
+    border-bottom: 1px solid var(--color-user-menu-header-border);
+}
+
+/* The header vignette (xl, name + email) fills the available width. */
+.user-menu-header .user-vignette {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Increase name prominence relative to the base vignette style. */
+.user-menu-header .user-vignette__name {
+    font-size: 15px;
+    font-weight: var(--weight-semibold);
+    color: var(--color-text-heading);
+}
+
+.user-menu-header .user-vignette__email {
+    font-size: 12.5px;
+    margin-top: 1px;
+}
+
+.user-menu-storage {
+    padding: var(--space-3-5) var(--space-5);
+}
+
+.user-menu-storage-label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    color: var(--color-text-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: var(--space-2);
+}
+
+.user-menu-storage-label i {
+    font-size: var(--text-2xs);
+    color: var(--color-text-faint);
+}
+
+.user-menu-storage-bar {
+    height: 6px;
+    background: var(--color-border-light);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: var(--space-1-5);
+}
+
+.user-menu-storage-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--color-accent), var(--color-accent-second));
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.5s ease;
+}
+
+.user-menu-storage-text {
+    font-size: 11.5px;
+    color: var(--color-text-faint);
+}
+
+.user-menu-divider {
+    height: 1px;
+    background: var(--color-border-light);
+    margin: var(--space-1) 0;
+}
+
+.user-menu-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    padding: var(--space-3) var(--space-5);
+    border: none;
+    background: none;
+    color: var(--color-text-dark);
+    font-size: var(--text-base);
+    cursor: pointer;
+    transition: background 0.15s ease;
+    text-align: left;
+}
+
+.user-menu-item:hover,
+.user-menu-item:focus-visible {
+    background: var(--color-bg-hover);
+}
+
+.user-menu-item i {
+    width: 20px;
+    text-align: center;
+    font-size: 15px;
+    color: var(--color-text-subtle);
+}
+
+/* The appearance row is a plain container, not a button — the inner
+ * segmented control captures the clicks. Match the height of other
+ * .user-menu-item rows so the row reads as part of the same list. */
+.user-menu-item--theme {
+    cursor: default;
+}
+
+.user-menu-item--theme:hover {
+    background: transparent;
+}
+
+/* Light / Like OS / Dark — three-option pill, active option highlighted
+ * with the accent colour. Sits at the right edge of the row. */
+.theme-segmented {
+    margin-left: auto;
+    display: inline-flex;
+    background: var(--color-bg-muted);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full);
+    padding: var(--space-0-5);
+    gap: var(--space-0-5);
+}
+
+.theme-segmented__opt {
+    width: 28px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--color-text-subtle);
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    font-size: var(--text-2xs);
+    padding: 0;
+    transition:
+        background 0.15s ease,
+        color 0.15s ease;
+}
+
+.theme-segmented__opt:hover {
+    color: var(--color-text);
+}
+
+.theme-segmented__opt--active {
+    background: var(--color-accent);
+    color: var(--color-danger-text);
+}
+
+.theme-segmented__opt--active:hover {
+    color: var(--color-danger-text);
+}
+
+.user-menu-admin {
+    color: var(--color-primary);
+}
+
+.user-menu-admin i {
+    color: var(--color-info-blue);
+}
+
+.user-menu-admin:hover {
+    background: var(--color-info-bg-alt);
+}
+
+.user-menu-role-badge {
+    padding: 0 var(--space-5) var(--space-1);
+}
+
+.role-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
+    padding: var(--space-0-5) var(--space-2-5);
+    border-radius: var(--radius-xl);
+}
+
+.role-badge-admin {
+    background: var(--color-info-surface);
+    color: var(--color-primary);
+}
+
+.role-badge i {
+    font-size: 10px;
+}
+
+.user-menu-logout {
+    color: var(--color-danger-alt);
+    margin-bottom: var(--space-1);
+}
+
+.user-menu-logout i {
+    color: var(--color-danger-alt);
+}
+
+.user-menu-logout:hover {
+    background: var(--color-danger-lighter);
+}

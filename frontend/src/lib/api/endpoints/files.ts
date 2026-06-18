@@ -18,6 +18,36 @@ export async function uploadFile(folderId: string | null, file: File): Promise<v
 	if (!res.ok) throw new Error(`upload failed: ${res.status}`);
 }
 
+/**
+ * Upload with progress reporting. `fetch` can't surface upload progress, so this
+ * uses XHR; CSRF headers are attached the same way as {@link uploadFile}.
+ * `onProgress` receives a fraction in [0, 1] (or NaN when length is unknown).
+ */
+export function uploadFileWithProgress(
+	folderId: string | null,
+	file: File,
+	onProgress: (fraction: number) => void
+): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const form = new FormData();
+		if (folderId) form.append('folder_id', folderId);
+		form.append('file', file);
+		const xhr = new XMLHttpRequest();
+		xhr.open('POST', '/api/files/upload');
+		xhr.withCredentials = true;
+		for (const [k, v] of Object.entries(getCsrfHeaders())) xhr.setRequestHeader(k, v);
+		xhr.upload.onprogress = (e) => {
+			onProgress(e.lengthComputable ? e.loaded / e.total : NaN);
+		};
+		xhr.onload = () => {
+			if (xhr.status >= 200 && xhr.status < 300) resolve();
+			else reject(new Error(`upload failed: ${xhr.status}`));
+		};
+		xhr.onerror = () => reject(new Error('upload failed: network error'));
+		xhr.send(form);
+	});
+}
+
 export async function renameFile(fileId: string, name: string): Promise<void> {
 	const res = await apiFetch(`/api/files/${fileId}/rename`, {
 		method: 'PUT',

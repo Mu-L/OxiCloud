@@ -27,6 +27,8 @@ export default ts.config(
 		}
 	},
 	{
-		ignores: ['build/', '.svelte-kit/', 'package/']
+		// `static/` holds vendored, verbatim assets (the delta-upload worker and
+		// the wasm-bindgen hash glue) — lint them as the upstream ships them.
+		ignores: ['build/', '.svelte-kit/', 'package/', 'static/']
 	}
 );

@@ -1,85 +1,381 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import FileRow from '$lib/components/FileRow.svelte';
-	import ResourceListShell from '$lib/components/ResourceListShell.svelte';
 	import { clearRecent, fetchRecentPage, type RecentResourceItem } from '$lib/api/endpoints/recent';
+	import {
+		addFavorite,
+		dateBucket,
+		fetchFavoritesPage,
+		removeFavorite,
+		resolveOwnerName,
+		sizeBucket,
+		typeLabel
+	} from '$lib/api/endpoints/favorites';
+	import { fileDownloadUrl, renameFile, deleteFile } from '$lib/api/endpoints/files';
+	import { renameFolder, deleteFolder } from '$lib/api/endpoints/folders';
+	import type { FileItem, ItemType } from '$lib/api/types';
+	import Icon from '$lib/icons/Icon.svelte';
+	import FileViewer from '$lib/components/FileViewer.svelte';
+	import MoveDialog from '$lib/components/MoveDialog.svelte';
+	import ShareDialog from '$lib/components/ShareDialog.svelte';
+	import ResourceList, {
+		type ContextAction,
+		type GroupByDef,
+		type ResourceEntry
+	} from '$lib/components/ResourceList.svelte';
+	import { confirmDialog, promptDialog } from '$lib/stores/dialogs.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { ui } from '$lib/stores/ui.svelte';
-	import { formatDate } from '$lib/utils/display';
 
-	let items = $state<RecentResourceItem[]>([]);
+	let raw = $state<RecentResourceItem[]>([]);
 	let cursor = $state<string | undefined>(undefined);
 	let loading = $state(false);
 	let error = $state<string | null>(null);
+	let groupBy = $state('');
+	let reversed = $state(false);
+	let ownerNames = $state<Record<string, string>>({});
+	let favoriteIds = $state<Set<string>>(new Set());
 
-	async function load(reset = false) {
+	const byId = $derived(new Map(raw.map((it) => [it.resource.id, it])));
+
+	const entries = $derived(
+		raw.map((it): ResourceEntry => {
+			const isFile = it.resource_type === 'file';
+			const ownerId = it.resource.owner_id ?? null;
+			return {
+				id: it.resource.id,
+				name: it.resource.name,
+				kind: it.resource_type,
+				iconClass: it.resource.icon_class,
+				path: it.resource.path,
+				size: isFile ? (it.resource as FileItem).size : null,
+				date: it.accessed_at,
+				ownerId,
+				ownerName: ownerId ? (ownerNames[ownerId] ?? null) : null,
+				isFavorite: favoriteIds.has(it.resource.id),
+				category: isFile ? it.resource.category : 'Folder',
+				modifiedAt: it.resource.modified_at
+			};
+		})
+	);
+
+	const groupBys: GroupByDef[] = [
+		{ key: '', label: t('files.name', 'Name'), orderBy: 'name' },
+		{
+			key: 'owner',
+			label: t('groupby.owner', 'Owner'),
+			orderBy: 'owner',
+			bucketOf: (e) => e.ownerId ?? null,
+			labelOf: (id) => ownerNames[id] ?? id
+		},
+		{
+			key: 'type',
+			label: t('groupby.type', 'Type'),
+			orderBy: 'type',
+			bucketOf: (e) => e.category ?? 'other',
+			labelOf: (k) => typeLabel(k)
+		},
+		{
+			key: 'size',
+			label: t('groupby.size', 'Size'),
+			orderBy: 'size',
+			bucketOf: (e) => sizeBucket(e.kind === 'folder' ? null : e.size)
+		},
+		{
+			key: 'accessedAt',
+			label: t('groupby.accessedAt', 'Accessed date'),
+			orderBy: 'accessed_at',
+			bucketOf: (e) => dateBucket(e.date)
+		},
+		{
+			key: 'modifiedAt',
+			label: t('groupby.modifiedAt', 'Modified date'),
+			orderBy: 'modified_at',
+			bucketOf: (e) => dateBucket(e.modifiedAt)
+		}
+	];
+
+	async function resolveOwners(items: RecentResourceItem[]) {
+		const ids = [
+			...new Set(items.map((i) => i.resource.owner_id).filter((id): id is string => !!id))
+		];
+		await Promise.all(
+			ids.map(async (id) => {
+				if (ownerNames[id]) return;
+				const name = await resolveOwnerName(id);
+				ownerNames = { ...ownerNames, [id]: name };
+			})
+		);
+	}
+
+	async function loadFavoriteIds() {
+		try {
+			const favs = await fetchFavoritesPage({ resourceTypes: ['file', 'folder'] });
+			favoriteIds = new Set(favs.items.map((f) => f.resource.id));
+		} catch {
+			// non-fatal — stars just default to off
+		}
+	}
+
+	// Recent defaults to most-recently-accessed first (accessed_at DESC).
+	async function load(reset = false, orderBy = 'accessed_at', rev = reversed) {
 		loading = true;
 		error = null;
 		try {
-			const page = await fetchRecentPage({ cursor: reset ? undefined : cursor });
-			items = reset ? page.items : [...items, ...page.items];
+			const page = await fetchRecentPage({
+				cursor: reset ? undefined : cursor,
+				orderBy,
+				reverse: rev,
+				resourceTypes: ['file', 'folder']
+			});
+			raw = reset ? page.items : [...raw, ...page.items];
 			cursor = page.next_cursor;
+			void resolveOwners(page.items);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			console.error('recent: load error', e);
+			error = t('errors_loadFailed', 'Failed to load items');
 		} finally {
 			loading = false;
 		}
 	}
 
+	function orderByForGroup(): string {
+		return groupBys.find((g) => g.key === groupBy)?.orderBy ?? 'accessed_at';
+	}
+
+	let viewerOpen = $state(false);
+	let viewerFile = $state<FileItem | null>(null);
+
+	function open(entry: ResourceEntry) {
+		if (entry.kind === 'folder') {
+			goto(`/files/${entry.id}`);
+			return;
+		}
+		const item = byId.get(entry.id);
+		if (item) {
+			viewerFile = item.resource as FileItem;
+			viewerOpen = true;
+		}
+	}
+
+	async function toggleFavorite(entry: ResourceEntry) {
+		const isFav = favoriteIds.has(entry.id);
+		const next = new Set(favoriteIds);
+		if (isFav) next.delete(entry.id);
+		else next.add(entry.id);
+		favoriteIds = next;
+		try {
+			if (isFav) await removeFavorite(entry.kind, entry.id);
+			else await addFavorite(entry.kind, entry.id);
+		} catch (e) {
+			// revert on failure
+			favoriteIds = isFav
+				? new Set([...favoriteIds, entry.id])
+				: new Set([...favoriteIds].filter((id) => id !== entry.id));
+			ui.notify(e instanceof Error ? e.message : String(e), 'error');
+		}
+	}
+
 	async function clearAll() {
+		const ok = await confirmDialog({
+			title: t('recent.clear', 'Clear recent'),
+			message: t('recent.confirm_clear', 'Clear your recent items?'),
+			confirmText: t('recent.clear', 'Clear recent')
+		});
+		if (!ok) return;
 		try {
 			await clearRecent();
-			items = [];
+			raw = [];
 			cursor = undefined;
 		} catch (e) {
 			ui.notify(e instanceof Error ? e.message : String(e), 'error');
 		}
 	}
 
-	onMount(() => load(true));
+	// ── Context-menu actions ──────────────────────────────────────────────────
+	let moveOpen = $state(false);
+	let moveTarget = $state<{ id: string; name: string; kind: ItemType } | null>(null);
+	let moveItems = $state<{ id: string; name: string; kind: ItemType }[] | null>(null);
+	let shareOpen = $state(false);
+	let shareTarget = $state<{ id: string; name: string; kind: ItemType } | null>(null);
+
+	async function rename(entry: ResourceEntry) {
+		const name = await promptDialog({
+			title: t('common.rename', 'Rename'),
+			defaultValue: entry.name,
+			confirmText: t('common.rename', 'Rename')
+		});
+		if (!name || name === entry.name) return;
+		try {
+			if (entry.kind === 'file') await renameFile(entry.id, name);
+			else await renameFolder(entry.id, name);
+			await load(true, orderByForGroup());
+		} catch (e) {
+			ui.notify(e instanceof Error ? e.message : String(e), 'error');
+		}
+	}
+
+	async function remove(entry: ResourceEntry) {
+		const ok = await confirmDialog({
+			title: t('common.delete', 'Delete'),
+			message: t('files.confirm_delete', { name: entry.name }, 'Delete "{{name}}"?'),
+			confirmText: t('common.delete', 'Delete'),
+			danger: true
+		});
+		if (!ok) return;
+		try {
+			if (entry.kind === 'file') await deleteFile(entry.id);
+			else await deleteFolder(entry.id);
+			raw = raw.filter((i) => i.resource.id !== entry.id);
+		} catch (e) {
+			ui.notify(e instanceof Error ? e.message : String(e), 'error');
+		}
+	}
+
+	function downloadEntry(entry: ResourceEntry) {
+		if (entry.kind !== 'file') return;
+		const a = document.createElement('a');
+		a.href = fileDownloadUrl(entry.id);
+		a.download = entry.name;
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+	}
+
+	const contextActions: ContextAction[] = [
+		{
+			key: 'download',
+			label: t('common.download', 'Download'),
+			icon: 'download',
+			run: downloadEntry
+		},
+		{
+			key: 'share',
+			label: t('files.share', 'Share'),
+			icon: 'share-alt',
+			run: (e) => {
+				shareTarget = { id: e.id, name: e.name, kind: e.kind };
+				shareOpen = true;
+			}
+		},
+		{
+			key: 'move',
+			label: t('files.move', 'Move'),
+			icon: 'arrows-alt',
+			run: (e) => {
+				moveItems = null;
+				moveTarget = { id: e.id, name: e.name, kind: e.kind };
+				moveOpen = true;
+			}
+		},
+		{ key: 'rename', label: t('common.rename', 'Rename'), icon: 'pen', run: rename },
+		{ key: 'delete', label: t('common.delete', 'Delete'), icon: 'trash', danger: true, run: remove }
+	];
+
+	// ── Selection + batch ─────────────────────────────────────────────────────
+	let selectedIds = $state<Set<string>>(new Set());
+	const selectedEntries = $derived(entries.filter((e) => selectedIds.has(e.id)));
+
+	function batchTargets() {
+		return selectedEntries.map((e) => ({ id: e.id, name: e.name, kind: e.kind }));
+	}
+
+	function batchDownload() {
+		for (const e of selectedEntries) downloadEntry(e);
+	}
+
+	async function batchDelete() {
+		const ok = await confirmDialog({
+			title: t('common.delete', 'Delete'),
+			message: t(
+				'files.confirm_delete_n',
+				{ count: selectedEntries.length },
+				'Delete {{count}} item(s)?'
+			),
+			confirmText: t('common.delete', 'Delete'),
+			danger: true
+		});
+		if (!ok) return;
+		try {
+			await Promise.all(
+				selectedEntries.map((e) => (e.kind === 'file' ? deleteFile(e.id) : deleteFolder(e.id)))
+			);
+			const removed = new Set(selectedEntries.map((e) => e.id));
+			raw = raw.filter((i) => !removed.has(i.resource.id));
+			selectedIds = new Set();
+		} catch (e) {
+			ui.notify(e instanceof Error ? e.message : String(e), 'error');
+		}
+	}
+
+	onMount(() => {
+		void loadFavoriteIds();
+		void load(true);
+	});
 </script>
 
 <svelte:head><title>{t('nav.recent', 'Recent')} · OxiCloud</title></svelte:head>
 
-<h1 class="page-title">{t('nav.recent', 'Recent')}</h1>
-
-<ResourceListShell
+<ResourceList
+	title={t('nav.recent', 'Recent')}
+	items={entries}
 	{loading}
 	{error}
-	empty={items.length === 0}
-	emptyText={t('recent.empty', 'No recent items.')}
+	emptyIcon="clock"
+	emptyText={t('recent.empty_state', 'No recent files')}
+	emptyHint={t('recent.empty_hint', 'Files you open will appear here')}
 	hasMore={!!cursor}
-	onloadmore={() => load(false)}
+	onloadmore={() => load(false, orderByForGroup())}
+	onopen={open}
+	onfavorite={toggleFavorite}
+	showOwner
+	selectable
+	{contextActions}
+	{groupBys}
+	bind:groupBy
+	bind:reversed
+	onreload={(orderBy, rev) => {
+		cursor = undefined;
+		load(true, orderBy, rev);
+	}}
+	onselectionchange={(ids) => (selectedIds = ids)}
 >
 	{#snippet toolbar()}
-		{#if items.length > 0}
-			<button class="link-btn" onclick={clearAll}>{t('recent.clear', 'Clear')}</button>
+		{#if entries.length > 0}
+			<button class="btn btn-secondary" onclick={clearAll}>
+				<Icon name="broom" />
+				{t('recent.clear', 'Clear recent')}
+			</button>
 		{/if}
 	{/snippet}
+	{#snippet batchToolbar()}
+		<button class="btn btn-secondary" onclick={batchDownload}>
+			<Icon name="download" />
+			{t('common.download', 'Download')}
+		</button>
+		<button
+			class="btn btn-secondary"
+			onclick={() => {
+				moveTarget = null;
+				moveItems = batchTargets();
+				moveOpen = true;
+			}}><Icon name="arrows-alt" /> {t('files.move', 'Move')}</button
+		>
+		<button class="btn btn-danger" onclick={batchDelete}>
+			<Icon name="trash" />
+			{t('common.delete', 'Delete')}
+		</button>
+	{/snippet}
+</ResourceList>
 
-	{#each items as item (item.resource.id + item.accessed_at)}
-		<FileRow
-			name={item.resource.name}
-			iconClass={item.resource.icon_class}
-			subtitle={item.resource.path}
-			date={formatDate(item.accessed_at)}
-		/>
-	{/each}
-</ResourceListShell>
-
-<style>
-	.page-title {
-		margin: 0;
-		padding: 1rem 1rem 0;
-		font-size: 1.5rem;
-		color: var(--color-text-heading);
-	}
-
-	.link-btn {
-		background: none;
-		border: none;
-		color: var(--color-primary);
-		cursor: pointer;
-		font-size: 0.875rem;
-	}
-</style>
+<FileViewer bind:open={viewerOpen} file={viewerFile} />
+<MoveDialog
+	bind:open={moveOpen}
+	item={moveTarget}
+	items={moveItems}
+	onmoved={() => {
+		selectedIds = new Set();
+		load(true, orderByForGroup());
+	}}
+/>
+<ShareDialog bind:open={shareOpen} item={shareTarget} />

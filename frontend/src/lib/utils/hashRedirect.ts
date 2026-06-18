@@ -1,10 +1,10 @@
 /**
- * Translate a legacy hash route (`#/...` from the vanilla app) into the new
- * SvelteKit path, so old bookmarks and external links keep working.
+ * Translate an old hash route (`#/...` from the vanilla frontend) into the new
+ * SvelteKit path, so existing bookmarks and external links keep working.
  *
- * Returns the new pathname, or null when the hash isn't a legacy route.
+ * Returns the new pathname, or null when the hash isn't a recognised route.
  */
-export function legacyHashToPath(hash: string): string | null {
+export function hashUrlToPath(hash: string): string | null {
 	if (!hash.startsWith('#/')) return null;
 	const raw = hash.slice(1); // drop the '#'
 	const [pathPart] = raw.split('?');

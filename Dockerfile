@@ -50,7 +50,7 @@ COPY templates templates
 ARG DATABASE_URL="postgres://postgres:postgres@localhost/oxicloud"
 RUN DATABASE_URL="${DATABASE_URL}" cargo build --release
 # The SPA is built by the frontend stage; bring it in for the runtime copy below.
-# (build.rs no longer generates static-dist unless OXICLOUD_LEGACY_ASSETS=1.)
+# (build.rs no longer generates static-dist unless OXICLOUD_RUST_ASSETS=1.)
 COPY --from=frontend /static-dist ./static-dist
 
 # ─── Stage 4: Minimal runtime image ──────────────────────────────────────────

@@ -1,0 +1,78 @@
+/* Upload Dropdown — ported from static/css/components/uploadDropdown.css.
+ * Font Awesome `<i>` icons are emitted as `<svg class="oxi-icon">` by Icon.svelte,
+ * so the icon selectors target `.oxi-icon` instead of `i`. */
+.upload-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.upload-dropdown .btn-primary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1-5);
+}
+
+.upload-dropdown-menu {
+    display: block;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    min-width: 200px;
+    background: var(--color-bg-surface);
+    border-radius: var(--radius-2xl);
+    box-shadow: 0 8px 30px var(--color-shadow-md);
+    border: 1px solid var(--color-border);
+    z-index: 1000;
+    overflow: hidden;
+    animation: dropdownFadeIn 0.15s ease-out;
+}
+
+@keyframes dropdownFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.upload-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    padding: var(--space-3) var(--space-4);
+    border: none;
+    background: none;
+    color: var(--color-text-dark);
+    font-size: var(--text-base);
+    cursor: pointer;
+    transition: background 0.15s ease;
+    text-align: left;
+}
+
+.upload-dropdown-item:hover {
+    background: var(--color-border-light);
+}
+
+.upload-dropdown-item:active {
+    background: var(--color-border);
+}
+
+.upload-dropdown-item .oxi-icon {
+    width: 20px;
+    text-align: center;
+    color: var(--color-text-subtle);
+    font-size: 15px;
+}
+
+.upload-dropdown-item:first-child {
+    border-bottom: 1px solid var(--color-border-light);
+}
+
+.upload-caret {
+    margin-left: var(--space-1);
+    font-size: var(--text-xs);
+}

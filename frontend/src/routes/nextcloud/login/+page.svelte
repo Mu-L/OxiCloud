@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { apiFetch } from '$lib/api/client';
+	import { getOidcProviders } from '$lib/api/endpoints/auth';
 	import { t } from '$lib/i18n/index.svelte';
 
 	// Nextcloud Login Flow v2. The form does a NATIVE POST to the backend flow
@@ -16,114 +16,80 @@
 	let passwordLoginEnabled = $state(true);
 
 	onMount(async () => {
-		try {
-			const resp = await apiFetch('/api/auth/oidc/providers');
-			if (!resp.ok) return;
-			const info = (await resp.json()) as {
-				enabled?: boolean;
-				provider_name?: string;
-				password_login_enabled?: boolean;
-			};
-			if (!info.enabled) return;
-			oidcEnabled = true;
-			oidcProvider = info.provider_name || 'SSO';
-			passwordLoginEnabled = info.password_login_enabled !== false;
-		} catch {
-			/* OIDC not available — password-only */
-		}
+		const info = await getOidcProviders();
+		if (!info.enabled) return;
+		oidcEnabled = true;
+		oidcProvider = info.provider_name || 'SSO';
+		passwordLoginEnabled = info.password_login_enabled !== false;
 	});
 </script>
 
 <svelte:head><title>{t('app.title', 'OxiCloud')}</title></svelte:head>
 
-<main class="nc">
-	<div class="nc__card">
-		<h1>{t('nextcloud.grant_title', 'Grant access')}</h1>
+<div class="auth-container">
+	<div class="auth-panel">
+		<div class="auth-logo">
+			<div class="auth-logo-icon">
+				<svg viewBox="120 120 280 280" aria-hidden="true">
+					<path
+						d="M345 310c32 0 58-26 58-58s-26-58-58-58c-6.2 0-12 0.9-17.5 2.7C318 166 289 143 255 143c-34.3 0-63.1 22.6-73 53.7C176.9 195.7 171 195 165 195c-32 0-58 26-58 58s26 58 58 58h180z"
+					/>
+				</svg>
+			</div>
+			<div class="auth-logo-text"><span class="brand-oxi">Oxi</span>Cloud</div>
+		</div>
+
+		<h1 class="auth-title">{t('nextcloud.grant_title', 'Grant access')}</h1>
+		<p class="auth-subtitle">
+			{t('nextcloud.grant_subtitle', 'A Nextcloud client is requesting access to your account.')}
+		</p>
 
 		{#if !validToken}
-			<p class="nc__error">{t('nextcloud.invalid_token', 'Invalid session token.')}</p>
+			<div class="auth-error" style="display: block" role="alert">
+				{t('nextcloud.invalid_token', 'Invalid session token.')}
+			</div>
 		{:else}
 			{#if passwordLoginEnabled}
-				<form method="post" action={formAction} class="nc__form">
-					<label>
-						<span>{t('auth.username', 'Username or email')}</span>
-						<input name="user" type="text" autocomplete="username" required />
-					</label>
-					<label>
-						<span>{t('auth.password', 'Password')}</span>
-						<input name="password" type="password" autocomplete="current-password" required />
-					</label>
-					<button type="submit">{t('nextcloud.grant', 'Grant access')}</button>
+				<form class="auth-form" method="post" action={formAction}>
+					<div class="auth-input-group">
+						<label class="auth-label" for="nc-user">{t('auth.username', 'Username or email')}</label
+						>
+						<div class="auth-input-wrap auth-input-wrap--user">
+							<input
+								id="nc-user"
+								class="auth-input"
+								name="user"
+								type="text"
+								autocomplete="username"
+								required
+							/>
+						</div>
+					</div>
+					<div class="auth-input-group">
+						<label class="auth-label" for="nc-password">{t('auth.password', 'Password')}</label>
+						<div class="auth-input-wrap auth-input-wrap--lock">
+							<input
+								id="nc-password"
+								class="auth-input"
+								name="password"
+								type="password"
+								autocomplete="current-password"
+								required
+							/>
+						</div>
+					</div>
+					<button class="auth-button" type="submit">{t('nextcloud.grant', 'Grant access')}</button>
 				</form>
 			{/if}
 
 			{#if oidcEnabled}
-				<div class="nc__oidc">
-					<a class="nc__sso" href={`/login/v2/flow/${token}/oidc`}>
-						{t('nextcloud.sign_in_with', { provider: oidcProvider }, 'Sign in with {{provider}}')}
-					</a>
-				</div>
+				{#if passwordLoginEnabled}
+					<div class="auth-divider"><span>{t('auth.or', 'or')}</span></div>
+				{/if}
+				<a class="auth-button auth-button-sso" href={`/login/v2/flow/${token}/oidc`}>
+					{t('nextcloud.sign_in_with', { provider: oidcProvider }, 'Sign in with {{provider}}')}
+				</a>
 			{/if}
 		{/if}
 	</div>
-</main>
-
-<style>
-	.nc {
-		min-height: 100vh;
-		display: grid;
-		place-items: center;
-		padding: 1rem;
-		background: var(--color-bg-page);
-	}
-
-	.nc__card {
-		width: min(92vw, 22rem);
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-		padding: 2rem;
-		background: var(--color-bg-surface);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-lg);
-		box-shadow: var(--shadow-lg);
-	}
-
-	.nc__form {
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-	}
-
-	label {
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-		font-size: 0.875rem;
-	}
-
-	input {
-		padding: 0.5rem 0.625rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg-input);
-		color: var(--color-text);
-	}
-
-	button,
-	.nc__sso {
-		display: inline-block;
-		text-align: center;
-		padding: 0.5rem 1rem;
-		border: none;
-		border-radius: var(--radius-md);
-		background: var(--color-primary);
-		color: var(--color-text-light);
-		text-decoration: none;
-		cursor: pointer;
-	}
-
-	.nc__error {
-		color: var(--color-danger-text);
-	}
-</style>
+</div>

@@ -1,16 +1,44 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { decideDevice, lookupDeviceCode, type DeviceInfo } from '$lib/api/endpoints/device';
+	import {
+		decideDevice,
+		DeviceLookupFailure,
+		lookupDeviceCode,
+		type DeviceInfo
+	} from '$lib/api/endpoints/device';
 	import { t } from '$lib/i18n/index.svelte';
 
 	type Step = 'code' | 'loading' | 'review' | 'approved' | 'denied' | 'error';
+
+	// A complete user-code is 8 chars + a hyphen (e.g. ABCD-1234) → length 9.
+	const FULL_CODE_LENGTH = 9;
 
 	let code = $state(page.url.searchParams.get('code') ?? '');
 	let step = $state<Step>('code');
 	let info = $state<DeviceInfo | null>(null);
 	let errorText = $state('');
 	let busy = $state(false);
+
+	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+	let codeInput = $state<HTMLInputElement | null>(null);
+
+	function failureMessage(err: unknown): string {
+		if (err instanceof DeviceLookupFailure) {
+			switch (err.kind) {
+				case 'unauthorized':
+					return t(
+						'device.unauthorized',
+						'You must be logged in to authorize a device. Please log in first.'
+					);
+				case 'not-found':
+					return t('device.not_found', 'Code not found or expired. Please check and try again.');
+				default:
+					return t('device.lookup_failed', 'Failed to verify code. Please try again.');
+			}
+		}
+		return err instanceof Error ? err.message : String(err);
+	}
 
 	async function lookup(e?: SubmitEvent) {
 		e?.preventDefault();
@@ -21,8 +49,31 @@
 			info = await lookupDeviceCode(code);
 			step = 'review';
 		} catch (err) {
-			errorText = err instanceof Error ? err.message : String(err);
+			errorText = failureMessage(err);
 			step = 'error';
+		}
+	}
+
+	/**
+	 * Normalise the code field as the user types: uppercase, strip anything
+	 * that isn't [A-Z0-9-], auto-insert the hyphen after the first 4 chars,
+	 * then debounce a lookup once a full code is present.
+	 */
+	function onCodeInput(e: Event) {
+		const target = e.currentTarget as HTMLInputElement;
+		let val = target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
+		if (val.length === 4 && !val.includes('-')) val = `${val}-`;
+		code = val;
+		// Reflect the normalised value back into the input.
+		target.value = val;
+		if (step === 'error') {
+			step = 'code';
+			errorText = '';
+		}
+
+		clearTimeout(debounceTimer);
+		if (val.length >= FULL_CODE_LENGTH) {
+			debounceTimer = setTimeout(() => void lookup(), 300);
 		}
 	}
 
@@ -39,8 +90,16 @@
 		}
 	}
 
+	function backToCode() {
+		step = 'code';
+		errorText = '';
+		// Re-focus so the user can correct the code immediately.
+		queueMicrotask(() => codeInput?.focus());
+	}
+
 	onMount(() => {
 		if (code) void lookup();
+		else codeInput?.focus();
 	});
 </script>
 
@@ -48,13 +107,32 @@
 
 <main class="device">
 	<div class="device__card">
+		<div class="auth-logo">
+			<div class="auth-logo-icon">
+				<svg viewBox="120 120 280 280" aria-hidden="true">
+					<path
+						d="M345 310c32 0 58-26 58-58s-26-58-58-58c-6.2 0-12 0.9-17.5 2.7C318 166 289 143 255 143c-34.3 0-63.1 22.6-73 53.7C176.9 195.7 171 195 165 195c-32 0-58 26-58 58s26 58 58 58h180z"
+					/>
+				</svg>
+			</div>
+			<div class="auth-logo-text"><span class="brand-oxi">Oxi</span>Cloud</div>
+		</div>
 		<h1>{t('device.title', 'Device verification')}</h1>
 
 		{#if step === 'code'}
 			<form onsubmit={lookup}>
 				<label class="device__field">
 					<span>{t('device.enter_code', 'Enter the code shown on your device')}</span>
-					<input bind:value={code} autocomplete="off" inputmode="text" />
+					<input
+						bind:this={codeInput}
+						value={code}
+						oninput={onCodeInput}
+						autocomplete="off"
+						autocapitalize="characters"
+						spellcheck="false"
+						inputmode="text"
+						maxlength={FULL_CODE_LENGTH}
+					/>
 				</label>
 				<button type="submit" disabled={!code}>{t('device.continue', 'Continue')}</button>
 			</form>
@@ -83,7 +161,7 @@
 			<p>{t('device.denied', 'Device access denied.')}</p>
 		{:else if step === 'error'}
 			<p class="device__error" role="alert">{errorText}</p>
-			<button onclick={() => (step = 'code')}>{t('common.retry', 'Try again')}</button>
+			<button onclick={backToCode}>{t('common.retry', 'Try again')}</button>
 		{/if}
 	</div>
 </main>

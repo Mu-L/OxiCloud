@@ -1,22 +1,41 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import FileRow from '$lib/components/FileRow.svelte';
-	import ResourceListShell from '$lib/components/ResourceListShell.svelte';
 	import { fetchSharedWithMe, type IncomingGrantItem } from '$lib/api/endpoints/grants';
+	import type { FileItem } from '$lib/api/types';
+	import FileViewer from '$lib/components/FileViewer.svelte';
+	import ResourceList, { type ResourceEntry } from '$lib/components/ResourceList.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { formatDate } from '$lib/utils/display';
 
-	let items = $state<IncomingGrantItem[]>([]);
+	let raw = $state<IncomingGrantItem[]>([]);
 	let cursor = $state<string | undefined>(undefined);
 	let loading = $state(false);
 	let error = $state<string | null>(null);
+
+	const byId = $derived(new Map(raw.map((it) => [it.resource.id, it])));
+
+	const entries = $derived(
+		raw.map(
+			(it): ResourceEntry => ({
+				id: it.resource.id,
+				name: it.resource.name,
+				kind: it.resource_type,
+				iconClass: it.resource.icon_class,
+				path: it.granted_by
+					? t('shared_with_me.from', { who: it.granted_by }, 'Shared by {{who}}')
+					: it.resource.path,
+				size: it.resource_type === 'file' ? (it.resource as FileItem).size : null,
+				date: it.granted_at
+			})
+		)
+	);
 
 	async function load(reset = false) {
 		loading = true;
 		error = null;
 		try {
 			const page = await fetchSharedWithMe({ cursor: reset ? undefined : cursor });
-			items = reset ? page.items : [...items, ...page.items];
+			raw = reset ? page.items : [...raw, ...page.items];
 			cursor = page.next_cursor;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -25,38 +44,35 @@
 		}
 	}
 
+	let viewerOpen = $state(false);
+	let viewerFile = $state<FileItem | null>(null);
+
+	function open(entry: ResourceEntry) {
+		if (entry.kind === 'folder') {
+			goto(`/files/${entry.id}`);
+			return;
+		}
+		const item = byId.get(entry.id);
+		if (item) {
+			viewerFile = item.resource as FileItem;
+			viewerOpen = true;
+		}
+	}
+
 	onMount(() => load(true));
 </script>
 
 <svelte:head><title>{t('nav.shared_with_me', 'Shared with me')} · OxiCloud</title></svelte:head>
 
-<h1 class="page-title">{t('nav.shared_with_me', 'Shared with me')}</h1>
-
-<ResourceListShell
+<ResourceList
+	title={t('nav.shared_with_me', 'Shared with me')}
+	items={entries}
 	{loading}
 	{error}
-	empty={items.length === 0}
 	emptyText={t('shared_with_me.empty', 'Nothing has been shared with you yet.')}
 	hasMore={!!cursor}
 	onloadmore={() => load(false)}
->
-	{#each items as item (item.resource.id)}
-		<FileRow
-			name={item.resource.name}
-			iconClass={item.resource.icon_class}
-			subtitle={item.granted_by
-				? t('shared_with_me.from', { who: item.granted_by }, 'Shared by {{who}}')
-				: item.resource.path}
-			date={formatDate(item.granted_at)}
-		/>
-	{/each}
-</ResourceListShell>
+	onopen={open}
+/>
 
-<style>
-	.page-title {
-		margin: 0;
-		padding: 1rem 1rem 0;
-		font-size: 1.5rem;
-		color: var(--color-text-heading);
-	}
-</style>
+<FileViewer bind:open={viewerOpen} file={viewerFile} />

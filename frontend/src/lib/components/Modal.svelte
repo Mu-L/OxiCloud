@@ -12,14 +12,60 @@
 
 	let { open = $bindable(false), title, onclose, children, footer }: Props = $props();
 
+	let dialogEl = $state<HTMLElement | null>(null);
+	let prevFocus: HTMLElement | null = null;
+
 	function close() {
 		open = false;
 		onclose?.();
 	}
 
-	function onkeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') close();
+	const FOCUSABLE =
+		'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
+
+	function focusables(): HTMLElement[] {
+		if (!dialogEl) return [];
+		return Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+			(el) => el.offsetParent !== null || el === document.activeElement
+		);
 	}
+
+	function onkeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			close();
+			return;
+		}
+		// Focus trap: keep Tab cycling inside the dialog.
+		if (e.key === 'Tab') {
+			const items = focusables();
+			if (items.length === 0) return;
+			const first = items[0];
+			const last = items[items.length - 1];
+			const active = document.activeElement as HTMLElement | null;
+			if (e.shiftKey && active === first) {
+				e.preventDefault();
+				last.focus();
+			} else if (!e.shiftKey && active === last) {
+				e.preventDefault();
+				first.focus();
+			}
+		}
+	}
+
+	// On open: remember the previously focused element and move focus into the
+	// dialog. On close: restore focus so keyboard users aren't dumped at <body>.
+	$effect(() => {
+		if (open) {
+			prevFocus = (document.activeElement as HTMLElement | null) ?? null;
+			requestAnimationFrame(() => {
+				const items = focusables();
+				(items[0] ?? dialogEl)?.focus();
+			});
+		} else if (prevFocus) {
+			prevFocus.focus();
+			prevFocus = null;
+		}
+	});
 </script>
 
 <svelte:window onkeydown={open ? onkeydown : undefined} />
@@ -33,7 +79,14 @@
 			if (e.target === e.currentTarget) close();
 		}}
 	>
-		<div class="modal" role="dialog" aria-modal="true" aria-label={title}>
+		<div
+			class="modal"
+			role="dialog"
+			aria-modal="true"
+			aria-label={title}
+			tabindex="-1"
+			bind:this={dialogEl}
+		>
 			{#if title}
 				<header class="modal__header">
 					<h2 class="modal__title">{title}</h2>
@@ -62,6 +115,7 @@
 		justify-content: center;
 		z-index: 900;
 		padding: 1rem;
+		animation: modal-fade 0.16s ease;
 	}
 
 	.modal {
@@ -74,6 +128,7 @@
 		overflow: auto;
 		display: flex;
 		flex-direction: column;
+		animation: modal-pop 0.18s ease;
 	}
 
 	.modal__header {
@@ -108,5 +163,34 @@
 		gap: 0.5rem;
 		padding: 1rem 1.25rem;
 		border-top: 1px solid var(--color-border);
+	}
+
+	@keyframes modal-fade {
+		from {
+			opacity: 0;
+		}
+
+		to {
+			opacity: 1;
+		}
+	}
+
+	@keyframes modal-pop {
+		from {
+			opacity: 0;
+			transform: translateY(8px) scale(0.98);
+		}
+
+		to {
+			opacity: 1;
+			transform: translateY(0) scale(1);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.modal__backdrop,
+		.modal {
+			animation: none;
+		}
 	}
 </style>

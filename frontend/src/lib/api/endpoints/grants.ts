@@ -1,7 +1,139 @@
 /** Sharing (ReBAC grants) endpoints — ported from model/grants.js. */
-import { apiFetch } from '$lib/api/client';
+import { apiFetch, apiJson } from '$lib/api/client';
+import { getCsrfHeaders } from '$lib/api/csrf';
 import type { ItemType } from '$lib/api/types';
 import type { ResourceBody, ResourcePage } from './resources';
+
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+export type SubjectType = 'user' | 'group' | 'email' | 'token';
+export type ShareRole = 'viewer' | 'editor' | 'admin';
+
+export interface GrantSubject {
+	type: SubjectType;
+	id: string;
+}
+
+/**
+ * Subject shape accepted by `POST /api/grants`. The `email` variant feeds the
+ * invite-by-email flow — the server resolves it to (or provisions) an external
+ * user. Mirrors the backend `SubjectInputDto`.
+ */
+export type GrantSubjectInput =
+	| { type: 'user'; id: string }
+	| { type: 'group'; id: string }
+	| { type: 'token'; id: string }
+	| { type: 'email'; email: string };
+
+/** One grant carries a single permission; a subject's role is derived from all of theirs. */
+export interface Grant {
+	id: string;
+	granted_at?: string;
+	granted_by?: string;
+	subject: GrantSubject;
+	permission: string;
+	resource: { type: ItemType; id: string };
+	expires_at?: string | null;
+}
+
+// ── Notification outcomes (PR N1/N2) ─────────────────────────────────────────
+
+export interface NotifyOutcome {
+	kind: 'sent' | 'coalesced' | 'rate_limited' | 'not_applicable';
+	detail?: string;
+	last_sent_at?: string;
+	retry_after_secs?: number;
+	reason?: string;
+}
+
+export interface NotifyOutcomeSet {
+	total_recipients: number;
+	outcomes: NotifyOutcome[];
+}
+
+export interface CreateGrantResponse {
+	grants: Grant[];
+	notification: NotifyOutcomeSet;
+}
+
+export function roleFromPermissions(perms: Iterable<string>): ShareRole {
+	const set = new Set(perms);
+	if (set.has('delete') || set.has('share')) return 'admin';
+	if (set.has('create') || set.has('update')) return 'editor';
+	return 'viewer';
+}
+
+/** Convert a YYYY-MM-DD date (or null) to an ISO-8601 datetime at midnight UTC. */
+export function expiryToIso(date: string | null | undefined): string | null {
+	return date ? new Date(`${date}T00:00:00Z`).toISOString() : null;
+}
+
+export function fetchGrantsForResource(type: ItemType, id: string): Promise<Grant[]> {
+	const params = new URLSearchParams({ resource_type: type, resource_id: id });
+	return apiJson<Grant[]>(`/api/grants?${params}`, { credentials: 'same-origin' });
+}
+
+export async function createGrant(
+	subject: GrantSubjectInput,
+	resource: { type: ItemType; id: string },
+	role: ShareRole,
+	expiresAt?: string | null
+): Promise<CreateGrantResponse> {
+	const res = await apiFetch('/api/grants', {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: { ...JSON_HEADERS, ...getCsrfHeaders() },
+		body: JSON.stringify({ subject, resource, role, expires_at: expiresAt ?? null })
+	});
+	if (!res.ok) {
+		const e = (await res.json().catch(() => ({}))) as { error?: string };
+		throw new Error(e.error || `create grant failed: ${res.status}`);
+	}
+	return (await res.json()) as CreateGrantResponse;
+}
+
+export async function updateGrantRole(
+	subject: GrantSubject,
+	resource: { type: ItemType; id: string },
+	role: ShareRole,
+	expiresAt?: string | null
+): Promise<void> {
+	const res = await apiFetch('/api/grants/role', {
+		method: 'PUT',
+		credentials: 'same-origin',
+		headers: { ...JSON_HEADERS, ...getCsrfHeaders() },
+		body: JSON.stringify({ subject, resource, role, expires_at: expiresAt ?? null })
+	});
+	if (!res.ok) throw new Error(`update role failed: ${res.status}`);
+}
+
+export async function revokeGrant(grantId: string): Promise<void> {
+	const res = await apiFetch(`/api/grants/${encodeURIComponent(grantId)}`, {
+		method: 'DELETE',
+		credentials: 'same-origin',
+		headers: getCsrfHeaders()
+	});
+	if (!res.ok) throw new Error(`revoke grant failed: ${res.status}`);
+}
+
+/**
+ * Resend / send a share notification for a single grant.
+ * `POST /api/grants/{id}/notify`. Returns the aggregated outcome set, or a
+ * `rate_limited` summary when the whole call was rate-limited (HTTP 429).
+ */
+export async function notifyGrantRecipient(grantId: string): Promise<NotifyOutcomeSet> {
+	const res = await apiFetch(`/api/grants/${encodeURIComponent(grantId)}/notify`, {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: getCsrfHeaders()
+	});
+	if (res.status === 204) return { total_recipients: 0, outcomes: [] };
+	if (res.status === 429) {
+		return { total_recipients: 1, outcomes: [{ kind: 'rate_limited' }] };
+	}
+	if (res.ok) return (await res.json()) as NotifyOutcomeSet;
+	throw new Error(`notify failed: ${res.status}`);
+}
 
 export interface IncomingGrantItem {
 	resource_type: ItemType;
@@ -11,12 +143,25 @@ export interface IncomingGrantItem {
 	role?: string;
 }
 
+/** One (subject, permissions) entry within an outgoing resource item. */
+export interface OutgoingResourceGrant {
+	grant_id: string;
+	subject_type: 'user' | 'group' | 'token';
+	subject_id: string;
+	subject_display: string;
+	role: ShareRole;
+	granted_at: string;
+	expires_at?: string | null;
+	has_password: boolean;
+	is_external: boolean;
+}
+
 export interface OutgoingGrantItem {
 	resource_type: ItemType;
 	resource: ResourceBody;
-	subject?: string;
 	first_shared_at?: string;
-	role?: string;
+	/** One entry per (subject, permissions) pair. */
+	grants: OutgoingResourceGrant[];
 }
 
 interface GrantsPageOpts {

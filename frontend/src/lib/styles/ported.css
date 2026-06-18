@@ -1,0 +1,18 @@
+/* Layout/component CSS ported verbatim from the OxiCloud frontend's static/css.
+ * These are token-based and global; the Svelte components emit the same class
+ * names and DOM so the rewrite matches the established design. Kept byte-faithful
+ * (linters ignore this dir) — restyle via tokens in variables.css, not here. */
+@import url('./ported/sidebar.css');
+@import url('./ported/topbar.css');
+@import url('./ported/content.css');
+@import url('./ported/buttons.css');
+@import url('./ported/uploadDropdown.css');
+@import url('./ported/breadcrumb.css');
+@import url('./ported/fileManager.css');
+@import url('./ported/resourceList.css');
+@import url('./ported/batchToolbar.css');
+@import url('./ported/skeleton.css');
+@import url('./ported/notifications.css');
+@import url('./ported/userMenu.css');
+@import url('./ported/auth.css');
+@import url('./ported/music.css');

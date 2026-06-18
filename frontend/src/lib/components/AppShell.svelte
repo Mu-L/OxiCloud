@@ -3,10 +3,17 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { logout } from '$lib/api/endpoints/auth';
+	import { searchFiles } from '$lib/api/endpoints/search';
+	import { fileInlineUrl } from '$lib/api/endpoints/files';
+	import type { FileItem, FolderItem } from '$lib/api/types';
+	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import Icon from '$lib/icons/Icon.svelte';
-	import { i18n, SUPPORTED_LOCALES, setLocale, t, type Locale } from '$lib/i18n/index.svelte';
+	import { iconNameFromClass } from '$lib/utils/display';
+	import { i18n, LANGUAGES, setLocale, t, type Locale } from '$lib/i18n/index.svelte';
+	import { apiFetch } from '$lib/api/client';
 	import { session } from '$lib/stores/session.svelte';
 	import { theme, type Theme } from '$lib/stores/theme.svelte';
+	import { ui } from '$lib/stores/ui.svelte';
 	import { formatBytes } from '$lib/utils/format';
 
 	let { children }: { children: Snippet } = $props();
@@ -20,37 +27,202 @@
 
 	const LINKS: NavLink[] = [
 		{ href: '/files', label: t('nav.files', 'Files'), icon: 'folder' },
-		{ href: '/shared', label: t('nav.shared', 'Shared'), icon: 'globe' },
+		{ href: '/shared', label: t('nav.shared', 'Shared'), icon: 'oxiexport' },
 		{
 			href: '/shared-with-me',
 			label: t('nav.shared_with_me', 'Shared with me'),
-			icon: 'user-group'
+			icon: 'oxiimport'
 		},
 		{ href: '/recent', label: t('nav.recent', 'Recent'), icon: 'clock' },
 		{ href: '/favorites', label: t('nav.favorites', 'Favorites'), icon: 'star' },
 		{ href: '/photos', label: t('nav.photos', 'Photos'), icon: 'images' },
 		{ href: '/music', label: t('nav.music', 'Music'), icon: 'music' },
-		{ href: '/trash', label: t('nav.trash', 'Trash'), icon: 'trash' },
-		{ href: '/groups', label: t('nav.groups', 'Groups'), icon: 'users', admin: true },
-		{ href: '/admin', label: t('admin.title', 'Admin'), icon: 'cog', admin: true }
+		{ href: '/trash', label: t('nav.trash', 'Trash'), icon: 'trash' }
 	];
 
 	const isAdmin = $derived(session.user?.role === 'admin');
-	const visibleLinks = $derived(LINKS.filter((l) => !l.admin || isAdmin));
 
 	function active(href: string): boolean {
 		return page.url.pathname === href || page.url.pathname.startsWith(`${href}/`);
 	}
 
 	let sidebarOpen = $state(false);
+	let notifOpen = $state(false);
+	let menuOpen = $state(false);
+	let searchQuery = $state('');
+	/** Mobile collapsible-search overlay state (toggles .top-bar--search-active). */
+	let searchActive = $state(false);
+	let langOpen = $state(false);
+	let aboutOpen = $state(false);
+	let appVersion = $state('');
+	let searchInputEl = $state<HTMLInputElement | null>(null);
 
-	const THEMES: Theme[] = ['light', 'auto', 'dark'];
+	// Bell ring/auto-open: react to the store's bellPing token (bumped on upload
+	// start etc.). Open the panel and replay the ring animation.
+	let bellRinging = $state(false);
+	let lastPing = 0;
+	$effect(() => {
+		const p = ui.bellPing;
+		if (p === lastPing) return;
+		lastPing = p;
+		if (p === 0) return;
+		notifOpen = true;
+		menuOpen = false;
+		bellRinging = false;
+		// Force a reflow gap before re-adding so the CSS animation restarts.
+		requestAnimationFrame(() => (bellRinging = true));
+		setTimeout(() => (bellRinging = false), 900);
+	});
+
+	function openMobileSearch() {
+		searchActive = true;
+		requestAnimationFrame(() => searchInputEl?.focus());
+	}
+
+	function closeMobileSearch() {
+		searchActive = false;
+		clearSearch();
+	}
+
+	async function openAbout() {
+		menuOpen = false;
+		aboutOpen = true;
+		if (!appVersion) {
+			try {
+				const r = await apiFetch('/api/version', { credentials: 'same-origin' });
+				if (r.ok) {
+					const data = (await r.json()) as { version?: string };
+					if (data.version) appVersion = `v${data.version}`;
+				}
+			} catch {
+				/* version stays blank — non-critical */
+			}
+		}
+	}
+
+	// Top-bar autocomplete
+	type Suggestion = { kind: 'folder'; item: FolderItem } | { kind: 'file'; item: FileItem };
+	let suggestions = $state<Suggestion[]>([]);
+	let suggestOpen = $state(false);
+	let suggestBusy = $state(false);
+	let suggestTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function goToResults() {
+		const q = searchQuery.trim();
+		if (q) {
+			suggestOpen = false;
+			searchActive = false;
+			goto(`/search?q=${encodeURIComponent(q)}`);
+		}
+	}
+
+	function onSearch(e: SubmitEvent) {
+		e.preventDefault();
+		goToResults();
+	}
+
+	function onSearchInput() {
+		if (suggestTimer) clearTimeout(suggestTimer);
+		const q = searchQuery.trim();
+		if (q.length < 2) {
+			suggestions = [];
+			suggestOpen = false;
+			return;
+		}
+		suggestTimer = setTimeout(async () => {
+			suggestBusy = true;
+			try {
+				const r = await searchFiles(q, { recursive: true, limit: 6 });
+				suggestions = [
+					...r.folders.slice(0, 3).map((item) => ({ kind: 'folder' as const, item })),
+					...r.files.slice(0, 6).map((item) => ({ kind: 'file' as const, item }))
+				];
+				suggestOpen = suggestions.length > 0;
+			} catch {
+				suggestions = [];
+				suggestOpen = false;
+			} finally {
+				suggestBusy = false;
+			}
+		}, 250);
+	}
+
+	function clearSearch() {
+		searchQuery = '';
+		suggestions = [];
+		suggestOpen = false;
+	}
+
+	function pickSuggestion(s: Suggestion) {
+		suggestOpen = false;
+		if (s.kind === 'folder') goto(`/files/${s.item.id}`);
+		else window.open(fileInlineUrl(s.item.id), '_blank', 'noopener');
+	}
+
+	const THEMES: { mode: Theme; icon: string; label: string }[] = [
+		{ mode: 'light', icon: 'sun', label: t('user_menu.theme.light', 'Light') },
+		{ mode: 'auto', icon: 'desktop', label: t('user_menu.theme.auto', 'Like OS') },
+		{ mode: 'dark', icon: 'moon', label: t('user_menu.theme.dark', 'Dark') }
+	];
 
 	const storagePct = $derived(
 		session.user && session.user.storage_quota_bytes > 0
 			? Math.min(100, (session.user.storage_used_bytes / session.user.storage_quota_bytes) * 100)
 			: 0
 	);
+
+	const initials = $derived.by(() => {
+		const u = session.user;
+		if (!u) return '?';
+		const base = u.username || u.email || '?';
+		const parts = base.trim().split(/\s+/);
+		if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+		return base.slice(0, 2).toUpperCase();
+	});
+
+	/** Uploaded avatar photo URL, if any. */
+	const avatarPhoto = $derived(session.user?.image ?? null);
+
+	/**
+	 * Deterministic colour bucket 0–4 from the user id (matches the original
+	 * userVignette `_colorIndex`) so the same user always gets the same colour.
+	 */
+	const avatarColor = $derived.by(() => {
+		const id = session.user?.id ?? '';
+		let hash = 0;
+		for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+		return Math.abs(hash) % 5;
+	});
+
+	function closeMenus() {
+		notifOpen = false;
+		menuOpen = false;
+		langOpen = false;
+	}
+
+	async function chooseLocale(loc: Locale) {
+		langOpen = false;
+		await setLocale(loc);
+	}
+
+	const currentLang = $derived(LANGUAGES.find((l) => l.code === i18n.locale) ?? LANGUAGES[0]);
+
+	function formatTime(ms: number): string {
+		return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+	}
+
+	function notifIcon(kind: string): string {
+		switch (kind) {
+			case 'success':
+				return 'check';
+			case 'error':
+				return 'exclamation-circle';
+			case 'warning':
+				return 'exclamation-triangle';
+			default:
+				return 'info-circle';
+		}
+	}
 
 	async function onLogout() {
 		try {
@@ -62,6 +234,16 @@
 		await goto('/login');
 	}
 </script>
+
+<svelte:window
+	onclick={closeMenus}
+	onkeydown={(e) => {
+		if (e.key !== 'Escape') return;
+		if (aboutOpen) aboutOpen = false;
+		else if (searchActive) closeMobileSearch();
+		else closeMenus();
+	}}
+/>
 
 <div
 	class="sidebar-overlay"
@@ -83,7 +265,7 @@
 	</a>
 
 	<nav class="nav-menu" aria-label={t('nav.primary', 'Primary')}>
-		{#each visibleLinks as link (link.href)}
+		{#each LINKS as link (link.href)}
 			<a
 				class="nav-item"
 				class:active={active(link.href)}
@@ -106,7 +288,7 @@
 			</div>
 			<div class="storage-info">
 				{#if session.user.storage_quota_bytes > 0}
-					{formatBytes(session.user.storage_used_bytes)} / {formatBytes(
+					{Math.round(storagePct)}% · {formatBytes(session.user.storage_used_bytes)} / {formatBytes(
 						session.user.storage_quota_bytes
 					)}
 				{:else}
@@ -118,7 +300,7 @@
 </div>
 
 <div class="main-content">
-	<div class="top-bar">
+	<div class="top-bar" class:top-bar--search-active={searchActive}>
 		<button
 			class="sidebar-toggle"
 			aria-label="Toggle navigation menu"
@@ -128,39 +310,319 @@
 			<Icon name="bars" />
 		</button>
 
-		<div class="user-controls">
-			<div class="seg" role="group" aria-label={t('settings.theme', 'Theme')}>
-				{#each THEMES as th (th)}
+		<!-- Mobile: icon-only button that expands the full-width search overlay. -->
+		<button
+			class="search-toggle-btn"
+			id="search-toggle-btn"
+			aria-label={t('actions.search_btn', 'Search')}
+			onclick={openMobileSearch}
+		>
+			<Icon name="search" />
+		</button>
+
+		<!-- Mobile: back arrow shown while the search overlay is expanded. -->
+		<button
+			class="search-back-btn"
+			aria-label={t('common.close', 'Close')}
+			onclick={closeMobileSearch}
+		>
+			<Icon name="arrow-left" />
+		</button>
+
+		<div class="search-slot">
+			<form class="search-container" onsubmit={onSearch}>
+				<Icon name="search" class="search-icon" />
+				<input
+					type="text"
+					bind:this={searchInputEl}
+					bind:value={searchQuery}
+					oninput={onSearchInput}
+					onfocus={() => (suggestOpen = suggestions.length > 0)}
+					onblur={() => setTimeout(() => (suggestOpen = false), 150)}
+					placeholder={t('actions.search', 'Search files, folders...')}
+					autocomplete="off"
+				/>
+				{#if searchQuery}
 					<button
-						class="seg__btn"
-						aria-pressed={theme.current === th}
-						onclick={() => theme.set(th)}
+						class="search-clear"
+						type="button"
+						title={t('common.clear', 'Clear')}
+						aria-label={t('common.clear', 'Clear')}
+						onclick={clearSearch}
 					>
-						{#if th === 'light'}<Icon name="sun" />{:else if th === 'dark'}<Icon
-								name="moon"
-							/>{:else}A{/if}
+						<Icon name="times" />
 					</button>
-				{/each}
+				{/if}
+				<button
+					class="search-button"
+					type="submit"
+					title={t('actions.search_btn', 'Search')}
+					aria-label="Search"
+				>
+					<Icon name="search" />
+				</button>
+
+				{#if suggestOpen}
+					<ul class="suggest">
+						{#each suggestions as s (s.kind + s.item.id)}
+							<li>
+								<button class="suggest__item" type="button" onmousedown={() => pickSuggestion(s)}>
+									<span class="suggest__icon">
+										{#if s.kind === 'folder'}
+											<Icon name="folder" />
+										{:else}
+											<Icon name={iconNameFromClass(s.item.icon_class)} />
+										{/if}
+									</span>
+									<span class="suggest__name">{s.item.name}</span>
+								</button>
+							</li>
+						{/each}
+						<li>
+							<button class="suggest__all" type="button" onmousedown={goToResults}>
+								{t('search.see_all', 'See all results')}
+							</button>
+						</li>
+					</ul>
+				{:else if suggestBusy}
+					<ul class="suggest"><li class="suggest__busy">{t('common.loading', 'Loading…')}</li></ul>
+				{/if}
+			</form>
+		</div>
+
+		<div class="user-controls">
+			<!-- Notifications -->
+			<div class="notif-wrapper" class:open={notifOpen}>
+				<button
+					class="notif-bell-btn"
+					class:active={notifOpen}
+					class:ring={bellRinging}
+					aria-label={t('notifications.title', 'Notifications')}
+					aria-haspopup="true"
+					onclick={(e) => {
+						e.stopPropagation();
+						notifOpen = !notifOpen;
+						menuOpen = false;
+						if (notifOpen) ui.markNotificationsRead();
+					}}
+				>
+					<Icon name="bell" />
+					{#if ui.unread > 0}<span class="notif-badge">{ui.unreadBadge}</span>{/if}
+				</button>
+				<div class="notif-panel">
+					<div class="notif-panel-header">
+						<span class="notif-panel-title">{t('notifications.title', 'Notifications')}</span>
+						{#if ui.notifications.length > 0}
+							<button
+								class="notif-clear-btn"
+								title={t('notifications.clear', 'Clear all')}
+								aria-label={t('notifications.clear', 'Clear all')}
+								onclick={(e) => {
+									e.stopPropagation();
+									ui.clearNotifications();
+								}}
+							>
+								<Icon name="trash-alt" />
+							</button>
+						{/if}
+					</div>
+					<div class="notif-panel-body">
+						{#if ui.notifications.length === 0}
+							<div class="notif-empty">
+								<Icon name="bell-slash" />
+								<span>{t('notifications.empty', 'No notifications')}</span>
+							</div>
+						{:else}
+							{#each ui.notifications as n (n.id)}
+								<div class="notif-item notif-item--{n.kind}">
+									<span class="notif-item-icon"><Icon name={n.icon ?? notifIcon(n.kind)} /></span>
+									<div class="notif-item-body">
+										<div class="notif-item-text">{n.message}</div>
+										{#if n.currentFile}
+											<div class="notif-item-current" title={n.currentFile}>{n.currentFile}</div>
+										{/if}
+										{#if n.progress !== undefined}
+											<div
+												class="notif-progress"
+												role="progressbar"
+												aria-valuenow={n.progress}
+												aria-valuemin="0"
+												aria-valuemax="100"
+											>
+												<div class="notif-progress__fill" style:width="{n.progress}%"></div>
+											</div>
+											<div class="notif-progress-detail">
+												<span>{n.progress}%</span>
+												{#if n.total !== undefined}
+													<span>
+														{t(
+															'upload.files_counter',
+															{ done: n.completed ?? 0, total: n.total },
+															`${n.completed ?? 0} / ${n.total} files`
+														)}
+													</span>
+												{/if}
+											</div>
+										{:else}
+											<div class="notif-item-time">{formatTime(n.at)}</div>
+										{/if}
+									</div>
+								</div>
+							{/each}
+						{/if}
+					</div>
+				</div>
 			</div>
 
-			<select
-				class="locale-select"
-				aria-label={t('settings.language', 'Language')}
-				value={i18n.locale}
-				onchange={(e) => setLocale(e.currentTarget.value as Locale)}
-			>
-				{#each SUPPORTED_LOCALES as loc (loc)}
-					<option value={loc}>{loc}</option>
-				{/each}
-			</select>
+			<!-- User menu -->
+			<div class="user-menu-wrapper" class:open={menuOpen}>
+				<button
+					class="user-avatar-btn"
+					aria-label={t('user_menu.title', 'User menu')}
+					aria-haspopup="true"
+					onclick={(e) => {
+						e.stopPropagation();
+						menuOpen = !menuOpen;
+						notifOpen = false;
+					}}
+				>
+					{@render avatar(false)}
+				</button>
 
-			{#if session.user}
-				<span class="user-name" title={session.user.email}>
-					<Icon name="user" />
-					{session.user.username || session.user.email}
-				</span>
-				<button class="logout" onclick={onLogout}>{t('nav.logout', 'Log out')}</button>
-			{/if}
+				<div class="user-menu">
+					{#if session.user}
+						<div class="user-menu-header">
+							{@render avatar(true)}
+							<div class="user-menu-id">
+								<div class="user-menu-name">{session.user.username || session.user.email}</div>
+								<div class="user-menu-email">{session.user.email}</div>
+							</div>
+						</div>
+
+						{#if isAdmin}
+							<div class="user-menu-role-badge">
+								<span class="role-badge role-badge-admin">
+									<Icon name="shield-alt" />
+									{t('user_menu.admin', 'Admin')}
+								</span>
+							</div>
+						{/if}
+
+						<div class="user-menu-storage">
+							<div class="user-menu-storage-label">
+								<Icon name="database" /> <span>{t('storage.title', 'Storage')}</span>
+							</div>
+							<div class="user-menu-storage-bar">
+								<div class="user-menu-storage-fill" style:width="{storagePct}%"></div>
+							</div>
+							<div class="user-menu-storage-text">
+								{Math.round(storagePct)}% {t('storage.used', 'used')}
+							</div>
+						</div>
+					{/if}
+
+					<div class="user-menu-divider"></div>
+
+					{#if isAdmin}
+						<a class="user-menu-item" href="/admin" onclick={() => (menuOpen = false)}>
+							<Icon name="cogs" /> <span>{t('user_menu.admin_panel', 'Admin panel')}</span>
+						</a>
+						<a class="user-menu-item" href="/groups" onclick={() => (menuOpen = false)}>
+							<Icon name="user-group" />
+							<span>{t('user_menu.manage_groups', 'Manage groups')}</span>
+						</a>
+					{/if}
+					<a class="user-menu-item" href="/profile" onclick={() => (menuOpen = false)}>
+						<Icon name="user-circle" /> <span>{t('user_menu.profile', 'My profile')}</span>
+					</a>
+
+					<div class="user-menu-divider"></div>
+
+					<div class="user-menu-item user-menu-item--lang">
+						<Icon name="globe" />
+						<span>{t('settings.language', 'Language')}</span>
+						<div class="lang-selector" class:lang-selector--open={langOpen}>
+							<button
+								type="button"
+								class="lang-selector__toggle"
+								aria-haspopup="listbox"
+								aria-expanded={langOpen}
+								onclick={(e) => {
+									e.stopPropagation();
+									langOpen = !langOpen;
+								}}
+							>
+								<span class="lang-selector__code">{(currentLang.code as string).toUpperCase()}</span
+								>
+								<Icon name="chevron-down" class="lang-selector__arrow" />
+							</button>
+							{#if langOpen}
+								<ul class="lang-selector__dropdown" role="listbox">
+									{#each LANGUAGES as lang (lang.code)}
+										<li>
+											<button
+												type="button"
+												class="lang-option"
+												class:lang-option--active={lang.code === i18n.locale}
+												role="option"
+												aria-selected={lang.code === i18n.locale}
+												onclick={(e) => {
+													e.stopPropagation();
+													chooseLocale(lang.code);
+												}}
+											>
+												<span class="lang-option__flag">{lang.flag}</span>
+												<span class="lang-option__name">{lang.name}</span>
+												{#if lang.code === i18n.locale}
+													<Icon name="check" class="lang-option__check" />
+												{/if}
+											</button>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+						</div>
+					</div>
+
+					<div class="user-menu-item user-menu-item--theme">
+						<Icon name="adjust" />
+						<span>{t('user_menu.appearance', 'Appearance')}</span>
+						<div
+							class="theme-segmented"
+							role="radiogroup"
+							aria-label={t('user_menu.appearance', 'Appearance')}
+						>
+							{#each THEMES as th (th.mode)}
+								<button
+									type="button"
+									class="theme-segmented__opt"
+									class:theme-segmented__opt--active={theme.current === th.mode}
+									role="radio"
+									aria-checked={theme.current === th.mode}
+									title={th.label}
+									aria-label={th.label}
+									onclick={(e) => {
+										e.stopPropagation();
+										theme.set(th.mode);
+									}}
+								>
+									<Icon name={th.icon} />
+								</button>
+							{/each}
+						</div>
+					</div>
+
+					<button class="user-menu-item" onclick={openAbout}>
+						<Icon name="info-circle" /> <span>{t('user_menu.about', 'About OxiCloud')}</span>
+					</button>
+
+					<div class="user-menu-divider"></div>
+
+					<button class="user-menu-item user-menu-logout" onclick={onLogout}>
+						<Icon name="sign-out-alt" /> <span>{t('actions.logout', 'Log out')}</span>
+					</button>
+				</div>
+			</div>
 		</div>
 	</div>
 
@@ -169,64 +631,529 @@
 	</div>
 </div>
 
+{#snippet avatar(large: boolean)}
+	{#if avatarPhoto}
+		<img
+			class="avatar avatar--photo"
+			class:avatar--lg={large}
+			src={avatarPhoto}
+			alt={t('user_menu.title', 'User menu')}
+		/>
+	{:else}
+		<span class="avatar avatar--c{avatarColor}" class:avatar--lg={large}>{initials}</span>
+	{/if}
+{/snippet}
+
+{#if aboutOpen}
+	<!-- About OxiCloud modal -->
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="about-overlay" onclick={(e) => e.target === e.currentTarget && (aboutOpen = false)}>
+		<div class="about-modal" role="dialog" aria-modal="true" aria-labelledby="about-modal-title">
+			<div class="about-modal__logo">
+				<svg viewBox="120 120 280 280" aria-hidden="true">
+					<path
+						d="M345 310c32 0 58-26 58-58s-26-58-58-58c-6.2 0-12 0.9-17.5 2.7C318 166 289 143 255 143c-34.3 0-63.1 22.6-73 53.7C176.9 195.7 171 195 165 195c-32 0-58 26-58 58s26 58 58 58h180z"
+					/>
+				</svg>
+			</div>
+			<h2 id="about-modal-title" class="about-modal__title">OxiCloud</h2>
+			<div class="about-modal__version">{appVersion || 'v…'}</div>
+			<p class="about-modal__desc">
+				{t(
+					'user_menu.about_description',
+					'Cloud storage platform built with Rust & Clean Architecture. Fast, secure, and private.'
+				)}
+			</p>
+			<div class="about-modal__tech">
+				<span class="about-modal__badge">Rust</span>
+				<span class="about-modal__badge">Axum</span>
+				<span class="about-modal__badge">PostgreSQL</span>
+				<span class="about-modal__badge">Clean Architecture</span>
+			</div>
+			<div class="about-modal__links">
+				<a
+					class="about-modal__link"
+					href="https://github.com/AtalayaLabs/OxiCloud/"
+					target="_blank"
+					rel="noopener"
+				>
+					<Icon name="github" /> GitHub
+				</a>
+				<a
+					class="about-modal__link"
+					href="https://github.com/AtalayaLabs/OxiCloud/blob/main/LICENSE"
+					target="_blank"
+					rel="noopener"
+				>
+					<Icon name="file-alt" />
+					{t('user_menu.mit_license', 'MIT License')}
+				</a>
+			</div>
+			<button class="about-modal__close" onclick={() => (aboutOpen = false)}>
+				{t('actions.close', 'Close')}
+			</button>
+		</div>
+	</div>
+{/if}
+
+<CommandPalette />
+
 <style>
-	/* The app shell relies on the global layout CSS (sidebar/topbar/content);
-	   these scoped rules cover only the controls unique to the rewrite. */
+	/* Body becomes the sidebar+main flex row only while the shell is mounted. */
 	:global(body) {
 		display: flex;
 	}
 
-	.user-controls {
-		margin-left: auto;
-	}
-
-	.seg {
-		display: flex;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		overflow: hidden;
-	}
-
-	.seg__btn {
-		padding: 0.3rem 0.5rem;
+	/* Clear (×) button sits left of the submit button inside the search field. */
+	.search-clear {
+		position: absolute;
+		right: 44px;
+		display: grid;
+		place-items: center;
+		width: 28px;
+		height: 28px;
 		border: none;
-		background: var(--color-bg-surface);
+		border-radius: 50%;
+		background: none;
 		color: var(--color-text-muted);
 		cursor: pointer;
-		min-width: 2rem;
 	}
 
-	.seg__btn[aria-pressed='true'] {
-		background: var(--color-accent);
-		color: var(--color-on-accent);
-	}
-
-	.locale-select {
-		padding: 0.3rem 0.4rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg-input);
+	.search-clear:hover {
+		background: var(--color-bg-hover);
 		color: var(--color-text);
 	}
 
-	.user-name {
-		display: inline-flex;
+	.suggest {
+		position: absolute;
+		top: calc(100% + 4px);
+		left: 0;
+		right: 0;
+		z-index: 50;
+		list-style: none;
+		margin: 0;
+		padding: 0.25rem;
+		background: var(--color-bg-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg, var(--radius-md));
+		box-shadow: var(--shadow-lg, 0 10px 30px var(--color-overlay-shadow));
+		max-height: 24rem;
+		overflow: auto;
+	}
+
+	.suggest__item,
+	.suggest__all {
+		display: flex;
 		align-items: center;
-		gap: 0.375rem;
-		color: var(--color-text-secondary);
-		font-size: var(--text-sm);
-		max-width: 12rem;
+		gap: 0.6rem;
+		width: 100%;
+		padding: 0.5rem 0.6rem;
+		border: none;
+		background: none;
+		color: var(--color-text);
+		cursor: pointer;
+		text-align: left;
+		border-radius: var(--radius-sm);
+	}
+
+	.suggest__item:hover,
+	.suggest__all:hover {
+		background: var(--color-bg-hover);
+	}
+
+	.suggest__all {
+		justify-content: center;
+		color: var(--color-primary);
+		border-top: 1px solid var(--color-border);
+		margin-top: 0.25rem;
+	}
+
+	.suggest__icon {
+		color: var(--color-text-muted);
+	}
+
+	.suggest__name {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.logout {
-		padding: 0.4rem 0.75rem;
+	.suggest__busy {
+		padding: 0.6rem;
+		color: var(--color-text-muted);
+		text-align: center;
+	}
+
+	.notif-progress {
+		height: 6px;
+		margin-top: 0.35rem;
+		border-radius: var(--radius-pill, 999px);
+		background: var(--color-bg-muted);
+		overflow: hidden;
+	}
+
+	.notif-progress__fill {
+		height: 100%;
+		background: var(--color-accent);
+		transition: width 0.2s ease;
+	}
+
+	.notif-progress-detail {
+		display: flex;
+		justify-content: space-between;
+		gap: 0.5rem;
+		margin-top: 0.25rem;
+		font-size: var(--text-xs, 0.75rem);
+		color: var(--color-text-muted);
+	}
+
+	.notif-item-current {
+		margin-top: 0.15rem;
+		font-size: var(--text-xs, 0.75rem);
+		color: var(--color-text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	/* Bell "ring" animation, replayed when bellRinging toggles on. */
+	.notif-bell-btn.ring :global(svg),
+	.notif-bell-btn.ring :global(i) {
+		transform-origin: top center;
+		animation: bell-ring 0.9s ease;
+	}
+
+	@keyframes bell-ring {
+		0%,
+		100% {
+			transform: rotate(0);
+		}
+
+		10%,
+		30%,
+		50% {
+			transform: rotate(12deg);
+		}
+
+		20%,
+		40%,
+		60% {
+			transform: rotate(-12deg);
+		}
+
+		70% {
+			transform: rotate(6deg);
+		}
+
+		80% {
+			transform: rotate(-6deg);
+		}
+	}
+
+	/* Avatar: deterministic coloured-initials vignette, or the uploaded photo. */
+	.avatar {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+		background: var(--color-accent-gradient, var(--color-accent));
+		color: var(--color-on-accent);
+		font-size: var(--text-sm);
+		font-weight: var(--weight-bold);
+		flex-shrink: 0;
+		overflow: hidden;
+	}
+
+	.avatar--photo {
+		object-fit: cover;
+	}
+
+	/* Colour buckets mirror userVignette's .uv-color-0..4 shared palette. */
+	.avatar--c0 {
+		background: var(--color-badge-indigo-bg);
+		color: var(--color-badge-indigo-text);
+	}
+
+	.avatar--c1 {
+		background: var(--color-badge-green-bg);
+		color: var(--color-badge-green-text);
+	}
+
+	.avatar--c2 {
+		background: var(--color-badge-orange-bg);
+		color: var(--color-badge-orange-text);
+	}
+
+	.avatar--c3 {
+		background: var(--color-badge-blue-bg);
+		color: var(--color-badge-blue-text);
+	}
+
+	.avatar--c4 {
+		background: var(--color-badge-amber-bg);
+		color: var(--color-badge-amber-text);
+	}
+
+	.avatar--lg {
+		width: 44px;
+		height: 44px;
+		font-size: var(--text-base);
+	}
+
+	.user-menu-header {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		padding: var(--space-4);
+	}
+
+	.user-menu-id {
+		min-width: 0;
+	}
+
+	.user-menu-name {
+		font-weight: var(--weight-semibold);
+		color: var(--color-text-heading);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.user-menu-email {
+		font-size: var(--text-sm);
+		color: var(--color-text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.user-menu-item--lang,
+	.user-menu-item--theme {
+		cursor: default;
+	}
+
+	/* Custom language selector — flag + native name + active checkmark. */
+	.lang-selector {
+		position: relative;
+		margin-left: auto;
+	}
+
+	.lang-selector__toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+		padding: var(--space-1) var(--space-2);
 		border: 1px solid var(--color-border);
-		border-radius: var(--radius-lg);
-		background: var(--color-bg-surface);
+		border-radius: var(--radius-md);
+		background: var(--color-bg-input);
 		color: var(--color-text);
 		cursor: pointer;
+		font-size: var(--text-sm);
+	}
+
+	.lang-selector__toggle:hover {
+		background: var(--color-bg-hover);
+	}
+
+	.lang-selector__code {
+		font-weight: var(--weight-semibold);
+	}
+
+	:global(.lang-selector__arrow) {
+		font-size: var(--text-xs, 0.7rem);
+		transition: transform 0.15s ease;
+	}
+
+	.lang-selector--open :global(.lang-selector__arrow) {
+		transform: rotate(180deg);
+	}
+
+	.lang-selector__dropdown {
+		position: absolute;
+		bottom: calc(100% + 4px);
+		right: 0;
+		z-index: 60;
+		min-width: 12rem;
+		max-height: 18rem;
+		overflow: auto;
+		list-style: none;
+		margin: 0;
+		padding: 0.25rem;
+		background: var(--color-bg-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg, var(--radius-md));
+		box-shadow: var(--shadow-lg, 0 10px 30px var(--color-overlay-shadow));
+	}
+
+	:global([dir='rtl']) .lang-selector__dropdown {
+		right: auto;
+		left: 0;
+	}
+
+	.lang-option {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		width: 100%;
+		padding: 0.45rem 0.55rem;
+		border: none;
+		background: none;
+		color: var(--color-text);
+		cursor: pointer;
+		text-align: left;
+		border-radius: var(--radius-sm);
+		font-size: var(--text-sm);
+	}
+
+	.lang-option:hover {
+		background: var(--color-bg-hover);
+	}
+
+	.lang-option--active {
+		color: var(--color-primary);
+		font-weight: var(--weight-semibold);
+	}
+
+	.lang-option__name {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	:global(.lang-option__check) {
+		color: var(--color-primary);
+		flex-shrink: 0;
+	}
+
+	/* About OxiCloud modal. */
+	.about-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 1200;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 1rem;
+		background: var(--color-overlay);
+		animation: about-fade 0.18s ease;
+	}
+
+	.about-modal {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: var(--space-3);
+		width: min(92vw, 26rem);
+		padding: var(--space-6) var(--space-5);
+		background: var(--color-bg-surface);
+		color: var(--color-text);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-xl);
+		text-align: center;
+		animation: about-pop 0.2s ease;
+	}
+
+	.about-modal__logo {
+		width: 64px;
+		height: 64px;
+		color: var(--color-accent);
+	}
+
+	.about-modal__logo svg {
+		width: 100%;
+		height: 100%;
+		fill: currentColor;
+	}
+
+	.about-modal__title {
+		margin: 0;
+		font-size: var(--text-xl, 1.5rem);
+		color: var(--color-text-heading);
+	}
+
+	.about-modal__version {
+		font-size: var(--text-sm);
+		color: var(--color-text-muted);
+	}
+
+	.about-modal__desc {
+		margin: 0;
+		font-size: var(--text-sm);
+		color: var(--color-text-muted);
+		line-height: 1.5;
+	}
+
+	.about-modal__tech {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: var(--space-2);
+	}
+
+	.about-modal__badge {
+		padding: var(--space-1) var(--space-2);
+		border-radius: var(--radius-pill, 999px);
+		background: var(--color-bg-muted);
+		color: var(--color-text-secondary, var(--color-text-muted));
+		font-size: var(--text-xs, 0.75rem);
+	}
+
+	.about-modal__links {
+		display: flex;
+		gap: var(--space-4);
+	}
+
+	.about-modal__link {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+		color: var(--color-primary);
+		text-decoration: none;
+		font-size: var(--text-sm);
+	}
+
+	.about-modal__link:hover {
+		text-decoration: underline;
+	}
+
+	.about-modal__close {
+		margin-top: var(--space-2);
+		padding: var(--space-2) var(--space-5);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-bg-input);
+		color: var(--color-text);
+		cursor: pointer;
+		font-size: var(--text-sm);
+	}
+
+	.about-modal__close:hover {
+		background: var(--color-bg-hover);
+	}
+
+	@keyframes about-fade {
+		from {
+			opacity: 0;
+		}
+
+		to {
+			opacity: 1;
+		}
+	}
+
+	@keyframes about-pop {
+		from {
+			opacity: 0;
+			transform: scale(0.96);
+		}
+
+		to {
+			opacity: 1;
+			transform: scale(1);
+		}
 	}
 </style>
