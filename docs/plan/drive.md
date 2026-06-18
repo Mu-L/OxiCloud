@@ -394,6 +394,47 @@ visibility, not the CTE shared snapshot). FK timing works without
 `DEFERRABLE`: each FK is satisfied at the moment its row is written
 because the referenced rows already exist.
 
+#### DB-level invariant: no orphan root folder
+
+`storage.drives.root_folder_id` is NULLable at the column level
+(required by the four-write transaction above — the drive INSERT
+can't reference a folder that doesn't exist yet). The "every drive
+has a root folder" invariant is application-enforced by the atomic
+creation transaction being the only mint path. But the symmetric
+invariant — "every root folder belongs to a drive" — is *not* free
+either: a `storage.folders` row with `parent_id IS NULL` whose
+`drive_id` doesn't point at a drive whose `root_folder_id` equals
+its `id` would be an orphan that the resolver can't reach (the
+chroot can't land on it) but that still occupies the
+`(parent_id IS NULL, name, drive_id)` unique slot.
+
+D0 lands a DB-level guard for this case, as a defence-in-depth
+layer behind the application invariant. Implementation: an
+`AFTER INSERT OR UPDATE` constraint trigger on
+`storage.folders` that fires when `NEW.parent_id IS NULL` and
+refuses unless:
+
+```sql
+EXISTS (
+    SELECT 1 FROM storage.drives
+     WHERE id = NEW.drive_id
+       AND root_folder_id = NEW.id
+)
+```
+
+Declared `DEFERRABLE INITIALLY DEFERRED` so the four-write
+transaction's order (folder INSERTed at step 2, drive's
+`root_folder_id` UPDATEd at step 3) doesn't trip the trigger
+mid-transaction — the check fires at COMMIT, by which point both
+sides of the cycle are wired.
+
+Test coverage: a Hurl/integration test that hand-rolls
+`INSERT INTO storage.folders (… parent_id=NULL, drive_id=<existing>)`
+*without* the matching drives.root_folder_id update — asserts the
+trigger raises and the row is rejected. The atomic transaction
+remains the only legitimate creation path; arbitrary SQL writes
+that try to bypass it now hit a DB-level wall.
+
 #### Capabilities matrix
 
 | Capability | `kind='personal'`, default (`default_for_user` set) | `kind='personal'`, secondary (`default_for_user IS NULL`) | `kind='shared'` |
@@ -1242,6 +1283,13 @@ every storage query. We phase it for safety:
    CTE being the only creation path, not by a constraint.
    Verification step 6 checks the invariant on the populated
    dataset; ongoing enforcement is application-layer.
+8. Land the **no-orphan-root-folder constraint trigger** (§3,
+   "DB-level invariant"): `AFTER INSERT OR UPDATE` on
+   `storage.folders`, fires when `NEW.parent_id IS NULL`, refuses
+   unless the matching drive has its `root_folder_id` pointing at
+   the row. `DEFERRABLE INITIALLY DEFERRED` so the atomic
+   four-write transaction commits cleanly. Hurl test asserts the
+   trigger rejects hand-rolled orphan inserts.
 
 **Keep `user_id`** on resources alongside `drive_id` for the entire
 Phase A release cycle. Code is updated to read `drive_id` everywhere;
