@@ -1,18 +1,27 @@
 /* ── Scrollbar ── */
 
 ::-webkit-scrollbar {
-    width: 6px;
+    width: 10px;
+    height: 10px;
 }
 ::-webkit-scrollbar-track {
-    background: var(--color-bg-surface);
+    background: transparent;
 }
+/* Neutral, padded pill that blends in at rest and warms to the brand accent
+   only on hover — the bar no longer competes with content for attention. */
 ::-webkit-scrollbar-thumb {
+    background: var(--color-border-medium);
+    border: 2px solid transparent;
+    border-radius: var(--radius-full);
+    background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
     background: var(--color-accent);
-    border-radius: 3px;
+    background-clip: padding-box;
 }
 * {
     scrollbar-width: thin;
-    scrollbar-color: var(--color-accent) var(--color-bg-surface);
+    scrollbar-color: var(--color-border-medium) transparent;
 }
 
 /* Content area */
@@ -50,11 +59,13 @@
 
 .page-sticky-header {
     position: sticky;
-    margin: 0px;
-    padding: var(--space-2-5) 0px;
-    top: -20px; /* due to padding top of content-area */
+    margin: 0;
+    padding: var(--space-2-5) 0;
+    /* Cancel .content-area's --space-5 top padding so the header sticks flush;
+       stays correct if the gutter token ever changes. */
+    top: calc(-1 * var(--space-5));
     background-color: var(--color-bg-page);
-    z-index: 100; /* ensure header is above image preview */
+    z-index: var(--z-sticky); /* ensure header is above image preview */
 }
 
 .actions-bar {

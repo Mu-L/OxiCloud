@@ -9,27 +9,32 @@
     font-size: var(--text-base);
     font-weight: var(--weight-medium);
     gap: var(--space-2);
-    transition: all 0.2s ease;
+    transition: all var(--motion-base) var(--ease-standard);
 }
 
 .btn i {
     font-size: 15px;
 }
 
+/* Filled buttons rest on a soft, neutral elevation; their warm brand glow
+   blooms in on hover (rather than glowing at rest), and a gentle scale-down
+   gives a tactile press. The old "translateY lift on every button" is gone —
+   vertical lift is reserved for cards now, so buttons feel calm, not jittery. */
 .btn-primary {
     background: var(--color-accent-gradient);
     color: var(--color-on-accent);
-    box-shadow: 0 4px 15px var(--color-accent-shadow);
+    box-shadow: var(--shadow-sm);
 }
 
 .btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px var(--color-accent-shadow-lg);
+    box-shadow: 0 4px 14px var(--color-accent-shadow);
+    filter: brightness(1.05);
 }
 
 .btn-primary:active {
-    transform: translateY(0);
-    box-shadow: 0 2px 10px var(--color-accent-shadow);
+    transform: scale(0.98);
+    box-shadow: var(--shadow-xs);
+    filter: brightness(0.97);
 }
 
 .btn-secondary {
@@ -41,29 +46,28 @@
 .btn-secondary:hover {
     background-color: var(--color-bg-input-alt);
     border-color: var(--color-border-medium);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px var(--color-shadow-sm);
 }
 
 .btn-secondary:active {
-    transform: translateY(0);
+    transform: scale(0.98);
     background-color: var(--color-border);
 }
 
 .btn-danger {
     background: var(--color-danger-gradient);
     color: var(--color-danger-text);
-    box-shadow: 0 4px 15px var(--color-danger-ring);
+    box-shadow: var(--shadow-sm);
 }
 
 .btn-danger:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px var(--color-danger-ring-lg);
+    box-shadow: 0 4px 14px var(--color-danger-ring);
+    filter: brightness(1.05);
 }
 
 .btn-danger:active {
-    transform: translateY(0);
-    box-shadow: 0 2px 10px var(--color-danger-ring);
+    transform: scale(0.98);
+    box-shadow: var(--shadow-xs);
+    filter: brightness(0.97);
 }
 
 /* ── State matrix: focus / disabled / loading ───────────────── */
