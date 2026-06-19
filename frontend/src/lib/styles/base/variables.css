@@ -221,11 +221,14 @@
     --color-text: light-dark(#2d3748, #e2e8f0); /* primary body */
     --color-text-heading: light-dark(#1e293b, #f1f5f9); /* headings */
     --color-text-secondary: light-dark(#475569, #cbd5e1); /* strong secondary */
-    /* muted/subtle/faint converge: AA 4.5:1 on the grayish page/muted bgs AND
-     * on the lighter dark hover bg leaves only a narrow passing window. */
-    --color-text-muted: light-dark(#5e6a78, #9fadbe); /* muted */
-    --color-text-subtle: light-dark(#5e6a78, #9fadbe); /* subtle */
-    --color-text-faint: light-dark(#5e6a78, #9fadbe); /* faintest still-AA */
+    /* Three perceptibly distinct tiers, each verified AA ≥4.5:1 on every
+     * page/surface/hover/muted background in BOTH modes. muted carries the most
+     * weight (general secondary text — by far the most-used), faint the least
+     * (timestamps, placeholders) and sits right on the AA floor. Emphasis maps
+     * to contrast: stronger = darker in light / lighter in dark. */
+    --color-text-muted: light-dark(#586472, #b2c0d0); /* muted — strongest (5.4 / 5.6) */
+    --color-text-subtle: light-dark(#5e6a78, #a6b4c6); /* subtle — middle (5.0 / 4.9) */
+    --color-text-faint: light-dark(#647082, #9fadbe); /* faint — AA floor (4.5 / 4.5) */
     /* legacy aliases → one of the tiers above */
     --color-text-dark: var(--color-text-secondary);
     --color-text-dim: var(--color-text-secondary);
