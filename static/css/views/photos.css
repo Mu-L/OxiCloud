@@ -8,6 +8,12 @@
     display: block;
 }
 
+/* Virtualized timeline: each date-group is a <section>; its grid is
+   materialized (tiles inserted) only while near the viewport — see photos.js. */
+.photos-group {
+    display: block;
+}
+
 /* Toolbar with group mode toggle */
 .photos-toolbar {
     display: flex;
