@@ -44,7 +44,13 @@ migrations, and a **vanilla-JS / vanilla-CSS** frontend (design tokens from
 | 0.6 HEIC | ⬜ pending | open decision (native `libheif` dep). |
 | 0.7 Sub-nav tabs | ⬜ pending | deferred to Phase 1 (tabs need the Places/People views). |
 
-**Phase 1 — Places: backend in progress** (data API: index, repo aggregation, service, flag, endpoints). The map frontend (1.5 PMTiles serving, 1.7 MapLibre module, 1.8 thumbnails) is gated on the MapLibre-vendoring decision + a basemap asset. **Phase 2 — People: not started.** No new vendored JS/assets added yet.
+**Phase 1 — Places: complete (Approach A).**
+- Backend (`f4b431b`): migration `…_places_geo_index.sql`, `FileBlobReadRepository::list_geo_clusters` (plain-SQL grid aggregation, no PostGIS), `PlacesService` (caller_id-scoped), `OXICLOUD_ENABLE_PLACES` (now **default on**, `513b622`), `GET /api/photos/geo`.
+- Frontend: vendored MapLibre 5.24.0 + pmtiles 4.4.1 (`bb3d739`); `places.js` (`513b622`) renders the server-aggregated clusters as **HTML thumbnail markers** (no glyphs/sprites, no client-side clustering), refetches on pan/zoom, and drills into the lightbox. Optional Protomaps `.pmtiles` basemap read over HTTP **Range via the existing `ServeDir`** (label-light style, light/dark) with graceful fallback to a themed background; ODbL attribution. "Moments | Places" sub-nav.
+- **Deviations from the original plan:** 1.5 serves the basemap as a *static file* (ServeDir Range) instead of the `pmtiles` Rust crate; 1.8 uses MapLibre HTML markers instead of a deck.gl `IconLayer`. Both keep the footprint minimal and need zero new backend code.
+- **Pending:** browser smoke-test, and an operator-supplied `static/basemaps/basemap.pmtiles` for the street backdrop (works without it).
+
+**Phase 2 — People: not started.**
 
 ---
 
