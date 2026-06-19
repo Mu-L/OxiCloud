@@ -1288,8 +1288,16 @@ every storage query. We phase it for safety:
    `storage.folders`, fires when `NEW.parent_id IS NULL`, refuses
    unless the matching drive has its `root_folder_id` pointing at
    the row. `DEFERRABLE INITIALLY DEFERRED` so the atomic
-   four-write transaction commits cleanly. Hurl test asserts the
-   trigger rejects hand-rolled orphan inserts.
+   four-write transaction commits cleanly. Includes a pre-flight
+   `DO`-block that refuses the migration if any existing orphan
+   root folder is present (catches historical bad data at migration
+   time). **Direct test coverage is deferred to D3** — writing the
+   positive-path test today would require reimplementing the
+   atomic create flow in bash, which Ed rejected as duplication.
+   D0 ships with transitive coverage via `drives_foundation.hurl`
+   (the lifecycle hook exercises the trigger end-to-end through
+   the production path); the dedicated test rides alongside D3's
+   create-shared-drive API.
 
 **Keep `user_id`** on resources alongside `drive_id` for the entire
 Phase A release cycle. Code is updated to read `drive_id` everywhere;
