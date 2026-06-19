@@ -30,6 +30,24 @@ migrations, and a **vanilla-JS / vanilla-CSS** frontend (design tokens from
 
 ---
 
+## Implementation status (updated)
+
+**Phase 0 — Gallery polish: essentially complete** (branch `claude/zealous-faraday-58s1at`).
+
+| Item | Status | Commit / note |
+|------|--------|---------------|
+| 0.1 Virtualization | ✅ done | `081b2b6` |
+| 0.2 width/height on `/api/photos` | ✅ done | `8d09589` — implemented via a flattened `PhotoDto` (`#[serde(flatten)]`) instead of widening `FileDto` + its 6 construction sites; `list_media_files` LEFT JOINs `storage.file_metadata`. `FileItem` gained optional `width`/`height`. |
+| 0.3 Justified layout | ✅ done | `75ee9b7` |
+| 0.4 Lightbox (zoom/pan, swipe, info panel, favorite fix) | 🟡 mostly | `ca1a8cb`, `e8520e4` — the map pin shows **coordinates as text**; the embedded mini-map / deep-link into Places is deferred until Places exists. |
+| 0.5 Shift-select, confirm→Modal, keyboard a11y | 🟡 mostly | `824df4d`, `e8520e4` — optional drag-marquee not done. |
+| 0.6 HEIC | ⬜ pending | open decision (native `libheif` dep). |
+| 0.7 Sub-nav tabs | ⬜ pending | deferred to Phase 1 (tabs need the Places/People views). |
+
+**Phase 1 — Places: backend in progress** (data API: index, repo aggregation, service, flag, endpoints). The map frontend (1.5 PMTiles serving, 1.7 MapLibre module, 1.8 thumbnails) is gated on the MapLibre-vendoring decision + a basemap asset. **Phase 2 — People: not started.** No new vendored JS/assets added yet.
+
+---
+
 ## Research summary (the decisions these phases encode)
 
 **Map (no third-party APIs, self-host, extreme perf):**
