@@ -551,11 +551,31 @@ impl ThumbnailService {
         Ok(bytes)
     }
 
-    fn render_thumbnail_from_data(
+    /// Cheap magic-byte check for a JPEG container (SOI + first marker).
+    fn is_jpeg(data: &[u8]) -> bool {
+        data.len() >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF
+    }
+
+    /// Decode `data` into a `DynamicImage` sized for a thumbnail whose longest
+    /// side is `target_long`, with EXIF orientation already applied.
+    ///
+    /// For JPEG this is **shrink-on-load**: the decoder emits the image at the
+    /// smallest DCT scale (1/8·1/4·1/2·1/1) whose longest axis is still ≥
+    /// `target_long`, so a 12 MP photo decodes ~16× fewer pixels for an 800 px
+    /// thumbnail — and the full-resolution bitmap (the dominant time/RAM cost)
+    /// is never materialised. PNG/GIF/WebP (no DCT scaling) and unusual JPEG
+    /// colour spaces (CMYK / 16-bit grey) fall back to a full decode.
+    fn decode_oriented(
         data: &[u8],
-        size: ThumbnailSize,
-    ) -> Result<Vec<u8>, ThumbnailError> {
-        let max_dim = size.max_dimension();
+        target_long: u32,
+    ) -> Result<image::DynamicImage, ThumbnailError> {
+        // JPEG fast path: shrink-on-load. A non-JPEG, or a JPEG colour space we
+        // don't map (CMYK / 16-bit grey → `None`), falls through to a full decode.
+        if Self::is_jpeg(data)
+            && let Some(img) = Self::decode_jpeg_scaled(data, target_long)?
+        {
+            return Ok(Self::apply_exif_orientation(data, img));
+        }
 
         let (w, h) = image::ImageReader::new(std::io::Cursor::new(data))
             .with_guessed_format()
@@ -568,17 +588,74 @@ impl ThumbnailService {
                 w as u64 * h as u64 / 1_000_000
             )));
         }
-
         let img =
             image::load_from_memory(data).map_err(|e| ThumbnailError::ImageError(e.to_string()))?;
+        Ok(Self::apply_exif_orientation(data, img))
+    }
 
-        let img = {
-            use crate::infrastructure::services::exif_service::{ExifService, apply_orientation};
-            let orientation = ExifService::extract(data)
-                .and_then(|m| m.orientation)
-                .unwrap_or(1);
-            apply_orientation(img, orientation)
+    /// JPEG shrink-on-load. Returns `Ok(None)` for colour spaces we don't map
+    /// (CMYK / 16-bit grey), signalling the caller to fall back to a full decode.
+    fn decode_jpeg_scaled(
+        data: &[u8],
+        target_long: u32,
+    ) -> Result<Option<image::DynamicImage>, ThumbnailError> {
+        let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
+        // read_info() first so the dimension guard sees the *original* size.
+        decoder
+            .read_info()
+            .map_err(|e| ThumbnailError::ImageError(e.to_string()))?;
+        let info = decoder
+            .info()
+            .ok_or_else(|| ThumbnailError::ImageError("missing JPEG metadata".into()))?;
+        let (orig_w, orig_h) = (info.width as u64, info.height as u64);
+        if orig_w * orig_h > MAX_DECODE_PIXELS {
+            return Err(ThumbnailError::ImageError(format!(
+                "Image too large for thumbnail: {orig_w}×{orig_h} ({} MP, max {MAX_DECODE_PIXELS})",
+                orig_w * orig_h / 1_000_000
+            )));
+        }
+
+        // Request a `target_long` square box: jpeg-decoder picks the smallest
+        // scale whose longest axis is still ≥ target_long (its "≥ in at least
+        // one axis" rule reduces to the long axis since it dominates), so the
+        // later resample step only ever downscales — never upscales/blurs.
+        let req = target_long.min(u16::MAX as u32) as u16;
+        let (sw, sh) = decoder
+            .scale(req, req)
+            .map_err(|e| ThumbnailError::ImageError(e.to_string()))?;
+        let pixels = decoder
+            .decode()
+            .map_err(|e| ThumbnailError::ImageError(e.to_string()))?;
+
+        let (sw, sh) = (sw as u32, sh as u32);
+        let img = match decoder.info().map(|i| i.pixel_format) {
+            Some(jpeg_decoder::PixelFormat::RGB24) => {
+                image::RgbImage::from_raw(sw, sh, pixels).map(image::DynamicImage::ImageRgb8)
+            }
+            Some(jpeg_decoder::PixelFormat::L8) => {
+                image::GrayImage::from_raw(sw, sh, pixels).map(image::DynamicImage::ImageLuma8)
+            }
+            _ => None,
         };
+        Ok(img)
+    }
+
+    /// Read EXIF orientation from the original bytes and rotate/flip the image.
+    /// (Applied after shrink-on-load, so the rotation works on the small bitmap.)
+    fn apply_exif_orientation(data: &[u8], img: image::DynamicImage) -> image::DynamicImage {
+        use crate::infrastructure::services::exif_service::{ExifService, apply_orientation};
+        let orientation = ExifService::extract(data)
+            .and_then(|m| m.orientation)
+            .unwrap_or(1);
+        apply_orientation(img, orientation)
+    }
+
+    fn render_thumbnail_from_data(
+        data: &[u8],
+        size: ThumbnailSize,
+    ) -> Result<Vec<u8>, ThumbnailError> {
+        let max_dim = size.max_dimension();
+        let img = Self::decode_oriented(data, max_dim)?;
 
         let (orig_width, orig_height) = (img.width(), img.height());
         let (new_width, new_height) = if orig_width > orig_height {
@@ -608,29 +685,11 @@ impl ThumbnailService {
     fn render_all_thumbnails_from_data(
         data: &[u8],
     ) -> Result<Vec<(ThumbnailSize, Bytes)>, ThumbnailError> {
-        let (w, h) = image::ImageReader::new(std::io::Cursor::new(data))
-            .with_guessed_format()
-            .map_err(|e| ThumbnailError::ImageError(e.to_string()))?
-            .into_dimensions()
-            .map_err(|e| ThumbnailError::ImageError(e.to_string()))?;
-        if (w as u64) * (h as u64) > MAX_DECODE_PIXELS {
-            return Err(ThumbnailError::ImageError(format!(
-                "Image too large for thumbnail: {w}×{h} ({} MP, max {MAX_DECODE_PIXELS})",
-                w as u64 * h as u64 / 1_000_000
-            )));
-        }
-
-        let img =
-            image::load_from_memory(data).map_err(|e| ThumbnailError::ImageError(e.to_string()))?;
-
-        let img = {
-            use crate::infrastructure::services::exif_service::{ExifService, apply_orientation};
-            let orientation = ExifService::extract(data)
-                .and_then(|m| m.orientation)
-                .unwrap_or(1);
-            apply_orientation(img, orientation)
-        };
-
+        // Decode once, shrunk-on-load for the largest size (800 px); all three
+        // sizes are then resampled from this single shared bitmap. Sizing the
+        // shared decode to Large keeps quality for every size while paying the
+        // (now much smaller) decode cost only once.
+        let img = Self::decode_oriented(data, ThumbnailSize::Large.max_dimension())?;
         let (orig_w, orig_h) = (img.width(), img.height());
 
         ThumbnailSize::all()
@@ -1268,6 +1327,31 @@ impl ThumbnailPort for ThumbnailService {
             cache_size_bytes: stats.cache_size_bytes,
             max_cache_bytes: stats.max_cache_bytes,
         }
+    }
+}
+
+/// Benchmark-only public surface (Phase 0 perf harness).
+///
+/// The real render functions are private (`render_thumbnail_from_data` /
+/// `render_all_thumbnails_from_data`). Benches and examples are separate crate
+/// targets and can only see `pub` items, so these thin wrappers — gated behind
+/// the `bench` feature so they never exist in production builds — expose the
+/// exact CPU-bound work (decode → orientation → resize → JPEG encode) for
+/// before/after measurement. Errors are flattened to `String` to avoid leaking
+/// `ThumbnailError` into the public API.
+#[cfg(feature = "bench")]
+impl ThumbnailService {
+    /// Render a single thumbnail size, returning the encoded JPEG bytes.
+    pub fn bench_render_thumbnail(data: &[u8], size: ThumbnailSize) -> Result<Vec<u8>, String> {
+        Self::render_thumbnail_from_data(data, size).map_err(|e| e.to_string())
+    }
+
+    /// Render all sizes in one decode (the upload-time path), returning each
+    /// size paired with its encoded byte length (output-size baseline).
+    pub fn bench_render_all(data: &[u8]) -> Result<Vec<(ThumbnailSize, usize)>, String> {
+        Self::render_all_thumbnails_from_data(data)
+            .map(|v| v.into_iter().map(|(s, b)| (s, b.len())).collect())
+            .map_err(|e| e.to_string())
     }
 }
 

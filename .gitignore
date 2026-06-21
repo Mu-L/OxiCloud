@@ -113,3 +113,8 @@ wasm/oxicloud-hash/target/
 # K6 load-test raw run outputs and per-run storage (baseline is committed)
 tests/load/results/*.json
 tests/load/storage/
+
+# Phase 0 perf-bench corpus — generated deterministically on first
+# `cargo bench --features bench`; drop real photos here (same filenames) to
+# benchmark against real data. (target/ already ignored, covers the JSON dump.)
+benches/corpus/

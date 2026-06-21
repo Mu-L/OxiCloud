@@ -39,6 +39,10 @@ dotenvy = "0.15.7"
 moka = { version = "0.12.15", features = ["future", "sync"] }
 http-range-header = "0.4"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+# Shrink-on-load JPEG decode (DCT 1/2·1/4·1/8 scaling) for thumbnails — pure
+# Rust, no C toolchain. The `image` crate's zune-jpeg backend can't scale during
+# decode; this can, cutting decode time/RAM ~order-of-magnitude on large photos.
+jpeg-decoder = "0.3"
 id3 = "1.17"
 mp3-duration = "0.1"
 kamadak-exif = "0.6.1"
@@ -103,6 +107,14 @@ load_seed_bin = []
 # requires OXICLOUD_ENABLE_FACES=true *and* operator-provided ONNX models; without
 # this feature the People pipeline falls back to the inert NoopFaceAnalyzer.
 faces-onnx = ["dep:ort", "dep:ndarray"]
+# Performance benchmark harness (Phase 0). Exposes `bench_support` + thin public
+# wrappers over the private thumbnail render functions so `benches/` and
+# `examples/` can measure them. Off by default — adds nothing to prod builds.
+# Run with: `cargo bench --features bench` / `cargo run --release --features bench --example bench_thumbnails_mem`.
+bench = []
+
+[dev-dependencies]
+criterion = "0.5"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(integration_tests)'] }
@@ -122,6 +134,19 @@ path = "src/bin/load-seed.rs"
 # `cargo build --release` (and the prod Dockerfile) skip it. tests/load/run.sh
 # and load-nightly.yml build it explicitly with --features load_seed_bin.
 required-features = ["load_seed_bin"]
+
+# Phase 0 perf harness — Task 0.2 (criterion latency + output-size bench).
+[[bench]]
+name = "thumbnails"
+path = "benches/thumbnails.rs"
+harness = false
+required-features = ["bench"]
+
+# Phase 0 perf harness — Task 0.3 (peak-RAM + saturated-throughput baseline).
+[[example]]
+name = "bench_thumbnails_mem"
+path = "examples/bench_thumbnails_mem.rs"
+required-features = ["bench"]
 
 [profile.release]
 lto = "thin"

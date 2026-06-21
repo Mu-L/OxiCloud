@@ -12,6 +12,12 @@ pub mod interfaces;
 #[cfg(integration_tests)]
 pub mod integration_test_support;
 
+// Phase 0 perf-benchmark support: deterministic image corpus generation/loading
+// shared by `benches/thumbnails.rs` and `examples/bench_thumbnails_mem.rs`.
+// Gated behind the `bench` feature so it adds nothing to normal builds.
+#[cfg(feature = "bench")]
+pub mod bench_support;
+
 // Common public re-exports
 pub use application::services::folder_service::FolderService;
 pub use application::services::i18n_application_service::I18nApplicationService;
