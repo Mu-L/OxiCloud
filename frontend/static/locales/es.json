@@ -369,6 +369,7 @@
     "selected_count": "{{count}} seleccionados",
     "uploaded_saved": "Subida completa — {{mb}} MB deduplicados",
     "uploaded_partial": "{{ok}} subidos, {{failed}} fallaron",
+    "uploaded_skipped": "{{ok}} subidos · {{skipped}} omitidos (no son ficheros normales)",
     "upload_failed": "La subida falló"
   },
   "dialogs": {

@@ -1,15 +1,27 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/state';
+	import { page, updated } from '$app/state';
 	import { onMount } from 'svelte';
 	import '$lib/styles/app.css';
 	import AppShell from '$lib/components/AppShell.svelte';
 	import DialogHost from '$lib/components/DialogHost.svelte';
 	import Toaster from '$lib/components/Toaster.svelte';
 	import { session } from '$lib/stores/session.svelte';
+	import { ui } from '$lib/stores/ui.svelte';
 	import { hashUrlToPath } from '$lib/utils/hashRedirect';
 
 	let { children } = $props();
+
+	// A new build was deployed (`_app/version.json` changed, polled per
+	// svelte.config.js) — reload so an open tab never keeps running stale code
+	// after a rebuild. Deferred while a progress notification (e.g. an upload) is
+	// in flight so we don't interrupt it; this effect re-runs when that clears
+	// (notifications are reactive) and reloads then.
+	$effect(() => {
+		if (!updated.current) return;
+		const busy = ui.notifications.some((n) => n.progress !== undefined);
+		if (!busy) location.reload();
+	});
 
 	// Routes reachable without an authenticated session.
 	const PUBLIC_PREFIXES = ['/login', '/device', '/s/', '/nextcloud'];

@@ -373,6 +373,63 @@
 	}
 
 	/**
+	 * Probe whether a file's content can actually be read. FIFOs / sockets /
+	 * device files — e.g. the `supervise/control` named pipes in a copied
+	 * s6/runit service tree — report a size but BLOCK FOREVER on read; uploading
+	 * one would hang its lane until the watchdog (~30 s). We read only the first
+	 * chunk, raced against a short timeout: a normal file (even 0-byte) yields
+	 * immediately, a pipe stalls and is reported unreadable so we can skip it fast.
+	 */
+	async function isReadable(file: File, timeoutMs = 3000): Promise<boolean> {
+		if (typeof file.stream !== 'function') return true; // can't probe → let the watchdog catch it
+		let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			reader = file.stream().getReader();
+			const firstChunk = reader.read().then(() => true);
+			const timedOut = new Promise<false>((res) => {
+				timer = setTimeout(() => res(false), timeoutMs);
+			});
+			return await Promise.race([firstChunk, timedOut]);
+		} catch {
+			return false; // read threw → not a normal, uploadable file
+		} finally {
+			clearTimeout(timer);
+			reader?.cancel().catch(() => {});
+		}
+	}
+
+	/** Map `fn` over `items` with at most `limit` concurrent calls, preserving order. */
+	async function mapLimit<T, R>(
+		items: T[],
+		limit: number,
+		fn: (item: T) => Promise<R>
+	): Promise<R[]> {
+		const out = new Array<R>(items.length);
+		let next = 0;
+		const worker = async () => {
+			while (next < items.length) {
+				const i = next++;
+				out[i] = await fn(items[i]);
+			}
+		};
+		await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+		return out;
+	}
+
+	/** Split items into the readable ones and the unreadable (FIFO/socket/…) ones. */
+	async function partitionReadable<T>(
+		items: T[],
+		fileOf: (item: T) => File
+	): Promise<{ readable: T[]; skipped: T[] }> {
+		const ok = await mapLimit(items, 24, (it) => isReadable(fileOf(it)));
+		const readable: T[] = [];
+		const skipped: T[] = [];
+		items.forEach((it, i) => (ok[i] ? readable : skipped).push(it));
+		return { readable, skipped };
+	}
+
+	/**
 	 * Upload `items` ({file, folderId}) with bounded concurrency, a per-file
 	 * deadline and live aggregate progress. A stuck or failing file no longer
 	 * freezes the batch: it blocks only its own lane (the rest keep going), is
@@ -423,18 +480,35 @@
 		return { savedBytes, failures };
 	}
 
-	/** Resolve the upload's bell notification: success, partial, or failure. */
-	function finishUpload(nid: number, savedBytes: number, failures: number, total: number) {
-		if (failures === 0) {
+	/** Resolve the upload's bell notification: success, partial, skipped, or failure.
+	 *  `total` is the count of *readable* files actually attempted; `skipped` is the
+	 *  non-regular files (FIFOs/sockets/…) that were filtered out before uploading. */
+	function finishUpload(
+		nid: number,
+		savedBytes: number,
+		failures: number,
+		total: number,
+		skipped = 0
+	) {
+		const ok = total - failures;
+		if (failures === 0 && skipped === 0) {
 			ui.finishProgress(nid, uploadDoneMessage(savedBytes), 'success');
-		} else if (failures < total) {
+		} else if (failures === 0) {
+			// Every readable file uploaded; the rest were non-regular files
+			// (FIFOs/sockets/devices) that can't be read and were skipped.
 			ui.finishProgress(
 				nid,
 				t(
-					'files.uploaded_partial',
-					{ ok: total - failures, failed: failures },
-					`${total - failures} uploaded, ${failures} failed`
+					'files.uploaded_skipped',
+					{ ok, skipped },
+					`${ok} uploaded · ${skipped} skipped (not regular files)`
 				),
+				ok > 0 ? 'success' : 'warning'
+			);
+		} else if (ok > 0) {
+			ui.finishProgress(
+				nid,
+				t('files.uploaded_partial', { ok, failed: failures }, `${ok} uploaded, ${failures} failed`),
 				'warning'
 			);
 		} else {
@@ -456,19 +530,28 @@
 	async function uploadBatch(files: File[]) {
 		if (files.length === 0) return;
 		uploading = true;
-		const total = files.length;
-		const label = (done: number) =>
-			total === 1
-				? t('files.uploading_file', { name: files[0].name }, `Uploading ${files[0].name}…`)
-				: t('files.uploading_n', { done, total }, `Uploading ${done}/${total} files…`);
-		const nid = ui.startProgress(label(0));
+		const nid = ui.startProgress(
+			t('files.uploading_n', { done: 0, total: files.length }, `Uploading 0/${files.length} files…`)
+		);
 		try {
-			const { savedBytes, failures } = await uploadAll(
-				files.map((file) => ({ file, folderId: currentId })),
-				nid,
-				label
-			);
-			finishUpload(nid, savedBytes, failures, total);
+			// Filter out non-regular files (FIFOs/sockets/devices) up front so they
+			// can't hang a lane — progress then runs over only what's uploadable.
+			const { readable, skipped } = await partitionReadable(files, (f) => f);
+			const total = readable.length;
+			const label = (done: number) =>
+				total === 1
+					? t('files.uploading_file', { name: readable[0].name }, `Uploading ${readable[0].name}…`)
+					: t('files.uploading_n', { done, total }, `Uploading ${done}/${total} files…`);
+			if (total > 0) {
+				const { savedBytes, failures } = await uploadAll(
+					readable.map((file) => ({ file, folderId: currentId })),
+					nid,
+					label
+				);
+				finishUpload(nid, savedBytes, failures, total, skipped.length);
+			} else {
+				finishUpload(nid, 0, 0, 0, skipped.length);
+			}
 			await reload();
 			// Storage usage changed server-side — pull the fresh figure so the
 			// "Almacenamiento" bar moves off its login value instead of 0%.
@@ -1103,13 +1186,28 @@
 	async function uploadTree(entries: { file: File; relativePath: string }[]) {
 		if (entries.length === 0) return;
 		uploading = true;
-		const total = entries.length;
-		const label = (done: number) =>
-			t('files.uploading_n', { done, total }, `Uploading ${done}/${total} files…`);
 		// Same bell progress notification as uploadBatch, so folder uploads show
 		// live progress + a final result instead of staying silent until the end.
-		const nid = ui.startProgress(label(0));
+		const nid = ui.startProgress(
+			t(
+				'files.uploading_n',
+				{ done: 0, total: entries.length },
+				`Uploading 0/${entries.length} files…`
+			)
+		);
 		try {
+			// Drop non-regular files (FIFOs/sockets/devices) before building the tree
+			// so they neither create empty folders nor hang a lane on read.
+			const { readable, skipped } = await partitionReadable(entries, (e) => e.file);
+			const total = readable.length;
+			const label = (done: number) =>
+				t('files.uploading_n', { done, total }, `Uploading ${done}/${total} files…`);
+			if (total === 0) {
+				finishUpload(nid, 0, 0, 0, skipped.length);
+				await reload();
+				return;
+			}
+
 			// Map each relative directory path to its created folder id; '' = current.
 			const dirIds = new Map<string, string | null>([['', currentId]]);
 
@@ -1127,14 +1225,14 @@
 			// concurrent creation of the same dir would race), then upload the
 			// files into it with bounded concurrency.
 			const items: { file: File; folderId: string | null }[] = [];
-			for (const { file, relativePath } of entries) {
+			for (const { file, relativePath } of readable) {
 				const segs = relativePath.split('/');
 				segs.pop(); // drop the filename, keep the directory trail
 				items.push({ file, folderId: await ensureDir(segs.join('/')) });
 			}
 
 			const { savedBytes, failures } = await uploadAll(items, nid, label);
-			finishUpload(nid, savedBytes, failures, total);
+			finishUpload(nid, savedBytes, failures, total, skipped.length);
 			await reload();
 			void session.refresh();
 		} catch (err) {

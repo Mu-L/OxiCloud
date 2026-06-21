@@ -503,6 +503,7 @@
     "uploaded": "Upload complete",
     "uploaded_saved": "Upload complete — {{mb}} MB deduplicated",
     "uploaded_partial": "{{ok}} uploaded, {{failed}} failed",
+    "uploaded_skipped": "{{ok}} uploaded · {{skipped}} skipped (not regular files)",
     "upload_failed": "Upload failed",
     "uploading": "Uploading…",
     "uploading_file": "Uploading {{name}}…",

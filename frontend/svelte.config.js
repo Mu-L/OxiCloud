@@ -30,6 +30,12 @@ const config = {
 		// All routes are client-rendered; SSR/prerender are disabled in +layout.ts.
 		alias: {
 			$lib: './src/lib'
+		},
+		// Poll `_app/version.json` so an open tab notices a fresh deploy; the root
+		// layout reloads itself when it does, instead of silently running stale
+		// code after a rebuild (the classic "my fix isn't applied" trap).
+		version: {
+			pollInterval: 60000
 		}
 	}
 };
