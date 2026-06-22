@@ -7,3 +7,6 @@ node_modules/
 *.local
 vite.config.ts.timestamp-*
 vite.config.js.timestamp-*
+
+# Vitest/istanbul coverage output
+/coverage/

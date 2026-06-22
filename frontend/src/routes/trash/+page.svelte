@@ -174,7 +174,7 @@
 >
 	{#snippet toolbar()}
 		{#if entries.length > 0}
-			<button class="btn btn-danger" onclick={purgeAll}>
+			<button class="btn btn-danger" data-testid="trash-empty-btn" onclick={purgeAll}>
 				<Icon name="trash" />
 				{t('trash.empty_action', 'Empty trash')}
 			</button>
@@ -188,11 +188,17 @@
 		</span>
 	{/snippet}
 	{#snippet actions(entry)}
-		<button class="btn-action" title={t('trash.restore', 'Restore')} onclick={() => restore(entry)}>
+		<button
+			class="btn-action"
+			data-testid={`trash-restore-btn-${entry.id}`}
+			title={t('trash.restore', 'Restore')}
+			onclick={() => restore(entry)}
+		>
 			<Icon name="undo" />
 		</button>
 		<button
 			class="btn-action btn-action--delete"
+			data-testid={`trash-delete-btn-${entry.id}`}
 			title={t('trash.delete', 'Delete permanently')}
 			onclick={() => purge(entry)}
 		>

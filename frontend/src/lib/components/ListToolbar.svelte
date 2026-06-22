@@ -67,12 +67,13 @@
 	{#if groups?.length || showViewToggle}
 		<div class="view-toggle" role="group" aria-label={t('view.label', 'View options')}>
 			{#if groups?.length}
-				<div class="group-by-selector">
+				<div class="group-by-selector" data-testid="list-toolbar-groupby-menu">
 					<button
 						class="toggle-btn group-by-btn active"
 						title={t('groupby.title', 'Group by')}
 						aria-haspopup="true"
 						aria-expanded={menuOpen}
+						data-testid="list-toolbar-groupby-btn"
 						onclick={() => (menuOpen = !menuOpen)}
 					>
 						<Icon name={active?.icon ?? 'layer-group'} />
@@ -83,6 +84,7 @@
 						class:active={reversed}
 						title={t('sortdir.title', 'Sort direction')}
 						aria-label={t('sort.direction', 'Sort direction')}
+						data-testid="list-toolbar-sort-direction-btn"
 						onclick={() => ondirection?.()}
 					>
 						<Icon name="arrow-up" />
@@ -93,6 +95,7 @@
 								<button
 									class="group-by-option"
 									class:active={groupBy === g.key}
+									data-testid={`list-toolbar-groupby-${g.key}-item`}
 									onclick={() => pick(g.key)}
 								>
 									<Icon name={g.icon ?? 'layer-group'} />
@@ -110,6 +113,7 @@
 					class:active={filesStore.viewMode === 'grid'}
 					title={t('view.grid', 'Grid view')}
 					aria-pressed={filesStore.viewMode === 'grid'}
+					data-testid="list-toolbar-view-grid-btn"
 					onclick={() => filesStore.setViewMode('grid')}><Icon name="th" /></button
 				>
 				<button
@@ -117,6 +121,7 @@
 					class:active={filesStore.viewMode === 'list'}
 					title={t('view.list', 'List view')}
 					aria-pressed={filesStore.viewMode === 'list'}
+					data-testid="list-toolbar-view-list-btn"
 					onclick={() => filesStore.setViewMode('list')}><Icon name="list" /></button
 				>
 			{/if}

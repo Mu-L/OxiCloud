@@ -318,6 +318,7 @@
 				{#if canEditImage}
 					<button
 						class="btn btn-secondary avatar-edit-btn"
+						data-testid="profile-avatar-edit-btn"
 						title={t('profile.edit_photo', 'Edit photo')}
 						onclick={openAvatarEdit}
 					>
@@ -327,10 +328,11 @@
 			</div>
 
 			{#if canEditImage && avatarEditOpen}
-				<div class="avatar-edit">
+				<div class="avatar-edit" data-testid="profile-avatar-edit-panel">
 					<div class="avatar-tabs">
 						<button
 							class="avatar-tab"
+							data-testid="profile-avatar-url-tab"
 							class:avatar-tab--active={avatarTab === 'url'}
 							onclick={() => (avatarTab = 'url')}
 						>
@@ -338,6 +340,7 @@
 						</button>
 						<button
 							class="avatar-tab"
+							data-testid="profile-avatar-upload-tab"
 							class:avatar-tab--active={avatarTab === 'upload'}
 							onclick={() => (avatarTab = 'upload')}
 						>
@@ -346,7 +349,12 @@
 					</div>
 
 					{#if avatarTab === 'url'}
-						<input type="url" bind:value={avatarUrl} placeholder="https://example.com/photo.jpg" />
+						<input
+							type="url"
+							data-testid="profile-avatar-url-input"
+							bind:value={avatarUrl}
+							placeholder="https://example.com/photo.jpg"
+						/>
 						<small class="muted">
 							{t('profile.photo_url_hint', 'https://, http://, or data:image/…;base64,… accepted')}
 						</small>
@@ -356,6 +364,7 @@
 							<span>{t('profile.photo_choose_file', 'Choose a photo (PNG, JPEG, WebP)')}</span>
 							<input
 								type="file"
+								data-testid="profile-avatar-file-input"
 								accept="image/png,image/jpeg,image/webp"
 								hidden
 								onchange={onAvatarFile}
@@ -373,19 +382,30 @@
 					{/if}
 
 					<div class="avatar-edit-actions">
-						<button class="btn btn-primary" disabled={avatarBusy} onclick={saveAvatar}>
+						<button
+							class="btn btn-primary"
+							data-testid="profile-avatar-save-btn"
+							disabled={avatarBusy}
+							onclick={saveAvatar}
+						>
 							{t('profile.photo_save', 'Save')}
 						</button>
 						{#if session.user.image}
 							<button
 								class="btn link-btn link-btn--danger"
+								data-testid="profile-avatar-remove-btn"
 								disabled={avatarBusy}
 								onclick={() => commitAvatar(null)}
 							>
 								{t('profile.photo_remove', 'Remove photo')}
 							</button>
 						{/if}
-						<button class="btn btn-secondary" disabled={avatarBusy} onclick={closeAvatarEdit}>
+						<button
+							class="btn btn-secondary"
+							data-testid="profile-avatar-cancel-btn"
+							disabled={avatarBusy}
+							onclick={closeAvatarEdit}
+						>
 							{t('common.cancel', 'Cancel')}
 						</button>
 					</div>
@@ -463,10 +483,11 @@
 					</span>
 				</div>
 			{:else}
-				<form onsubmit={saveProfile}>
+				<form data-testid="profile-edit-form" onsubmit={saveProfile}>
 					<label>
 						<span>{t('profile.username', 'Username')}</span>
 						<input
+							data-testid="profile-username-input"
 							bind:value={username}
 							maxlength="64"
 							autocomplete="username"
@@ -483,26 +504,42 @@
 					</label>
 					<label>
 						<span>{t('profile.given_name', 'First name')}</span>
-						<input bind:value={givenName} maxlength="128" autocomplete="given-name" />
+						<input
+							data-testid="profile-given-name-input"
+							bind:value={givenName}
+							maxlength="128"
+							autocomplete="given-name"
+						/>
 					</label>
 					<label>
 						<span>{t('profile.family_name', 'Last name')}</span>
-						<input bind:value={familyName} maxlength="128" autocomplete="family-name" />
+						<input
+							data-testid="profile-family-name-input"
+							bind:value={familyName}
+							maxlength="128"
+							autocomplete="family-name"
+						/>
 					</label>
 					<label>
 						<span>{t('profile.language', 'Language')}</span>
-						<select bind:value={preferredLocale}>
-							<option value="">{t('profile.language_auto', 'Automatic')}</option>
+						<select data-testid="profile-language-select" bind:value={preferredLocale}>
+							<option value="" data-testid="profile-language-auto-option"
+								>{t('profile.language_auto', 'Automatic')}</option
+							>
 							{#each SUPPORTED_LOCALES as loc (loc)}
-								<option value={loc}>{loc}</option>
+								<option value={loc} data-testid={`profile-language-option-${loc}`}>{loc}</option>
 							{/each}
 						</select>
 					</label>
 					<label class="checkbox">
-						<input type="checkbox" bind:checked={notifyOnShare} />
+						<input
+							type="checkbox"
+							data-testid="profile-notify-on-share-checkbox"
+							bind:checked={notifyOnShare}
+						/>
 						<span>{t('profile.notify_on_share', 'Email me when someone shares with me')}</span>
 					</label>
-					<button type="submit" disabled={savingProfile}
+					<button type="submit" data-testid="profile-save-btn" disabled={savingProfile}
 						>{t('profile.save_profile', 'Save changes')}</button
 					>
 				</form>
@@ -522,11 +559,17 @@
 
 				<div class="app-pw-create">
 					<input
+						data-testid="profile-app-pw-label-input"
 						bind:value={newLabel}
 						maxlength="128"
 						placeholder={t('profile.app_pw_label_placeholder', 'Label (e.g. Thunderbird, macOS)')}
 					/>
-					<button class="btn btn-primary" disabled={creatingPw} onclick={createPw}>
+					<button
+						class="btn btn-primary"
+						data-testid="profile-app-pw-generate-btn"
+						disabled={creatingPw}
+						onclick={createPw}
+					>
 						<Icon name="user-plus" />
 						{t('profile.generate', 'Generate')}
 					</button>
@@ -542,6 +585,7 @@
 							<code>{generated.password}</code>
 							<button
 								class="btn-action"
+								data-testid="profile-app-pw-copy-btn"
 								title={t('profile.copy_to_clipboard', 'Copy to clipboard')}
 								onclick={copyGenerated}
 							>
@@ -587,6 +631,7 @@
 										{#if p.active !== false}
 											<button
 												class="btn-action btn-action--danger"
+												data-testid={`profile-app-pw-revoke-${p.id}`}
 												title={t('profile.revoke_title', 'Revoke')}
 												onclick={() => revokePw(p)}
 											>
@@ -602,7 +647,11 @@
 
 				{#if autoPasswords.length > 0}
 					<div class="app-pw-auto">
-						<button class="app-pw-auto__toggle" onclick={() => (autoExpanded = !autoExpanded)}>
+						<button
+							class="app-pw-auto__toggle"
+							data-testid="profile-app-pw-auto-toggle-btn"
+							onclick={() => (autoExpanded = !autoExpanded)}
+						>
 							<Icon name={autoExpanded ? 'chevron-down' : 'chevron-right'} />
 							<span>{t('profile.client_sessions', 'Client sessions')}</span>
 							<span class="badge badge--count">{autoPasswords.length}</span>
@@ -637,6 +686,7 @@
 												{#if p.active !== false}
 													<button
 														class="btn-action btn-action--danger"
+														data-testid={`profile-app-pw-auto-revoke-${p.id}`}
 														title={t('profile.revoke_title', 'Revoke')}
 														onclick={() => revokePw(p)}
 													>
@@ -656,22 +706,39 @@
 
 		<!-- Change password -->
 		{#if showPasswordCard}
-			<form class="card" onsubmit={savePassword}>
+			<form class="card" data-testid="profile-password-form" onsubmit={savePassword}>
 				<h2><Icon name="key" /> {t('profile.change_password', 'Change Password')}</h2>
 				<label>
 					<span>{t('profile.current_password', 'Current Password')}</span>
-					<input type="password" bind:value={currentPw} autocomplete="current-password" />
+					<input
+						type="password"
+						data-testid="profile-current-password-input"
+						bind:value={currentPw}
+						autocomplete="current-password"
+					/>
 				</label>
 				<label>
 					<span>{t('profile.new_password', 'New Password')}</span>
-					<input type="password" bind:value={newPw} minlength="8" autocomplete="new-password" />
+					<input
+						type="password"
+						data-testid="profile-new-password-input"
+						bind:value={newPw}
+						minlength="8"
+						autocomplete="new-password"
+					/>
 					<small class="muted">{t('profile.min_8_chars', 'At least 8 characters')}</small>
 				</label>
 				<label>
 					<span>{t('profile.confirm_password', 'Confirm New Password')}</span>
-					<input type="password" bind:value={confirmPw} minlength="8" autocomplete="new-password" />
+					<input
+						type="password"
+						data-testid="profile-confirm-password-input"
+						bind:value={confirmPw}
+						minlength="8"
+						autocomplete="new-password"
+					/>
 				</label>
-				<button type="submit" disabled={savingPassword}>
+				<button type="submit" data-testid="profile-update-password-btn" disabled={savingPassword}>
 					{t('profile.update_password', 'Update Password')}
 				</button>
 			</form>

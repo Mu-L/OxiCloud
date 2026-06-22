@@ -153,6 +153,7 @@
 	<div
 		class="fv"
 		role="dialog"
+		data-testid="file-viewer-dialog"
 		aria-modal="true"
 		aria-label={file.name}
 		tabindex="-1"
@@ -166,6 +167,7 @@
 						<div class="fv__zoom" role="group" aria-label={t('viewer.zoom', 'Zoom')}>
 							<button
 								class="fv__zoom-btn"
+								data-testid="file-viewer-zoom-out-btn"
 								title={t('viewer.zoom_out', 'Zoom out')}
 								aria-label={t('viewer.zoom_out', 'Zoom out')}
 								onclick={() => zoomBy(0.8)}
@@ -174,6 +176,7 @@
 							</button>
 							<button
 								class="fv__zoom-btn"
+								data-testid="file-viewer-zoom-reset-btn"
 								title={t('viewer.zoom_reset', 'Reset zoom')}
 								aria-label={t('viewer.zoom_reset', 'Reset zoom')}
 								onclick={resetZoom}
@@ -182,6 +185,7 @@
 							</button>
 							<button
 								class="fv__zoom-btn"
+								data-testid="file-viewer-zoom-in-btn"
 								title={t('viewer.zoom_in', 'Zoom in')}
 								aria-label={t('viewer.zoom_in', 'Zoom in')}
 								onclick={() => zoomBy(1.2)}
@@ -191,13 +195,18 @@
 						</div>
 					{/if}
 					{#if canEdit}
-						<button class="btn btn-primary btn-sm" onclick={() => (wopiOpen = true)}>
+						<button
+							class="btn btn-primary btn-sm"
+							data-testid="file-viewer-edit-btn"
+							onclick={() => (wopiOpen = true)}
+						>
 							<Icon name="pen" />
 							{t('files.edit', 'Edit')}
 						</button>
 					{/if}
 					<a
 						class="btn btn-secondary btn-sm"
+						data-testid="file-viewer-download-link"
 						href={fileDownloadUrl(file.id)}
 						download
 						rel="external"
@@ -207,13 +216,19 @@
 					</a>
 					<a
 						class="btn btn-secondary btn-sm"
+						data-testid="file-viewer-open-new-tab-link"
 						href={fileInlineUrl(file.id)}
 						target="_blank"
 						rel="external noreferrer"
 					>
 						<Icon name="external-link-alt" />
 					</a>
-					<button class="fv__close" aria-label={t('common.close', 'Close')} onclick={close}>
+					<button
+						class="fv__close"
+						data-testid="file-viewer-close-btn"
+						aria-label={t('common.close', 'Close')}
+						onclick={close}
+					>
 						<Icon name="times" />
 					</button>
 				</div>

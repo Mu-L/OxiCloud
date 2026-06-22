@@ -277,6 +277,7 @@
 			role="dialog"
 			aria-modal="true"
 			aria-label={t('cmdk.title', 'Command palette')}
+			data-testid="command-palette-panel"
 		>
 			<div class="cmdk__search">
 				<Icon name="search" />
@@ -288,6 +289,7 @@
 					placeholder={t('cmdk.placeholder', 'Type a command or search…')}
 					autocomplete="off"
 					autofocus
+					data-testid="command-palette-input"
 				/>
 			</div>
 			{#if filtered.length === 0}
@@ -301,6 +303,7 @@
 								class:active={i === index}
 								role="option"
 								aria-selected={i === index}
+								data-testid={`command-palette-${cmd.id}-item`}
 								onmouseenter={() => (index = i)}
 								onclick={cmd.run}
 							>

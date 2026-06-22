@@ -284,12 +284,12 @@ api_empty_trash() {
 wipe_home_folder() {
     [[ -n "${HOME_FOLDER_ID:-}" ]] \
         || fail "wipe_home_folder: HOME_FOLDER_ID is unset — call resolve_home_folder_id first"
-    # `/listing` (NOT `/contents`) is the endpoint that returns the
-    # `.files[]` / `.folders[]` arrays we iterate here — same one
-    # `tests/api/storage_cleanup_check.sh` uses for the equivalent
-    # full-tree wipe before its disk-audit step.
+    # `/resources` (the `/listing` and `/contents` endpoints were removed)
+    # returns `{ items: [{ resource_type, resource }] }`; split the items by
+    # `resource_type` to iterate child files and folders. `limit=200` covers
+    # any test home folder in one page.
     local listing
-    listing=$(api_curl "$base_url/api/folders/$HOME_FOLDER_ID/listing")
+    listing=$(api_curl "$base_url/api/folders/$HOME_FOLDER_ID/resources?limit=200")
     # Delete every direct child file (recursive contents go with the
     # file's row). Errors are swallowed because the test that called
     # us doesn't care WHY a leftover was unreachable — it just wants
@@ -297,12 +297,12 @@ wipe_home_folder() {
     while IFS= read -r fid; do
         [[ -z "$fid" || "$fid" == "null" ]] && continue
         api_curl -X DELETE "$base_url/api/files/$fid" > /dev/null 2>&1 || true
-    done < <(jq -r '.files[]?.id   // empty' <<< "$listing")
+    done < <(jq -r '.items[]? | select(.resource_type == "file")   | .resource.id // empty' <<< "$listing")
     # Then every direct child folder (recursive subtree goes with).
     while IFS= read -r fid; do
         [[ -z "$fid" || "$fid" == "null" ]] && continue
         api_curl -X DELETE "$base_url/api/folders/$fid" > /dev/null 2>&1 || true
-    done < <(jq -r '.folders[]?.id // empty' <<< "$listing")
+    done < <(jq -r '.items[]? | select(.resource_type == "folder") | .resource.id // empty' <<< "$listing")
     # Finally permanently delete everything in trash so the row-level
     # `is_trashed` orphans the upstream tests left behind don't make
     # *us* leak chunks/blobs into storage_cleanup_check's audit.

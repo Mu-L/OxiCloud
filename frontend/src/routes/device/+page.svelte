@@ -123,11 +123,12 @@
 		<h1>{t('device.title', 'Device verification')}</h1>
 
 		{#if step === 'code'}
-			<form onsubmit={lookup}>
+			<form data-testid="device-code-form" onsubmit={lookup}>
 				<label class="device__field">
 					<span>{t('device.enter_code', 'Enter the code shown on your device')}</span>
 					<input
 						bind:this={codeInput}
+						data-testid="device-code-input"
 						value={code}
 						oninput={onCodeInput}
 						autocomplete="off"
@@ -137,7 +138,9 @@
 						maxlength={FULL_CODE_LENGTH}
 					/>
 				</label>
-				<button type="submit" disabled={!code}>{t('device.continue', 'Continue')}</button>
+				<button type="submit" data-testid="device-continue-btn" disabled={!code}
+					>{t('device.continue', 'Continue')}</button
+				>
 			</form>
 		{:else if step === 'loading'}
 			<p>{t('common.loading', 'Loading…')}</p>
@@ -149,10 +152,20 @@
 				<dd>{info?.scopes || 'all'}</dd>
 			</dl>
 			<div class="device__actions">
-				<button class="device__deny" disabled={busy} onclick={() => decide('deny')}>
+				<button
+					class="device__deny"
+					data-testid="device-deny-btn"
+					disabled={busy}
+					onclick={() => decide('deny')}
+				>
 					{t('device.deny', 'Deny')}
 				</button>
-				<button class="device__approve" disabled={busy} onclick={() => decide('approve')}>
+				<button
+					class="device__approve"
+					data-testid="device-approve-btn"
+					disabled={busy}
+					onclick={() => decide('approve')}
+				>
 					{t('device.approve', 'Approve')}
 				</button>
 			</div>
@@ -164,7 +177,9 @@
 			<p>{t('device.denied', 'Device access denied.')}</p>
 		{:else if step === 'error'}
 			<p class="device__error" role="alert">{errorText}</p>
-			<button onclick={backToCode}>{t('common.retry', 'Try again')}</button>
+			<button data-testid="device-retry-btn" onclick={backToCode}
+				>{t('common.retry', 'Try again')}</button
+			>
 		{/if}
 	</div>
 </main>

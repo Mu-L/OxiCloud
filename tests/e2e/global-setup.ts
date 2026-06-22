@@ -1,18 +1,12 @@
-import { TEST_ADMIN } from './scenarios/helpers';
+import { seedAdmin } from './scenarios/helpers';
 
+/**
+ * Legacy webServer flow only: seed the admin against the single server
+ * Playwright started at :8087. The container flow seeds per-worker inside
+ * the `stack` fixture instead, and does not use this global setup.
+ */
 export default async function globalSetup() {
-  const res = await fetch('http://localhost:8087/api/setup', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      username: TEST_ADMIN.username,
-      email:    TEST_ADMIN.email,
-      password: TEST_ADMIN.password,
-    }),
-  });
-
-  // 409 = admin already exists (idempotent across retries)
-  if (!res.ok && res.status !== 409) {
-    throw new Error(`Admin setup failed: ${res.status} ${await res.text()}`);
-  }
+  // 127.0.0.1, not `localhost`: matches the server's IPv4 bind; on CI runners
+  // `localhost` resolves to ::1 (IPv6) first and the seed request is refused.
+  await seedAdmin('http://127.0.0.1:8087');
 }

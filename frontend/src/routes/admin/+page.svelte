@@ -914,27 +914,57 @@
 	<h1>{t('admin.title', 'Admin')}</h1>
 
 	<div class="tabs" role="tablist">
-		<button role="tab" aria-selected={tab === 'dashboard'} onclick={() => (tab = 'dashboard')}>
+		<button
+			role="tab"
+			data-testid="admin-dashboard-tab"
+			aria-selected={tab === 'dashboard'}
+			onclick={() => (tab = 'dashboard')}
+		>
 			<Icon name="chart-pie" />
 			{t('admin.dashboard', 'Dashboard')}
 		</button>
-		<button role="tab" aria-selected={tab === 'users'} onclick={() => (tab = 'users')}>
+		<button
+			role="tab"
+			data-testid="admin-users-tab"
+			aria-selected={tab === 'users'}
+			onclick={() => (tab = 'users')}
+		>
 			<Icon name="users" />
 			{t('admin.users', 'Users')}
 		</button>
-		<button role="tab" aria-selected={tab === 'oidc'} onclick={() => (tab = 'oidc')}>
+		<button
+			role="tab"
+			data-testid="admin-oidc-tab"
+			aria-selected={tab === 'oidc'}
+			onclick={() => (tab = 'oidc')}
+		>
 			<Icon name="key" />
 			{t('admin.oidc', 'OIDC / SSO')}
 		</button>
-		<button role="tab" aria-selected={tab === 'storage'} onclick={() => (tab = 'storage')}>
+		<button
+			role="tab"
+			data-testid="admin-storage-tab"
+			aria-selected={tab === 'storage'}
+			onclick={() => (tab = 'storage')}
+		>
 			<Icon name="database" />
 			{t('admin.storage_tab', 'Storage')}
 		</button>
-		<button role="tab" aria-selected={tab === 'smtp'} onclick={() => (tab = 'smtp')}>
+		<button
+			role="tab"
+			data-testid="admin-smtp-tab"
+			aria-selected={tab === 'smtp'}
+			onclick={() => (tab = 'smtp')}
+		>
 			<Icon name="envelope" />
 			{t('admin.smtp', 'Email (SMTP)')}
 		</button>
-		<button role="tab" aria-selected={tab === 'plugins'} onclick={() => (tab = 'plugins')}>
+		<button
+			role="tab"
+			data-testid="admin-plugins-tab"
+			aria-selected={tab === 'plugins'}
+			onclick={() => (tab = 'plugins')}
+		>
 			<Icon name="layer-group" />
 			{t('admin.plugins', 'Plugins')}
 		</button>
@@ -1031,6 +1061,7 @@
 					<label class="checkbox">
 						<input
 							type="checkbox"
+							data-testid="admin-dashboard-registration-checkbox"
 							checked={dashboard.registration_enabled}
 							onchange={(e) => toggleRegistration(e.currentTarget.checked)}
 						/>
@@ -1106,9 +1137,17 @@
 			{#if !oidc}
 				<p class="status">{t('common.loading', 'Loading…')}</p>
 			{:else}
-				<form class="form" onsubmit={(e) => (e.preventDefault(), doSaveOidc())}>
+				<form
+					class="form"
+					data-testid="admin-oidc-form"
+					onsubmit={(e) => (e.preventDefault(), doSaveOidc())}
+				>
 					<label class="checkbox">
-						<input type="checkbox" bind:checked={oidc.enabled} />
+						<input
+							type="checkbox"
+							data-testid="admin-oidc-enabled-checkbox"
+							bind:checked={oidc.enabled}
+						/>
 						<span>{t('admin.oidc_enabled', 'Enable OIDC login')}</span>
 					</label>
 					<label
@@ -1119,11 +1158,17 @@
 						>
 						<input
 							bind:value={oidc.issuer_url}
+							data-testid="admin-oidc-issuer-input"
 							placeholder="https://idp.example.com"
 							disabled={isEnvLocked(oidc.env_overrides, 'issuer_url')}
 						/></label
 					>
-					<button type="button" class="btn btn-secondary" onclick={runOidcTest}>
+					<button
+						type="button"
+						class="btn btn-secondary"
+						data-testid="admin-oidc-discover-btn"
+						onclick={runOidcTest}
+					>
 						<Icon name="search" />
 						{t('admin.oidc_discover', 'Test / discover')}
 					</button>
@@ -1155,6 +1200,7 @@
 						>
 						<input
 							bind:value={oidc.client_id}
+							data-testid="admin-oidc-client-id-input"
 							disabled={isEnvLocked(oidc.env_overrides, 'client_id')}
 						/></label
 					>
@@ -1166,6 +1212,7 @@
 						>
 						<input
 							type="password"
+							data-testid="admin-oidc-client-secret-input"
 							bind:value={oidc.client_secret}
 							disabled={isEnvLocked(oidc.env_overrides, 'client_secret')}
 							placeholder={oidc.client_secret_set
@@ -1187,6 +1234,7 @@
 						>
 						<input
 							bind:value={oidc.scopes}
+							data-testid="admin-oidc-scopes-input"
 							placeholder="openid profile email"
 							disabled={isEnvLocked(oidc.env_overrides, 'scopes')}
 						/></label
@@ -1199,6 +1247,7 @@
 						>
 						<input
 							bind:value={oidc.provider_name}
+							data-testid="admin-oidc-provider-name-input"
 							disabled={isEnvLocked(oidc.env_overrides, 'provider_name')}
 						/></label
 					>
@@ -1210,15 +1259,24 @@
 						>
 						<input
 							bind:value={oidc.admin_groups}
+							data-testid="admin-oidc-admin-groups-input"
 							disabled={isEnvLocked(oidc.env_overrides, 'admin_groups')}
 						/></label
 					>
 					<label class="checkbox">
-						<input type="checkbox" bind:checked={oidc.auto_provision} />
+						<input
+							type="checkbox"
+							data-testid="admin-oidc-auto-provision-checkbox"
+							bind:checked={oidc.auto_provision}
+						/>
 						<span>{t('admin.oidc_auto_provision', 'Auto-provision users on first login')}</span>
 					</label>
 					<label class="checkbox">
-						<input type="checkbox" bind:checked={oidc.disable_password_login} />
+						<input
+							type="checkbox"
+							data-testid="admin-oidc-disable-pw-checkbox"
+							bind:checked={oidc.disable_password_login}
+						/>
 						<span>{t('admin.oidc_disable_pw', 'Disable password login (OIDC only)')}</span>
 					</label>
 					{#if oidc.callback_url}
@@ -1227,6 +1285,7 @@
 							<button
 								type="button"
 								class="btn btn-sm btn-secondary"
+								data-testid="admin-oidc-callback-copy-btn"
 								onclick={() => copyText(oidc?.callback_url ?? '')}
 							>
 								<Icon name="copy" />
@@ -1237,7 +1296,12 @@
 					{#if oidcMsg}<p class={oidcMsg.ok ? 'status--ok' : 'status--error'}>
 							{oidcMsg.text}
 						</p>{/if}
-					<button class="btn btn-primary" type="submit" disabled={oidcSaving}>
+					<button
+						class="btn btn-primary"
+						type="submit"
+						data-testid="admin-oidc-save-btn"
+						disabled={oidcSaving}
+					>
 						{t('common.save', 'Save')}
 					</button>
 				</form>
@@ -1249,10 +1313,14 @@
 			{#if !storage}
 				<p class="status">{t('common.loading', 'Loading…')}</p>
 			{:else}
-				<form class="form" onsubmit={(e) => (e.preventDefault(), doSaveStorage())}>
+				<form
+					class="form"
+					data-testid="admin-storage-form"
+					onsubmit={(e) => (e.preventDefault(), doSaveStorage())}
+				>
 					<label
 						><span>{t('admin.storage_backend', 'Backend')}</span>
-						<select bind:value={sForm.backend}>
+						<select bind:value={sForm.backend} data-testid="admin-storage-backend-select">
 							<option value="local">local</option>
 							<option value="s3">S3</option>
 						</select></label
@@ -1260,7 +1328,11 @@
 					{#if sForm.backend === 's3'}
 						<label
 							><span>{t('admin.storage_preset', 'Preset')}</span>
-							<select bind:value={sForm.preset} onchange={applyPreset}>
+							<select
+								bind:value={sForm.preset}
+								data-testid="admin-storage-preset-select"
+								onchange={applyPreset}
+							>
 								{#each Object.keys(STORAGE_PRESETS) as p (p)}<option value={p}>{p}</option>{/each}
 							</select></label
 						>
@@ -1272,6 +1344,7 @@
 							>
 							<input
 								bind:value={sForm.endpoint}
+								data-testid="admin-storage-endpoint-input"
 								disabled={isEnvLocked(storage.env_overrides, 's3_endpoint_url')}
 							/></label
 						>
@@ -1283,6 +1356,7 @@
 							>
 							<input
 								bind:value={sForm.bucket}
+								data-testid="admin-storage-bucket-input"
 								disabled={isEnvLocked(storage.env_overrides, 's3_bucket')}
 							/></label
 						>
@@ -1294,6 +1368,7 @@
 							>
 							<input
 								bind:value={sForm.region}
+								data-testid="admin-storage-region-input"
 								disabled={isEnvLocked(storage.env_overrides, 's3_region')}
 							/></label
 						>
@@ -1305,6 +1380,7 @@
 							>
 							<input
 								bind:value={sForm.accessKey}
+								data-testid="admin-storage-access-key-input"
 								disabled={isEnvLocked(storage.env_overrides, 's3_access_key')}
 								placeholder={storage.s3_access_key_set
 									? t('admin.unchanged', 'Leave blank to keep current')
@@ -1319,6 +1395,7 @@
 							>
 							<input
 								type="password"
+								data-testid="admin-storage-secret-key-input"
 								bind:value={sForm.secretKey}
 								disabled={isEnvLocked(storage.env_overrides, 's3_secret_key')}
 								placeholder={storage.s3_secret_key_set
@@ -1327,7 +1404,11 @@
 							/></label
 						>
 						<label class="checkbox">
-							<input type="checkbox" bind:checked={sForm.pathStyle} />
+							<input
+								type="checkbox"
+								data-testid="admin-storage-path-style-checkbox"
+								bind:checked={sForm.pathStyle}
+							/>
 							<span>{t('admin.storage_path_style', 'Force path-style URLs')}</span>
 						</label>
 					{/if}
@@ -1335,13 +1416,17 @@
 							{storageMsg.text}
 						</p>{/if}
 					<div class="smtp-test">
-						<button class="btn btn-primary" type="submit" disabled={storageBusy}
-							>{t('common.save', 'Save')}</button
+						<button
+							class="btn btn-primary"
+							type="submit"
+							data-testid="admin-storage-save-btn"
+							disabled={storageBusy}>{t('common.save', 'Save')}</button
 						>
 						{#if sForm.backend === 's3'}
 							<button
 								type="button"
 								class="btn btn-secondary"
+								data-testid="admin-storage-test-btn"
 								disabled={storageBusy}
 								onclick={doTestStorage}
 							>
@@ -1401,30 +1486,43 @@
 				<div class="smtp-test">
 					<!-- Start: only when no migration is active (running/paused) or completed. -->
 					{#if migration.status !== 'running' && migration.status !== 'paused' && migration.status !== 'completed'}
-						<button class="btn btn-primary" onclick={() => doMigration('start')}
-							>{t('admin.mig_start', 'Start')}</button
+						<button
+							class="btn btn-primary"
+							data-testid="admin-migration-start-btn"
+							onclick={() => doMigration('start')}>{t('admin.mig_start', 'Start')}</button
 						>
 					{/if}
 					{#if migration.status === 'running'}
-						<button class="btn btn-secondary" onclick={() => doMigration('pause')}
-							>{t('admin.mig_pause', 'Pause')}</button
+						<button
+							class="btn btn-secondary"
+							data-testid="admin-migration-pause-btn"
+							onclick={() => doMigration('pause')}>{t('admin.mig_pause', 'Pause')}</button
 						>
 					{/if}
 					{#if migration.status === 'paused'}
-						<button class="btn btn-primary" onclick={() => doMigration('resume')}
-							>{t('admin.mig_resume', 'Resume')}</button
+						<button
+							class="btn btn-primary"
+							data-testid="admin-migration-resume-btn"
+							onclick={() => doMigration('resume')}>{t('admin.mig_resume', 'Resume')}</button
 						>
 					{/if}
 					<!-- Verify + Finalize: only once the copy phase has completed. -->
 					{#if migration.status === 'completed'}
-						<button class="btn btn-secondary" disabled={verifying} onclick={doVerify}>
+						<button
+							class="btn btn-secondary"
+							data-testid="admin-migration-verify-btn"
+							disabled={verifying}
+							onclick={doVerify}
+						>
 							<Icon name="check-double" />
 							{verifying
 								? t('admin.mig_verifying', 'Verifying…')
 								: t('admin.mig_verify', 'Verify integrity')}
 						</button>
-						<button class="btn btn-secondary" onclick={() => doMigration('complete')}
-							>{t('admin.mig_complete', 'Finalize')}</button
+						<button
+							class="btn btn-secondary"
+							data-testid="admin-migration-complete-btn"
+							onclick={() => doMigration('complete')}>{t('admin.mig_complete', 'Finalize')}</button
 						>
 					{/if}
 				</div>
@@ -1540,10 +1638,16 @@
 			<div class="smtp-test">
 				<input
 					type="email"
+					data-testid="admin-smtp-to-input"
 					bind:value={smtpTo}
 					placeholder={t('admin.smtp_to', 'recipient@example.com')}
 				/>
-				<button class="btn btn-primary" disabled={smtpSending} onclick={runSmtpTest}>
+				<button
+					class="btn btn-primary"
+					data-testid="admin-smtp-send-btn"
+					disabled={smtpSending}
+					onclick={runSmtpTest}
+				>
 					<Icon name="paper-plane" />
 					{smtpSending ? t('admin.smtp_sending', 'Sending…') : t('admin.smtp_send', 'Send')}
 				</button>
@@ -1567,7 +1671,11 @@
 		</div>
 	{:else if tab === 'users'}
 		<div class="bar">
-			<button class="btn btn--primary" onclick={() => (createOpen = true)}>
+			<button
+				class="btn btn--primary"
+				data-testid="admin-users-create-btn"
+				onclick={() => (createOpen = true)}
+			>
 				<Icon name="user-plus" />
 				{t('admin.create_user', 'Create user')}
 			</button>
@@ -1644,6 +1752,7 @@
 							<td class="actions">
 								<button
 									class="icon-btn"
+									data-testid={`admin-user-quota-${u.id}`}
 									title={t('admin.edit_quota_title', 'Edit quota')}
 									aria-label={t('admin.edit_quota_title', 'Edit quota')}
 									onclick={() => openQuota(u)}
@@ -1653,6 +1762,7 @@
 								{#if !isOidcUser(u)}
 									<button
 										class="icon-btn"
+										data-testid={`admin-user-reset-password-${u.id}`}
 										title={t('admin.reset_password_title', 'Reset password')}
 										aria-label={t('admin.reset_password_title', 'Reset password')}
 										onclick={() => openReset(u)}
@@ -1662,6 +1772,7 @@
 								{/if}
 								<button
 									class="icon-btn"
+									data-testid={`admin-user-toggle-role-${u.id}`}
 									title={t('admin.toggle_role_title', 'Toggle admin role')}
 									aria-label={t('admin.toggle_role_title', 'Toggle admin role')}
 									disabled={isSelf(u)}
@@ -1671,6 +1782,7 @@
 								</button>
 								<button
 									class="icon-btn {u.active ? 'icon-btn--danger' : 'icon-btn--success'}"
+									data-testid={`admin-user-toggle-active-${u.id}`}
 									title={u.active
 										? t('admin.deactivate_title', 'Deactivate')
 										: t('admin.activate_title', 'Activate')}
@@ -1684,6 +1796,7 @@
 								</button>
 								<button
 									class="icon-btn icon-btn--danger"
+									data-testid={`admin-user-delete-${u.id}`}
 									title={t('admin.delete_title', 'Delete user')}
 									aria-label={t('admin.delete_title', 'Delete user')}
 									disabled={isSelf(u)}
@@ -1697,10 +1810,16 @@
 				</tbody>
 			</table>
 			<div class="pager">
-				<button class="btn" disabled={pageIndex === 0} onclick={() => changePage(-1)}>‹</button>
+				<button
+					class="btn"
+					data-testid="admin-users-pager-prev-btn"
+					disabled={pageIndex === 0}
+					onclick={() => changePage(-1)}>‹</button
+				>
 				<span>{pageIndex + 1} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
 				<button
 					class="btn"
+					data-testid="admin-users-pager-next-btn"
 					disabled={(pageIndex + 1) * PAGE_SIZE >= total}
 					onclick={() => changePage(1)}>›</button
 				>
@@ -1725,6 +1844,7 @@
 					: t('admin.plugins_upload', 'Upload .zip')}
 				<input
 					type="file"
+					data-testid="admin-plugins-install-input"
 					accept=".zip,application/zip"
 					hidden
 					disabled={installing}
@@ -1775,6 +1895,7 @@
 							<td class="actions">
 								<button
 									class="icon-btn"
+									data-testid={`admin-plugin-details-${p.id}`}
 									title={t('admin.plugins_details', 'Logs & details')}
 									aria-label={t('admin.plugins_details', 'Logs & details')}
 									onclick={() => openLogs(p)}
@@ -1783,6 +1904,7 @@
 								</button>
 								<button
 									class="icon-btn {p.enabled ? '' : 'icon-btn--success'}"
+									data-testid={`admin-plugin-toggle-${p.id}`}
 									title={p.enabled ? t('admin.disable', 'Disable') : t('admin.enable', 'Enable')}
 									aria-label={p.enabled
 										? t('admin.disable', 'Disable')
@@ -1793,6 +1915,7 @@
 								</button>
 								<button
 									class="icon-btn icon-btn--danger"
+									data-testid={`admin-plugin-delete-${p.id}`}
 									title={t('common.delete', 'Delete')}
 									aria-label={t('common.delete', 'Delete')}
 									onclick={() => removePlugin(p)}
@@ -1809,10 +1932,20 @@
 </main>
 
 <Modal bind:open={createOpen} title={t('admin.create_user', 'Create user')}>
-	<form id="create-user-form" onsubmit={submitCreate} class="form">
+	<form
+		id="create-user-form"
+		data-testid="admin-create-user-form"
+		onsubmit={submitCreate}
+		class="form"
+	>
 		<label
 			><span>{t('admin.username', 'Username')}</span>
-			<input bind:value={newUser.username} minlength="3" required /></label
+			<input
+				bind:value={newUser.username}
+				data-testid="admin-create-user-username-input"
+				minlength="3"
+				required
+			/></label
 		>
 		<label
 			><span
@@ -1821,17 +1954,24 @@
 			>
 			<input
 				type="email"
+				data-testid="admin-create-user-email-input"
 				bind:value={newUser.email}
 				placeholder={t('admin.email_auto', 'Auto-generated if left blank')}
 			/></label
 		>
 		<label
 			><span>{t('admin.password', 'Password')}</span>
-			<input type="password" bind:value={newUser.password} minlength="8" required /></label
+			<input
+				type="password"
+				data-testid="admin-create-user-password-input"
+				bind:value={newUser.password}
+				minlength="8"
+				required
+			/></label
 		>
 		<label
 			><span>{t('admin.role', 'Role')}</span>
-			<select bind:value={newUser.role}>
+			<select bind:value={newUser.role} data-testid="admin-create-user-role-select">
 				<option value="user">user</option>
 				<option value="admin">admin</option>
 			</select></label
@@ -1839,8 +1979,14 @@
 		<label
 			><span>{t('admin.quota', 'Quota')}</span>
 			<div class="quota-input">
-				<input type="number" min="0" step="0.1" bind:value={newUser.quotaValue} />
-				<select bind:value={newUser.quotaUnit}>
+				<input
+					type="number"
+					data-testid="admin-create-user-quota-input"
+					min="0"
+					step="0.1"
+					bind:value={newUser.quotaValue}
+				/>
+				<select bind:value={newUser.quotaUnit} data-testid="admin-create-user-quota-unit-select">
 					{#each QUOTA_UNITS as unit (unit.label)}<option value={unit.value}>{unit.label}</option
 						>{/each}
 				</select>
@@ -1850,8 +1996,18 @@
 		{#if createError}<p class="status--error">{createError}</p>{/if}
 	</form>
 	{#snippet footer()}
-		<button class="btn" onclick={() => (createOpen = false)}>{t('common.cancel', 'Cancel')}</button>
-		<button class="btn btn--primary" type="submit" form="create-user-form" disabled={creating}>
+		<button
+			class="btn"
+			data-testid="admin-create-user-cancel-btn"
+			onclick={() => (createOpen = false)}>{t('common.cancel', 'Cancel')}</button
+		>
+		<button
+			class="btn btn--primary"
+			type="submit"
+			form="create-user-form"
+			data-testid="admin-create-user-submit-btn"
+			disabled={creating}
+		>
 			{creating ? t('admin.creating', 'Creating…') : t('common.create', 'Create')}
 		</button>
 	{/snippet}
@@ -1867,6 +2023,7 @@
 		<form
 			id="quota-form"
 			class="form"
+			data-testid="admin-quota-form"
 			onsubmit={(e) => {
 				e.preventDefault();
 				void saveQuota();
@@ -1878,8 +2035,14 @@
 			<label
 				><span>{t('admin.quota', 'Quota')}</span>
 				<div class="quota-input">
-					<input type="number" min="0" step="0.1" bind:value={quotaModal.value} />
-					<select bind:value={quotaModal.unit}>
+					<input
+						type="number"
+						data-testid="admin-quota-value-input"
+						min="0"
+						step="0.1"
+						bind:value={quotaModal.value}
+					/>
+					<select bind:value={quotaModal.unit} data-testid="admin-quota-unit-select">
 						{#each QUOTA_UNITS as unit (unit.label)}<option value={unit.value}>{unit.label}</option
 							>{/each}
 					</select>
@@ -1889,8 +2052,15 @@
 		</form>
 	{/if}
 	{#snippet footer()}
-		<button class="btn" onclick={() => (quotaModal = null)}>{t('common.cancel', 'Cancel')}</button>
-		<button class="btn btn--primary" type="submit" form="quota-form">
+		<button class="btn" data-testid="admin-quota-cancel-btn" onclick={() => (quotaModal = null)}
+			>{t('common.cancel', 'Cancel')}</button
+		>
+		<button
+			class="btn btn--primary"
+			type="submit"
+			form="quota-form"
+			data-testid="admin-quota-save-btn"
+		>
 			{t('common.save', 'Save')}
 		</button>
 	{/snippet}
@@ -1903,20 +2073,41 @@
 	onclose={() => (resetModal = null)}
 >
 	{#if resetModal}
-		<form id="reset-pw-form" class="form" onsubmit={submitReset}>
+		<form
+			id="reset-pw-form"
+			class="form"
+			data-testid="admin-reset-password-form"
+			onsubmit={submitReset}
+		>
 			<p class="muted">
 				{t('admin.reset_pw_for', 'New password for')} <strong>{resetModal.username}</strong>
 			</p>
 			<label
 				><span>{t('admin.new_password', 'New password')}</span>
-				<input type="password" bind:value={resetPassword} minlength="8" required /></label
+				<input
+					type="password"
+					data-testid="admin-reset-password-input"
+					bind:value={resetPassword}
+					minlength="8"
+					required
+				/></label
 			>
 			{#if resetError}<p class="status--error">{resetError}</p>{/if}
 		</form>
 	{/if}
 	{#snippet footer()}
-		<button class="btn" onclick={() => (resetModal = null)}>{t('common.cancel', 'Cancel')}</button>
-		<button class="btn btn--primary" type="submit" form="reset-pw-form" disabled={resetting}>
+		<button
+			class="btn"
+			data-testid="admin-reset-password-cancel-btn"
+			onclick={() => (resetModal = null)}>{t('common.cancel', 'Cancel')}</button
+		>
+		<button
+			class="btn btn--primary"
+			type="submit"
+			form="reset-pw-form"
+			data-testid="admin-reset-password-submit-btn"
+			disabled={resetting}
+		>
 			{resetting ? t('admin.resetting', 'Resetting…') : t('admin.reset_btn', 'Reset')}
 		</button>
 	{/snippet}
@@ -1930,9 +2121,14 @@
 >
 	<p>{confirmState?.message}</p>
 	{#snippet footer()}
-		<button class="btn" onclick={() => resolveConfirm(false)}>{t('common.cancel', 'Cancel')}</button
+		<button class="btn" data-testid="admin-confirm-cancel-btn" onclick={() => resolveConfirm(false)}
+			>{t('common.cancel', 'Cancel')}</button
 		>
-		<button class="btn btn--primary" onclick={() => resolveConfirm(true)}>
+		<button
+			class="btn btn--primary"
+			data-testid="admin-confirm-ok-btn"
+			onclick={() => resolveConfirm(true)}
+		>
 			{t('common.confirm', 'Confirm')}
 		</button>
 	{/snippet}
@@ -1972,25 +2168,43 @@
 	{/if}
 
 	{#if retention}
-		<form class="form retention-form" onsubmit={(e) => (e.preventDefault(), saveRetention())}>
+		<form
+			class="form retention-form"
+			data-testid="admin-plugin-retention-form"
+			onsubmit={(e) => (e.preventDefault(), saveRetention())}
+		>
 			<h3>{t('admin.plugins_retention', 'Log retention')}</h3>
 			<label
 				><span>{t('admin.plugins_retention_days', 'Keep for (days)')}</span>
-				<input type="number" min="0" bind:value={retentionDays} /></label
+				<input
+					type="number"
+					data-testid="admin-plugin-retention-days-input"
+					min="0"
+					bind:value={retentionDays}
+				/></label
 			>
 			<label
 				><span>{t('admin.plugins_retention_max', 'Max size (MB)')}</span>
-				<input type="number" min="0" bind:value={retentionMb} /></label
+				<input
+					type="number"
+					data-testid="admin-plugin-retention-max-input"
+					min="0"
+					bind:value={retentionMb}
+				/></label
 			>
 			{#if retentionMsg}<p class="muted">{retentionMsg}</p>{/if}
-			<button class="btn btn-secondary" type="submit"
+			<button class="btn btn-secondary" type="submit" data-testid="admin-plugin-retention-save-btn"
 				>{t('admin.plugins_retention_save', 'Save retention')}</button
 			>
 		</form>
 	{/if}
 
 	<div class="logs-toolbar">
-		<select bind:value={logsLevel} onchange={reloadLogsFromStart}>
+		<select
+			bind:value={logsLevel}
+			data-testid="admin-plugin-logs-level-select"
+			onchange={reloadLogsFromStart}
+		>
 			<option value="">{t('admin.logs_all', 'All levels')}</option>
 			<option value="info">info</option>
 			<option value="warn">warn</option>
@@ -1998,14 +2212,22 @@
 		</select>
 		<input
 			placeholder={t('admin.logs_search', 'Search…')}
+			data-testid="admin-plugin-logs-search-input"
 			bind:value={logsSearch}
 			onkeydown={(e) => e.key === 'Enter' && reloadLogsFromStart()}
 		/>
-		<button class="btn btn-secondary" onclick={reloadLogsFromStart}
-			>{t('common.search', 'Search')}</button
+		<button
+			class="btn btn-secondary"
+			data-testid="admin-plugin-logs-search-btn"
+			onclick={reloadLogsFromStart}>{t('common.search', 'Search')}</button
 		>
 		<label class="live-toggle">
-			<input type="checkbox" bind:checked={logsLive} onchange={toggleLive} />
+			<input
+				type="checkbox"
+				data-testid="admin-plugin-logs-live-checkbox"
+				bind:checked={logsLive}
+				onchange={toggleLive}
+			/>
 			<span>{t('admin.logs_live', 'Live')}</span>
 		</label>
 	</div>
@@ -2044,7 +2266,12 @@
 		</div>
 	{/if}
 	<div class="pager logs-pager">
-		<button class="btn" disabled={logsPage === 0} onclick={logsPrev}>‹</button>
+		<button
+			class="btn"
+			data-testid="admin-plugin-logs-pager-prev-btn"
+			disabled={logsPage === 0}
+			onclick={logsPrev}>‹</button
+		>
 		<span>
 			{#if logsTotal === 0}
 				{t('admin.logs_empty', 'No log entries.')}
@@ -2060,15 +2287,18 @@
 				)}
 			{/if}
 		</span>
-		<button class="btn" disabled={(logsPage + 1) * LOGS_PAGE_SIZE >= logsTotal} onclick={logsNext}
-			>›</button
+		<button
+			class="btn"
+			data-testid="admin-plugin-logs-pager-next-btn"
+			disabled={(logsPage + 1) * LOGS_PAGE_SIZE >= logsTotal}
+			onclick={logsNext}>›</button
 		>
 	</div>
 	{#snippet footer()}
-		<button class="btn btn-danger" onclick={purgeLogs}
+		<button class="btn btn-danger" data-testid="admin-plugin-logs-clear-btn" onclick={purgeLogs}
 			>{t('admin.plugins_clear_logs', 'Clear logs')}</button
 		>
-		<button class="btn btn-secondary" onclick={closeLogs}>
+		<button class="btn btn-secondary" data-testid="admin-plugin-logs-close-btn" onclick={closeLogs}>
 			{t('common.close', 'Close')}
 		</button>
 	{/snippet}

@@ -53,6 +53,7 @@
 				{#if c.opts.message}<p class="dlg-msg">{c.opts.message}</p>{/if}
 				<input
 					class="dlg-input"
+					data-testid="dialog-host-prompt-input"
 					type="text"
 					bind:this={inputEl}
 					bind:value
@@ -70,11 +71,22 @@
 		{/if}
 
 		{#snippet footer()}
-			<button class="btn btn-secondary" disabled={dialogs.busy} onclick={() => dialogs.cancel()}>
+			<button
+				class="btn btn-secondary"
+				data-testid="dialog-host-cancel-btn"
+				disabled={dialogs.busy}
+				onclick={() => dialogs.cancel()}
+			>
 				{c.opts.cancelText ?? t('common.cancel', 'Cancel')}
 			</button>
 			{#if c.kind === 'prompt'}
-				<button class="btn btn-primary" type="submit" form="dialog-form" disabled={dialogs.busy}>
+				<button
+					class="btn btn-primary"
+					data-testid="dialog-host-submit-btn"
+					type="submit"
+					form="dialog-form"
+					disabled={dialogs.busy}
+				>
 					{dialogs.busy
 						? t('common.loading', 'Loading…')
 						: (c.opts.confirmText ?? t('common.ok', 'OK'))}
@@ -82,6 +94,7 @@
 			{:else}
 				<button
 					class="btn {c.opts.danger ? 'btn-danger' : 'btn-primary'}"
+					data-testid="dialog-host-confirm-btn"
 					disabled={dialogs.busy}
 					onclick={() => dialogs.resolve(true)}
 				>

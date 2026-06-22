@@ -328,6 +328,7 @@
 			class:active={tab === 'moments'}
 			role="tab"
 			aria-selected={tab === 'moments'}
+			data-testid="photos-tab-moments"
 			onclick={() => (tab = 'moments')}
 		>
 			{t('photos.tab_moments', 'Moments')}
@@ -337,6 +338,7 @@
 			class:active={tab === 'places'}
 			role="tab"
 			aria-selected={tab === 'places'}
+			data-testid="photos-tab-places"
 			onclick={() => (tab = 'places')}
 		>
 			{t('photos.tab_places', 'Places')}
@@ -347,6 +349,7 @@
 				class:active={tab === 'people'}
 				role="tab"
 				aria-selected={tab === 'people'}
+				data-testid="photos-tab-people"
 				onclick={() => (tab = 'people')}
 			>
 				{t('photos.tab_people', 'People')}
@@ -370,6 +373,7 @@
 				class:active={layoutMode === 'square'}
 				title={t('photos.layout_square', 'Grid')}
 				aria-label={t('photos.layout_square', 'Grid')}
+				data-testid="photos-layout-square-btn"
 				onclick={() => setLayoutMode('square')}><Icon name="th" /></button
 			>
 			<button
@@ -377,18 +381,25 @@
 				class:active={layoutMode === 'justified'}
 				title={t('photos.layout_justified', 'Justified')}
 				aria-label={t('photos.layout_justified', 'Justified')}
+				data-testid="photos-layout-justified-btn"
 				onclick={() => setLayoutMode('justified')}><Icon name="layer-group" /></button
 			>
 		</div>
 	</div>
 
 	{#if selected.size > 0}
-		<div class="batch-bar">
+		<div class="batch-bar" data-testid="photos-batch-bar">
 			<span>{t('files.selected_count', { count: selected.size }, '{{count}} selected')}</span>
 			<div class="batch-bar__actions">
-				<Button onclick={downloadSelected}>{t('common.download', 'Download')}</Button>
-				<Button onclick={() => selected.clear()}>{t('common.clear', 'Clear')}</Button>
-				<Button variant="danger" onclick={trashSelected}>{t('common.delete', 'Delete')}</Button>
+				<Button data-testid="photos-batch-download-btn" onclick={downloadSelected}
+					>{t('common.download', 'Download')}</Button
+				>
+				<Button data-testid="photos-batch-clear-btn" onclick={() => selected.clear()}
+					>{t('common.clear', 'Clear')}</Button
+				>
+				<Button data-testid="photos-batch-delete-btn" variant="danger" onclick={trashSelected}
+					>{t('common.delete', 'Delete')}</Button
+				>
 			</div>
 		</div>
 	{/if}
@@ -449,7 +460,11 @@
 
 {#snippet tile(photo: PhotoItem, sizeStyle?: string)}
 	<div class="photo-tile" class:selected={selected.has(photo.id)} style={sizeStyle}>
-		<button class="photo-tile__open" onclick={() => onTileClick(photo)}>
+		<button
+			class="photo-tile__open"
+			data-testid={`photo-tile-${photo.id}`}
+			onclick={() => onTileClick(photo)}
+		>
 			<!-- Always-present placeholder: the thumbnail <img> overlays it and, when
 			     it can't load (no server thumbnail, e.g. SVG), hides itself to reveal
 			     this default rather than the browser's broken-image glyph. -->
@@ -471,6 +486,7 @@
 			class="photo-tile__check"
 			class:on={selected.has(photo.id)}
 			aria-label={t('common.select', 'Select')}
+			data-testid={`photo-tile-check-${photo.id}`}
 			onclick={() => selected.toggle(photo.id)}
 		>
 			<Icon name="check" />

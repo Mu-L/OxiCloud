@@ -22,7 +22,12 @@
 	<Icon name="check" class="nc-status__icon nc-status__icon--ok" />
 	<h1>{t('nextcloud.success_title', 'Access granted')}</h1>
 	<p>{t('nextcloud.success_body', 'You can now return to your application — it is connected.')}</p>
-	<button type="button" class="nc-status__action" onclick={closeWindow}>
+	<button
+		type="button"
+		class="nc-status__action"
+		data-testid="nextcloud-success-close-btn"
+		onclick={closeWindow}
+	>
 		{t('nextcloud.close_window', 'Close Window')}
 	</button>
 </main>

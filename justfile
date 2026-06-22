@@ -15,6 +15,32 @@ release:
 run:
     cargo run
 
+# ── Docker image builds ──────────────────────────────────────────────────────
+# Build the runtime image locally with BuildKit cargo cache mounts so repeat
+# builds recompile only the crates that changed (true incremental). Routes the
+# runtime stage to the `builder-cache` stage. A plain `docker build .` defaults
+# to the slower `builder` stage that CI relies on for GitHub Actions layer
+# caching — locally that recompiles the whole app crate on every source change,
+# so prefer this recipe for iterating on the image. The cargo registry + target
+# cache mounts persist in the local BuildKit cache across runs.
+docker-build tag="oxicloud:dev":
+    DOCKER_BUILDKIT=1 docker build \
+        --build-arg BUILDER=builder-cache \
+        --build-arg BIN_DIR=/app/bin \
+        --tag {{tag}} \
+        .
+
+# Same incremental image but keeps the `data-testid` hooks (VITE_E2E=1) so the
+# resulting image can back the Playwright e2e flow. Mirrors the build args the
+# Testcontainers fixture passes (tests/e2e/fixtures/oxicloud-stack.ts).
+docker-build-e2e tag="oxicloud-e2e:latest":
+    DOCKER_BUILDKIT=1 docker build \
+        --build-arg BUILDER=builder-cache \
+        --build-arg BIN_DIR=/app/bin \
+        --build-arg VITE_E2E=1 \
+        --tag {{tag}} \
+        .
+
 run-debug:
     RUST_LOG=debug cargo run
 
@@ -112,6 +138,15 @@ front-test:
 front-test-update-snapshot:
     cd tests/e2e && npm test -- --update-snapshots=all
 
+# Records against a throwaway container stack (its own Postgres + the OxiCloud
+# SPA). Each starting point is a file in tests/e2e/scenarios/codegen/ that sets
+# up state then calls page.pause(); drop a new *.spec.ts there to add one — this
+# menu discovers them automatically.
+
+# Interactive Playwright codegen — pick a starting point, then record
+front-codegen:
+    bash tests/e2e/scripts/codegen.sh
+
 # Frontend design-system guardrails — pure Node, no extra deps, run against the
 # SvelteKit frontend (frontend/). Locale completeness, dead-token report, and
 # brand-mark drift. For the full svelte-check/eslint/stylelint/prettier gate use
@@ -143,6 +178,11 @@ fe-dev:
 # build the SPA (Phase 0: -> frontend/build; Phase 5: -> static-dist)
 fe-build:
     cd frontend && npm run build
+
+# build the SPA for e2e — keeps the `data-testid` tile hooks the release build
+# strips. Use before running the legacy webServer e2e flow against this binary.
+fe-build-e2e:
+    cd frontend && VITE_E2E=1 npm run build
 
 # svelte-check + eslint + stylelint + prettier
 fe-check:

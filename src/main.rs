@@ -59,7 +59,7 @@ use common::di::AppServiceFactory;
 use infrastructure::db::create_database_pools;
 use interfaces::{
     create_api_routes, create_health_routes, create_public_api_routes,
-    web::{content_security_policy, create_web_routes, resolve_static_path},
+    web::{create_web_routes, resolve_static_path},
 };
 
 fn parse_addr(host: &str, port: u16) -> Result<SocketAddr, String> {
@@ -804,18 +804,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use axum::http::HeaderValue;
     use axum::http::header::HeaderName;
 
+    // Content-Security-Policy is content-type-aware.
+    //
+    // HTML documents are served by the SvelteKit SPA, which emits its OWN
+    // strict, hash-based CSP via a <meta> tag (see `kit.csp` in
+    // frontend/svelte.config.js). SvelteKit's inline bootstrap script is
+    // hashed per build, so a static `script-src 'self'` header here would
+    // block it and blank the app. We therefore do NOT send a CSP header on
+    // text/html responses and let the SPA's meta policy govern them.
+    //
+    // Every other response (API JSON, DAV XML, static JS/CSS/img) gets the
+    // strict header below. Notes:
+    //   • style-src 'unsafe-inline': the frontend sets inline styles at
+    //     runtime (e.g. element.style.display); hashes can't cover those.
+    //   • frame-src '*': only matches network schemes, so 'blob:' is listed
+    //     explicitly for inline PDF/document viewers.
+    //   • media-src 'blob:': needed for blob: video/audio playback.
+    //   • form-action 'https:': the WOPI office editor is launched by POSTing a
+    //     token form to a cross-origin, admin-configured Collabora/OnlyOffice
+    //     host. Mirrors the SPA meta policy in frontend/svelte.config.js.
+    async fn content_security_policy(
+        req: axum::extract::Request,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        let mut res = next.run(req).await;
+        let is_html = res
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with("text/html"));
+        if !is_html {
+            res.headers_mut().insert(
+                axum::http::header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static(
+                    "default-src 'self'; \
+                     script-src 'self'; \
+                     worker-src 'self'; \
+                     style-src 'self' 'unsafe-inline'; \
+                     img-src 'self' data: blob: https:; \
+                     media-src 'self' blob:; \
+                     connect-src 'self'; \
+                     font-src 'self' data:; \
+                     frame-src * blob:; \
+                     frame-ancestors 'none'; \
+                     base-uri 'self'; \
+                     form-action 'self' https:",
+                ),
+            );
+        }
+        res
+    }
+
     app = app
-        .layer(SetResponseHeaderLayer::overriding(
-            HeaderName::from_static("content-security-policy"),
-            // Built at startup: script-src is 'self' plus a SHA-256 hash for
-            // every inline <script> in the served HTML, so the policy stays
-            // strict (no 'unsafe-inline' for scripts) while the SvelteKit SPA's
-            // inline bootstrap can still run. The full directive set, and why
-            // style-src/frame-src/media-src look the way they do, live in
-            // interfaces::web::content_security_policy.
-            HeaderValue::from_str(&content_security_policy(&config))
-                .expect("CSP header value contains only ASCII"),
-        ))
+        .layer(axum::middleware::from_fn(content_security_policy))
         .layer(SetResponseHeaderLayer::overriding(
             HeaderName::from_static("x-content-type-options"),
             HeaderValue::from_static("nosniff"),

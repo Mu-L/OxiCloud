@@ -271,7 +271,7 @@
 			{#if mode === 'login'}
 				{#if passwordLoginEnabled}
 					{#if error}<div class="auth-error" style="display: block" role="alert">{error}</div>{/if}
-					<form class="auth-form" onsubmit={onLogin} novalidate>
+					<form class="auth-form" data-testid="login-form" onsubmit={onLogin} novalidate>
 						<div class="auth-input-group">
 							<label class="auth-label" for="login-username">
 								{t('auth.username', 'Username or email')}
@@ -280,6 +280,7 @@
 								<input
 									id="login-username"
 									class="auth-input"
+									data-testid="login-username-input"
 									type="text"
 									bind:value={username}
 									autocomplete="username"
@@ -296,6 +297,7 @@
 								<input
 									id="login-password"
 									class="auth-input"
+									data-testid="login-password-input"
 									type={showPassword ? 'text' : 'password'}
 									bind:value={password}
 									onkeydown={onPwKey}
@@ -308,6 +310,7 @@
 									type="button"
 									class="auth-pw-toggle"
 									aria-pressed={showPassword}
+									data-testid="login-password-toggle-btn"
 									aria-label={t('auth.toggle_password', 'Show password')}
 									onclick={() => (showPassword = !showPassword)}
 								></button>
@@ -317,12 +320,22 @@
 							{/if}
 						</div>
 
-						<button class="auth-button" type="submit" disabled={busy} aria-busy={busy}>
+						<button
+							class="auth-button"
+							type="submit"
+							data-testid="login-submit-btn"
+							disabled={busy}
+							aria-busy={busy}
+						>
 							{busy ? t('auth.signing_in', 'Signing in…') : t('auth.sign_in', 'Sign in')}
 						</button>
 					</form>
 
-					<button class="auth-magic-toggle" onclick={() => (magicOpen = !magicOpen)}>
+					<button
+						class="auth-magic-toggle"
+						data-testid="login-magic-toggle-btn"
+						onclick={() => (magicOpen = !magicOpen)}
+					>
 						{t('auth.magic_prompt', 'No password? Sign in with an email link')}
 					</button>
 					{#if magicOpen}
@@ -333,7 +346,7 @@
 									"No password? Enter your email and we'll send you a one-time sign-in link."
 								)}
 							</p>
-							<form class="auth-form" onsubmit={onMagicLink}>
+							<form class="auth-form" data-testid="login-magic-form" onsubmit={onMagicLink}>
 								<div class="auth-input-group">
 									<label class="auth-label" for="magic-email">
 										{t('auth.magic_email_label', 'Email address')}
@@ -342,6 +355,7 @@
 										<input
 											id="magic-email"
 											class="auth-input"
+											data-testid="login-magic-email-input"
 											type="email"
 											bind:value={magicEmail}
 											autocomplete="email"
@@ -349,7 +363,12 @@
 										/>
 									</div>
 								</div>
-								<button class="auth-button auth-button-secondary" type="submit" disabled={busy}>
+								<button
+									class="auth-button auth-button-secondary"
+									type="submit"
+									data-testid="login-magic-send-btn"
+									disabled={busy}
+								>
 									{t('auth.magic_send', 'Send link')}
 								</button>
 							</form>
@@ -371,7 +390,12 @@
 						<div class="auth-divider"><span>{t('auth.or', 'or')}</span></div>
 					{/if}
 					<!-- Backend OIDC authorize endpoint (not a SvelteKit route). -->
-					<a class="auth-button auth-button-oidc" href={oidc.authorize_endpoint} rel="external">
+					<a
+						class="auth-button auth-button-oidc"
+						data-testid="login-oidc-btn"
+						href={oidc.authorize_endpoint}
+						rel="external"
+					>
 						{t(
 							'auth.sso_login_provider',
 							{ provider: oidc.provider_name ?? 'SSO' },
@@ -383,7 +407,11 @@
 				{#if passwordLoginEnabled}
 					<div class="auth-toggle">
 						{t('auth.no_account', 'No account?')}
-						<button class="auth-toggle-link" onclick={() => (mode = 'register')}>
+						<button
+							class="auth-toggle-link"
+							data-testid="login-to-register-btn"
+							onclick={() => (mode = 'register')}
+						>
 							{t('auth.register', 'Create one')}
 						</button>
 					</div>
@@ -392,7 +420,11 @@
 				{#if setupAvailable}
 					<div class="auth-toggle">
 						{t('auth.admin_setup', 'First time?')}
-						<button class="auth-toggle-link" onclick={() => (mode = 'setup')}>
+						<button
+							class="auth-toggle-link"
+							data-testid="login-to-setup-btn"
+							onclick={() => (mode = 'setup')}
+						>
 							{t('auth.setup', 'Set up administrator')}
 						</button>
 					</div>
@@ -402,12 +434,13 @@
 						{regError}
 					</div>{/if}
 				{#if regSuccess}<div class="auth-success" style="display: block">{regSuccess}</div>{/if}
-				<form class="auth-form" onsubmit={onRegister} novalidate>
+				<form class="auth-form" data-testid="login-register-form" onsubmit={onRegister} novalidate>
 					<div class="auth-input-group">
 						<label class="auth-label" for="reg-username">{t('auth.username', 'Username')}</label>
 						<input
 							id="reg-username"
 							class="auth-input"
+							data-testid="login-register-username-input"
 							bind:value={regUsername}
 							required
 							disabled={busy}
@@ -418,6 +451,7 @@
 						<input
 							id="reg-email"
 							class="auth-input"
+							data-testid="login-register-email-input"
 							type="email"
 							bind:value={regEmail}
 							required
@@ -430,6 +464,7 @@
 							<input
 								id="reg-password"
 								class="auth-input"
+								data-testid="login-register-password-input"
 								type={regShowPassword ? 'text' : 'password'}
 								bind:value={regPassword}
 								onkeydown={onRegPwKey}
@@ -442,6 +477,7 @@
 								type="button"
 								class="auth-pw-toggle"
 								aria-pressed={regShowPassword}
+								data-testid="login-register-password-toggle-btn"
 								aria-label={t('auth.toggle_password', 'Show password')}
 								onclick={() => (regShowPassword = !regShowPassword)}
 							></button>
@@ -458,6 +494,7 @@
 							<input
 								id="reg-confirm"
 								class="auth-input"
+								data-testid="login-register-confirm-input"
 								type={regShowConfirm ? 'text' : 'password'}
 								bind:value={regConfirm}
 								onkeydown={onRegPwKey}
@@ -470,6 +507,7 @@
 								type="button"
 								class="auth-pw-toggle"
 								aria-pressed={regShowConfirm}
+								data-testid="login-register-confirm-toggle-btn"
 								aria-label={t('auth.toggle_password', 'Show password')}
 								onclick={() => (regShowConfirm = !regShowConfirm)}
 							></button>
@@ -484,13 +522,23 @@
 							</div>
 						{/if}
 					</div>
-					<button class="auth-button" type="submit" disabled={busy} aria-busy={busy}>
+					<button
+						class="auth-button"
+						type="submit"
+						data-testid="login-register-submit-btn"
+						disabled={busy}
+						aria-busy={busy}
+					>
 						{t('auth.register', 'Create account')}
 					</button>
 				</form>
 				<div class="auth-toggle">
 					{t('auth.have_account', 'Already have an account?')}
-					<button class="auth-toggle-link" onclick={() => (mode = 'login')}>
+					<button
+						class="auth-toggle-link"
+						data-testid="login-register-to-login-btn"
+						onclick={() => (mode = 'login')}
+					>
 						{t('auth.sign_in', 'Sign in')}
 					</button>
 				</div>
@@ -515,13 +563,20 @@
 					</div>{/if}
 				{#if setupSuccess}<div class="auth-success" style="display: block">{setupSuccess}</div>{/if}
 
-				<form class="auth-form" onsubmit={onSetup} novalidate>
+				<form class="auth-form" data-testid="login-setup-form" onsubmit={onSetup} novalidate>
 					<div class="auth-input-group">
 						<label class="auth-label" for="setup-username">
 							{t('auth.admin_username', 'Administrator username')}
 						</label>
 						<div class="auth-input-wrap auth-input-wrap--user">
-							<input id="setup-username" class="auth-input" type="text" value="admin" readonly />
+							<input
+								id="setup-username"
+								class="auth-input"
+								data-testid="login-setup-username-input"
+								type="text"
+								value="admin"
+								readonly
+							/>
 						</div>
 					</div>
 
@@ -533,6 +588,7 @@
 							<input
 								id="setup-email"
 								class="auth-input"
+								data-testid="login-setup-email-input"
 								type="email"
 								bind:value={setupEmail}
 								autocomplete="email"
@@ -550,6 +606,7 @@
 							<input
 								id="setup-password"
 								class="auth-input"
+								data-testid="login-setup-password-input"
 								type={setupShowPassword ? 'text' : 'password'}
 								bind:value={setupPassword}
 								onkeydown={onSetupPwKey}
@@ -563,6 +620,7 @@
 								type="button"
 								class="auth-pw-toggle"
 								aria-pressed={setupShowPassword}
+								data-testid="login-setup-password-toggle-btn"
 								aria-label={t('auth.toggle_password', 'Show password')}
 								onclick={() => (setupShowPassword = !setupShowPassword)}
 							></button>
@@ -580,6 +638,7 @@
 							<input
 								id="setup-confirm"
 								class="auth-input"
+								data-testid="login-setup-confirm-input"
 								type={setupShowConfirm ? 'text' : 'password'}
 								bind:value={setupConfirm}
 								onkeydown={onSetupPwKey}
@@ -592,6 +651,7 @@
 								type="button"
 								class="auth-pw-toggle"
 								aria-pressed={setupShowConfirm}
+								data-testid="login-setup-confirm-toggle-btn"
 								aria-label={t('auth.toggle_password', 'Show password')}
 								onclick={() => (setupShowConfirm = !setupShowConfirm)}
 							></button>
@@ -609,14 +669,24 @@
 						{/if}
 					</div>
 
-					<button class="auth-button" type="submit" disabled={busy} aria-busy={busy}>
+					<button
+						class="auth-button"
+						type="submit"
+						data-testid="login-setup-submit-btn"
+						disabled={busy}
+						aria-busy={busy}
+					>
 						{t('auth.create_admin', 'Create administrator')}
 					</button>
 				</form>
 
 				<div class="auth-toggle">
 					{t('auth.back_to_login', 'Already configured?')}
-					<button class="auth-toggle-link" onclick={() => (mode = 'login')}>
+					<button
+						class="auth-toggle-link"
+						data-testid="login-setup-to-login-btn"
+						onclick={() => (mode = 'login')}
+					>
 						{t('auth.sign_in', 'Sign in')}
 					</button>
 				</div>
@@ -626,6 +696,7 @@
 		<div class="auth-lang">
 			<select
 				aria-label={t('settings.language', 'Language')}
+				data-testid="login-language-select"
 				value={i18n.locale}
 				onchange={(e) => setLocale(e.currentTarget.value as Locale)}
 			>

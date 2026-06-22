@@ -78,11 +78,15 @@ jsonpath "$.content_hash" == "b2208c5dc33ff951227bd0c139f5eccb04105d6da6a7519ee2
 
 
 # ─────────────────────────────────────────────────────────────
-# Step 4 — Duplicate-name probe (incidental but useful): try
-#          uploading the same fixture again, same name, same
-#          folder → 409 Conflict. This catches the (folder_id,
-#          name, user_id) WHERE NOT is_trashed unique index in
-#          `storage.files`.
+# Step 4 — Idempotent re-upload: re-POSTing the same fixture (same
+#          folder, same name, IDENTICAL content/BLAKE3) is a no-op
+#          that returns the EXISTING file row, not a 409. See the
+#          idempotency branch in save_file_with_blob
+#          (file_blob_write_repository.rs): a (folder_id, name)
+#          unique clash whose content hash matches resolves to the
+#          existing file so re-uploading a partially-transferred
+#          folder is clean; only a same-name upload with DIFFERENT
+#          content still returns 409.
 # ─────────────────────────────────────────────────────────────
 POST {{base_url}}/api/files/upload
 Authorization: Bearer {{token}}
@@ -90,7 +94,10 @@ Authorization: Bearer {{token}}
 folder_id: {{home_folder_id}}
 file: file,fixtures/hello-copy.txt; text/plain
 
-HTTP 409
+HTTP 201
+[Asserts]
+jsonpath "$.id" == "{{seed_file_id}}"
+jsonpath "$.content_hash" == "{{seed_content_hash}}"
 
 
 # ─────────────────────────────────────────────────────────────

@@ -17,6 +17,8 @@
 		onclick?: (e: MouseEvent) => void;
 		/** Extra classes appended after the base `.btn` classes. */
 		class?: string;
+		/** e2e test hook forwarded to the underlying `<button>`. */
+		'data-testid'?: string;
 		children?: Snippet;
 	}
 
@@ -29,6 +31,7 @@
 		title,
 		onclick,
 		class: cls = '',
+		'data-testid': testid,
 		children
 	}: Props = $props();
 
@@ -37,7 +40,7 @@
 	);
 </script>
 
-<button class={className} {type} {disabled} {title} {onclick}>
+<button class={className} {type} {disabled} {title} data-testid={testid} {onclick}>
 	{#if icon}<Icon name={icon} />{/if}
 	{@render children?.()}
 </button>

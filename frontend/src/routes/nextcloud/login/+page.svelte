@@ -52,7 +52,12 @@
 			</div>
 		{:else}
 			{#if passwordLoginEnabled}
-				<form class="auth-form" method="post" action={formAction}>
+				<form
+					class="auth-form"
+					data-testid="nextcloud-login-form"
+					method="post"
+					action={formAction}
+				>
 					<div class="auth-input-group">
 						<label class="auth-label" for="nc-user">{t('auth.username', 'Username or email')}</label
 						>
@@ -60,6 +65,7 @@
 							<input
 								id="nc-user"
 								class="auth-input"
+								data-testid="nextcloud-login-user-input"
 								name="user"
 								type="text"
 								autocomplete="username"
@@ -73,6 +79,7 @@
 							<input
 								id="nc-password"
 								class="auth-input"
+								data-testid="nextcloud-login-password-input"
 								name="password"
 								type="password"
 								autocomplete="current-password"
@@ -80,7 +87,9 @@
 							/>
 						</div>
 					</div>
-					<button class="auth-button" type="submit">{t('nextcloud.grant', 'Grant access')}</button>
+					<button class="auth-button" data-testid="nextcloud-login-grant-btn" type="submit"
+						>{t('nextcloud.grant', 'Grant access')}</button
+					>
 				</form>
 			{/if}
 
@@ -89,7 +98,12 @@
 					<div class="auth-divider"><span>{t('auth.or', 'or')}</span></div>
 				{/if}
 				<!-- Backend Nextcloud Login Flow v2 OIDC handshake (not a SvelteKit route). -->
-				<a class="auth-button auth-button-sso" href={`/login/v2/flow/${token}/oidc`} rel="external">
+				<a
+					class="auth-button auth-button-sso"
+					data-testid="nextcloud-login-sso-link"
+					href={`/login/v2/flow/${token}/oidc`}
+					rel="external"
+				>
 					{t('nextcloud.sign_in_with', { provider: oidcProvider }, 'Sign in with {{provider}}')}
 				</a>
 			{/if}

@@ -391,11 +391,19 @@
 				<header class="ms-lane__header">
 					{#if lane.header.kind === 'resource'}
 						{@const laneItem = lane.header.item}
-						<button class="ms-lane__resource" onclick={() => openResource(laneItem)}>
+						<button
+							class="ms-lane__resource"
+							data-testid={`shared-lane-open-${laneItem.resource.id}`}
+							onclick={() => openResource(laneItem)}
+						>
 							<Icon name={resourceIcon(laneItem)} />
 							<span class="ms-lane__name">{laneItem.resource.name}</span>
 						</button>
-						<button class="btn btn-secondary ms-lane__edit" onclick={() => editSharing(laneItem)}>
+						<button
+							class="btn btn-secondary ms-lane__edit"
+							data-testid={`shared-edit-sharing-${laneItem.resource.id}`}
+							onclick={() => editSharing(laneItem)}
+						>
 							<Icon name="pencil-alt" />
 							{t('myshares.editSharing', 'Edit sharing')}
 						</button>
@@ -427,7 +435,11 @@
 							<!-- Identity -->
 							<span class="ms-row__identity">
 								{#if (grant.subject_type === 'user' || grant.subject_type === 'group') && groupBy === 'sharedWith'}
-									<button class="ms-link-btn" onclick={() => openResource(item)}>
+									<button
+										class="ms-link-btn"
+										data-testid={`shared-row-open-${grant.grant_id}`}
+										onclick={() => openResource(item)}
+									>
 										<Icon name={resourceIcon(item)} />
 										<span class="ms-row__name">{item.resource.name}</span>
 									</button>
@@ -443,6 +455,7 @@
 									<button
 										class="ms-chip ms-chip--link"
 										class:ms-chip--locked={grant.has_password}
+										data-testid={`shared-copy-link-${grant.grant_id}`}
 										onclick={() => copyLink(grant)}
 										title={t('share.copyLink', 'Copy link')}
 									>
@@ -451,7 +464,11 @@
 									</button>
 									{#if groupBy === 'sharedWith'}
 										<span class="ms-arrow">→</span>
-										<button class="ms-link-btn" onclick={() => openResource(item)}>
+										<button
+											class="ms-link-btn"
+											data-testid={`shared-link-open-${grant.grant_id}`}
+											onclick={() => openResource(item)}
+										>
 											<Icon name={resourceIcon(item)} />
 											<span>{item.resource.name}</span>
 										</button>
@@ -480,6 +497,7 @@
 									aria-label={t('myshares.manageAccess', 'Manage access')}
 									aria-haspopup="menu"
 									aria-expanded={menuFor === grant.grant_id}
+									data-testid={`shared-kebab-${grant.grant_id}`}
 									onclick={(e) => {
 										e.stopPropagation();
 										toggleMenu(grant.grant_id);
@@ -490,11 +508,17 @@
 										class="ms-menu"
 										role="menu"
 										tabindex="-1"
+										data-testid={`shared-menu-${grant.grant_id}`}
 										onclick={(e) => e.stopPropagation()}
 										onkeydown={(e) => e.key === 'Escape' && closeMenu()}
 									>
 										{#if grant.subject_type === 'user' || grant.subject_type === 'group'}
-											<button class="ms-menu__item" role="menuitem" onclick={() => notify(grant)}>
+											<button
+												class="ms-menu__item"
+												role="menuitem"
+												data-testid={`shared-notify-${grant.grant_id}`}
+												onclick={() => notify(grant)}
+											>
 												<Icon name="paper-plane" />
 												{grant.subject_type === 'group'
 													? t('myshares.notifyGroupMembers', 'Notify group members')
@@ -508,6 +532,7 @@
 													class="ms-menu__item"
 													class:ms-menu__item--current={grant.role === r.v}
 													role="menuitem"
+													data-testid={`shared-role-${r.v}-${grant.grant_id}`}
 													onclick={() => changeRole(grant, item, r.v)}
 												>
 													<Icon name={grant.role === r.v ? 'check' : r.icon} />
@@ -520,6 +545,7 @@
 												<input
 													type="date"
 													class="ms-menu__date"
+													data-testid={`shared-expiry-${grant.grant_id}-input`}
 													value={isoToDate(grant.expires_at)}
 													onchange={(e) =>
 														changeExpiry(grant, item, (e.currentTarget as HTMLInputElement).value)}
@@ -529,13 +555,19 @@
 											<button
 												class="ms-menu__item ms-menu__item--danger"
 												role="menuitem"
+												data-testid={`shared-remove-access-${grant.grant_id}`}
 												onclick={() => removeAccess(grant)}
 											>
 												<Icon name="user-xmark" />
 												{t('myshares.removeAccess', 'Remove access')}
 											</button>
 										{:else}
-											<button class="ms-menu__item" role="menuitem" onclick={() => copyLink(grant)}>
+											<button
+												class="ms-menu__item"
+												role="menuitem"
+												data-testid={`shared-menu-copy-link-${grant.grant_id}`}
+												onclick={() => copyLink(grant)}
+											>
 												<Icon name="copy" />
 												{t('myshares.copyLink', 'Copy link')}
 											</button>
@@ -545,6 +577,7 @@
 												<input
 													type="date"
 													class="ms-menu__date"
+													data-testid={`shared-link-expiry-${grant.grant_id}-input`}
 													value={isoToDate(grant.expires_at)}
 													onchange={(e) =>
 														changeLinkExpiry(grant, (e.currentTarget as HTMLInputElement).value)}
@@ -553,6 +586,7 @@
 											<button
 												class="ms-menu__item"
 												role="menuitem"
+												data-testid={`shared-edit-password-${grant.grant_id}`}
 												onclick={() => editLinkPassword(grant)}
 											>
 												<Icon name={grant.has_password ? 'lock' : 'lock-open'} />
@@ -564,6 +598,7 @@
 											<button
 												class="ms-menu__item ms-menu__item--danger"
 												role="menuitem"
+												data-testid={`shared-delete-link-${grant.grant_id}`}
 												onclick={() => deleteLink(grant)}
 											>
 												<Icon name="trash" />
@@ -580,7 +615,12 @@
 		{/each}
 
 		{#if cursor}
-			<button class="btn btn-secondary ms-more" onclick={() => load(false)} disabled={loading}>
+			<button
+				class="btn btn-secondary ms-more"
+				data-testid="shared-load-more-btn"
+				onclick={() => load(false)}
+				disabled={loading}
+			>
 				{loading ? t('common.loading', 'Loading…') : t('common.load_more', 'Load more')}
 			</button>
 		{/if}

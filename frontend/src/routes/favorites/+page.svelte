@@ -300,17 +300,23 @@
 	onselectionchange={(ids) => (selectedIds = ids)}
 >
 	{#snippet batchToolbar()}
-		<Button icon="download" onclick={batchDownload}>{t('common.download', 'Download')}</Button>
+		<Button icon="download" data-testid="favorites-batch-download-btn" onclick={batchDownload}
+			>{t('common.download', 'Download')}</Button
+		>
 		<Button
 			icon="arrows-alt"
+			data-testid="favorites-batch-move-btn"
 			onclick={() => {
 				moveTarget = null;
 				moveItems = batchTargets();
 				moveOpen = true;
 			}}>{t('files.move', 'Move')}</Button
 		>
-		<Button variant="danger" icon="trash" onclick={batchDelete}
-			>{t('common.delete', 'Delete')}</Button
+		<Button
+			variant="danger"
+			icon="trash"
+			data-testid="favorites-batch-delete-btn"
+			onclick={batchDelete}>{t('common.delete', 'Delete')}</Button
 		>
 	{/snippet}
 </ResourceList>

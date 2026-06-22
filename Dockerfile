@@ -1,3 +1,13 @@
+# syntax=docker/dockerfile:1.7
+# Selects which builder stage assembles the runtime image. Defaults reproduce
+# the CI/release path exactly (the `builder` stage; binaries under
+# target/release). The e2e image build overrides these to
+# BUILDER=builder-cache / BIN_DIR=/app/bin to use the BuildKit cache-mount
+# builder. Declared in the global scope because FROM (unlike COPY --from) can
+# expand a build arg in a stage reference.
+ARG BUILDER=builder
+ARG BIN_DIR=/app/target/release
+
 # ─── Stage 1: Shared build base (avoids duplicate apk install) ────────────────
 FROM rust:1.96-alpine3.24 AS base
 # sqlx's postgres driver speaks the wire protocol in pure Rust (no pq-sys in
@@ -12,8 +22,15 @@ RUN apk --no-cache upgrade && \
 FROM node:26.3.1-alpine3.24 AS frontend
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+# Cache mount for npm's package store: when the lockfile changes (busting the
+# layer) npm ci still reuses already-downloaded tarballs instead of refetching
+# them. Persists in the local BuildKit cache; ignored harmlessly when absent.
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY frontend/ ./
+# VITE_E2E=1 keeps the test-only `data-testid` attributes in the build (set by
+# the e2e image build); unset for release images, which strip them entirely.
+ARG VITE_E2E
+ENV VITE_E2E=${VITE_E2E}
 RUN npm run build
 
 # ─── Stage 2: Cache dependencies ─────────────────────────────────────────────
@@ -54,6 +71,48 @@ RUN DATABASE_URL="${DATABASE_URL}" cargo build --release --bin oxicloud --bin ge
 # below (build.rs has no asset pipeline — it only injects git metadata).
 COPY --from=frontend /static-dist ./static-dist
 
+# ─── Stage 3b: Cache-mount builder (local e2e fast incremental rebuilds) ──────
+# Built ONLY when BUILDER=builder-cache is passed (the Testcontainers e2e build,
+# which calls .withBuildkit()). BuildKit cache mounts persist the cargo registry
+# and target/ in the local BuildKit cache across runs, so a one-line src change
+# recompiles just the changed crate instead of the whole dependency graph. CI
+# never sets this arg, so this stage is absent from CI's build graph and CI
+# behaviour/caching is unchanged.
+#
+# NOTE: target/ is a cache mount, so it is NOT part of the image layer once the
+# RUN finishes — the two shipped binaries MUST be cp'd out within the same RUN.
+# TARGETARCH scopes the target/ mount per-arch so it is never shared across
+# architectures (object files are arch-specific).
+FROM base AS builder-cache
+WORKDIR /app
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY src src
+COPY static static
+COPY migrations migrations
+COPY templates templates
+COPY --from=frontend /static-dist ./static-dist
+ARG DATABASE_URL="postgres://postgres:postgres@localhost/oxicloud"
+ARG TARGETARCH
+RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,id=oxicloud-target-${TARGETARCH},target=/app/target,sharing=locked \
+    DATABASE_URL="${DATABASE_URL}" cargo build --release && \
+    mkdir -p /app/bin && \
+    cp target/release/oxicloud /app/bin/oxicloud && \
+    cp target/release/migrate-nfc-filenames /app/bin/migrate-nfc-filenames
+
+# ─── Stage 3c: Select the builder & normalise the binary path ─────────────────
+# FROM expands the global ${BUILDER} arg to alias the chosen builder stage
+# (`builder` for CI/release, `builder-cache` for the e2e image). It then copies
+# the two shipped binaries from the builder-specific ${BIN_DIR} into a single
+# stable path (/app/release) so the runtime stage's COPYs are independent of
+# which builder ran. `static-dist` already lives at /app/static-dist in both
+# builders, so it needs no normalisation.
+FROM ${BUILDER} AS app
+ARG BIN_DIR
+RUN mkdir -p /app/release && \
+    cp "${BIN_DIR}/oxicloud" "${BIN_DIR}/migrate-nfc-filenames" /app/release/
+
 # ─── Stage 4: Minimal runtime image ──────────────────────────────────────────
 FROM alpine:3.24.0
 
@@ -76,19 +135,19 @@ RUN apk --no-cache upgrade && \
     adduser -u 1001 -S oxicloud -G oxicloud
 
 # Copy the compiled binary and entrypoint (--chmod avoids extra RUN chmod layers)
-COPY --from=builder --chmod=755 /app/target/release/oxicloud /usr/local/bin/
+COPY --from=app --chmod=755 /app/release/oxicloud /usr/local/bin/
 # Ship the NFC filename migration binary alongside the server so
 # operators can run it inside the container without a separate Rust
 # toolchain — `docker exec <container> migrate-nfc-filenames --dry-run`
 # to preview, drop `--dry-run` to execute. One-shot tool, safe to
 # ship; it only mutates `storage.files` rows whose name ≠ NFC(name).
-COPY --from=builder --chmod=755 /app/target/release/migrate-nfc-filenames /usr/local/bin/
+COPY --from=app --chmod=755 /app/release/migrate-nfc-filenames /usr/local/bin/
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN sed -i 's/\r//' /usr/local/bin/entrypoint.sh && \
     chmod 755 /usr/local/bin/entrypoint.sh
 
 # Copy the built SPA (produced by the Vite frontend stage)
-COPY --from=builder --chown=oxicloud:oxicloud /app/static-dist /app/static
+COPY --from=app --chown=oxicloud:oxicloud /app/static-dist /app/static
 # Create storage directory with proper permissions
 RUN mkdir -p /app/storage && chown -R oxicloud:oxicloud /app/storage
 

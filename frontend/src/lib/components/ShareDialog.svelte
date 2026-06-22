@@ -377,194 +377,249 @@
 {/snippet}
 
 <Modal bind:open title={t('share.dialog_title', { name: item?.name ?? '' }, 'Share “{{name}}”')}>
-	<div class="tabs" role="tablist">
-		<button role="tab" aria-selected={tab === 'people'} onclick={() => (tab = 'people')}>
-			{t('share.people', 'People')}
-		</button>
-		<button role="tab" aria-selected={tab === 'link'} onclick={() => (tab = 'link')}>
-			{t('share.public_link', 'Public link')}
-		</button>
-	</div>
+	<div data-testid="share-dialog">
+		<div class="tabs" role="tablist">
+			<button
+				role="tab"
+				data-testid="share-dialog-people-tab"
+				aria-selected={tab === 'people'}
+				onclick={() => (tab = 'people')}
+			>
+				{t('share.people', 'People')}
+			</button>
+			<button
+				role="tab"
+				data-testid="share-dialog-link-tab"
+				aria-selected={tab === 'link'}
+				onclick={() => (tab = 'link')}
+			>
+				{t('share.public_link', 'Public link')}
+			</button>
+		</div>
 
-	{#if tab === 'people'}
-		{#if !directoryAvailable && !grantsLoading}
-			<p class="status status--note">
-				{t('share.directoryUnavailable', 'User directory unavailable')}
-			</p>
-		{:else}
-			<div class="add-row">
-				<div class="search">
-					<input
-						placeholder={t('share.add_people', 'Add people, groups, or email…')}
-						bind:value={query}
-						oninput={onQueryInput}
-						autocomplete="off"
-					/>
-					{#if results.length > 0}
-						<ul class="results">
-							{#each results as r (r.type + r.id)}
-								<li>
-									<button class="result" onclick={() => addRecipient(r)}>
-										<Icon
-											name={r.type === 'group'
-												? 'user-group'
-												: r.type === 'email'
-													? 'envelope'
-													: 'user'}
+		{#if tab === 'people'}
+			{#if !directoryAvailable && !grantsLoading}
+				<p class="status status--note">
+					{t('share.directoryUnavailable', 'User directory unavailable')}
+				</p>
+			{:else}
+				<div class="add-row">
+					<div class="search">
+						<input
+							data-testid="share-dialog-search-input"
+							placeholder={t('share.add_people', 'Add people, groups, or email…')}
+							bind:value={query}
+							oninput={onQueryInput}
+							autocomplete="off"
+						/>
+						{#if results.length > 0}
+							<ul class="results">
+								{#each results as r (r.type + r.id)}
+									<li>
+										<button
+											class="result"
+											data-testid={`share-dialog-result-${r.type}-${r.id}`}
+											onclick={() => addRecipient(r)}
+										>
+											<Icon
+												name={r.type === 'group'
+													? 'user-group'
+													: r.type === 'email'
+														? 'envelope'
+														: 'user'}
+											/>
+											<span class="result__label">{r.label}</span>
+											{#if r.type === 'email'}
+												<span class="result__sub"
+													>{t('share.inviteByEmail', 'Invite by email')}</span
+												>
+											{:else if r.sublabel}
+												<span class="result__sub">{r.sublabel}</span>
+											{/if}
+										</button>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					</div>
+					<select
+						class="role-select"
+						data-testid="share-dialog-new-role-select"
+						bind:value={newRole}
+						aria-label={t('share.role_label', 'Role')}
+					>
+						{#each ROLES as r (r.v)}<option value={r.v}>{r.l}</option>{/each}
+					</select>
+					{@render expiryChip(newExpiry, (v) => (newExpiry = v))}
+				</div>
+			{/if}
+
+			{#if grantsLoading}
+				<div class="skeleton" aria-hidden="true">
+					<div class="skeleton__line skeleton__line--short"></div>
+					<div class="skeleton__line skeleton__line--medium"></div>
+					<div class="skeleton__line"></div>
+				</div>
+			{:else if members.length === 0}
+				<p class="status">{t('share.no_people', 'Not shared with anyone yet.')}</p>
+			{:else}
+				{#each memberGroups as group (group.role)}
+					<div class="member-group">
+						<div class="member-group__header">
+							<Icon name={roleIcon(group.role)} />
+							<span>{roleLabel(group.role)}</span>
+							<span class="member-group__badge">{group.members.length}</span>
+						</div>
+						<ul class="members">
+							{#each group.members as m (m.subject.type + m.subject.id)}
+								<li
+									class="member"
+									class:member--expired={m.expiry && new Date(m.expiry) < new Date()}
+								>
+									{#if m.subject.type === 'user'}
+										<UserVignette
+											userId={m.subject.id}
+											fallbackLabel={m.recipient.label}
+											fallbackSublabel={m.recipient.sublabel}
 										/>
-										<span class="result__label">{r.label}</span>
-										{#if r.type === 'email'}
-											<span class="result__sub">{t('share.inviteByEmail', 'Invite by email')}</span>
-										{:else if r.sublabel}
-											<span class="result__sub">{r.sublabel}</span>
-										{/if}
-									</button>
+									{:else}
+										<Icon name="user-group" />
+										<span class="member__label">
+											{m.recipient.label}
+											{#if m.recipient.sublabel}<span class="member__sub"
+													>{m.recipient.sublabel}</span
+												>{/if}
+										</span>
+									{/if}
+									{@render expiryChip(m.expiry, (v) => changeMemberExpiry(m, v))}
+									<select
+										class="role-select"
+										data-testid={`share-dialog-member-role-${m.subject.type}-${m.subject.id}`}
+										value={m.role}
+										onchange={(e) => changeRole(m, e.currentTarget.value as ShareRole)}
+									>
+										{#each ROLES as r (r.v)}<option value={r.v}>{r.l}</option>{/each}
+									</select>
+									<button
+										class="btn-action"
+										data-testid={`share-dialog-member-notify-${m.subject.type}-${m.subject.id}`}
+										title={t('share.notifyByEmail', 'Notify by email')}
+										onclick={() => notifyMember(m)}><Icon name="paper-plane" /></button
+									>
+									<button
+										class="btn-action btn-action--delete"
+										data-testid={`share-dialog-member-remove-${m.subject.type}-${m.subject.id}`}
+										title={t('share.revoke', 'Remove')}
+										onclick={() => removeMember(m)}><Icon name="user-xmark" /></button
+									>
 								</li>
 							{/each}
 						</ul>
-					{/if}
-				</div>
-				<select class="role-select" bind:value={newRole} aria-label={t('share.role_label', 'Role')}>
-					{#each ROLES as r (r.v)}<option value={r.v}>{r.l}</option>{/each}
-				</select>
-				{@render expiryChip(newExpiry, (v) => (newExpiry = v))}
-			</div>
-		{/if}
-
-		{#if grantsLoading}
-			<div class="skeleton" aria-hidden="true">
-				<div class="skeleton__line skeleton__line--short"></div>
-				<div class="skeleton__line skeleton__line--medium"></div>
-				<div class="skeleton__line"></div>
-			</div>
-		{:else if members.length === 0}
-			<p class="status">{t('share.no_people', 'Not shared with anyone yet.')}</p>
-		{:else}
-			{#each memberGroups as group (group.role)}
-				<div class="member-group">
-					<div class="member-group__header">
-						<Icon name={roleIcon(group.role)} />
-						<span>{roleLabel(group.role)}</span>
-						<span class="member-group__badge">{group.members.length}</span>
 					</div>
-					<ul class="members">
-						{#each group.members as m (m.subject.type + m.subject.id)}
-							<li
-								class="member"
-								class:member--expired={m.expiry && new Date(m.expiry) < new Date()}
-							>
-								{#if m.subject.type === 'user'}
-									<UserVignette
-										userId={m.subject.id}
-										fallbackLabel={m.recipient.label}
-										fallbackSublabel={m.recipient.sublabel}
-									/>
-								{:else}
-									<Icon name="user-group" />
-									<span class="member__label">
-										{m.recipient.label}
-										{#if m.recipient.sublabel}<span class="member__sub">{m.recipient.sublabel}</span
-											>{/if}
-									</span>
-								{/if}
-								{@render expiryChip(m.expiry, (v) => changeMemberExpiry(m, v))}
-								<select
-									class="role-select"
-									value={m.role}
-									onchange={(e) => changeRole(m, e.currentTarget.value as ShareRole)}
-								>
-									{#each ROLES as r (r.v)}<option value={r.v}>{r.l}</option>{/each}
-								</select>
-								<button
-									class="btn-action"
-									title={t('share.notifyByEmail', 'Notify by email')}
-									onclick={() => notifyMember(m)}><Icon name="paper-plane" /></button
-								>
-								<button
-									class="btn-action btn-action--delete"
-									title={t('share.revoke', 'Remove')}
-									onclick={() => removeMember(m)}><Icon name="user-xmark" /></button
-								>
-							</li>
-						{/each}
-					</ul>
-				</div>
-			{/each}
-		{/if}
-	{:else}
-		<section class="sh-create">
-			<div class="sh-fields">
-				<label>
-					<span>{t('share.link_name', 'Link name (optional)')}</span>
-					<input type="text" bind:value={newLinkName} autocomplete="off" />
-				</label>
-				<label>
-					<span>{t('share.password_optional', 'Password (optional)')}</span>
-					<input type="text" bind:value={password} autocomplete="off" />
-				</label>
-				<label>
-					<span>{t('share.expires_optional', 'Expires (optional)')}</span>
-					<input
-						type="date"
-						value={expiresAt ?? ''}
-						onchange={(e) => (expiresAt = e.currentTarget.value || null)}
-					/>
-				</label>
-			</div>
-			<button class="btn btn-primary" disabled={creating} onclick={createLink}>
-				{t('share.create_link', 'Create link')}
-			</button>
-		</section>
-
-		{#if linkLoading}
-			<div class="skeleton" aria-hidden="true">
-				<div class="skeleton__line skeleton__line--medium"></div>
-				<div class="skeleton__line"></div>
-			</div>
-		{:else if shares.length === 0}
-			<p class="status">{t('share.none', 'No public links yet.')}</p>
-		{:else}
-			<ul class="links">
-				{#each shares as s (s.id)}
-					<li class="link-row">
-						<span class="link-row__title">
-							<Icon name={s.has_password ? 'lock' : 'link'} />
-							<span class="link-row__name"
-								>{s.item_name || t('share.sharedLink', 'Shared link')}</span
-							>
-						</span>
-						{@render expiryChip(shareExpiryIso(s), (v) => editLinkExpiry(s, v))}
-						<button
-							class="btn-action"
-							class:btn-action--on={s.has_password}
-							title={s.has_password
-								? t('share.changePassword', 'Change password')
-								: t('share.addPassword', 'Add password')}
-							onclick={() => {
-								const pw = window.prompt(
-									s.has_password
-										? t('share.passwordPrompt_clear', 'New password (blank to remove):')
-										: t('share.passwordPrompt', 'Set a password:')
-								);
-								if (pw !== null) editLinkPassword(s, pw || null);
-							}}><Icon name={s.has_password ? 'lock' : 'lock-open'} /></button
-						>
-						<button class="btn-action" title={t('share.copy', 'Copy')} onclick={() => copy(s.url)}>
-							<Icon name="copy" />
-						</button>
-						<button
-							class="btn-action btn-action--delete"
-							title={t('common.delete', 'Delete')}
-							onclick={() => removeLink(s)}><Icon name="trash" /></button
-						>
-					</li>
 				{/each}
-			</ul>
+			{/if}
+		{:else}
+			<section class="sh-create">
+				<div class="sh-fields">
+					<label>
+						<span>{t('share.link_name', 'Link name (optional)')}</span>
+						<input
+							type="text"
+							data-testid="share-dialog-link-name-input"
+							bind:value={newLinkName}
+							autocomplete="off"
+						/>
+					</label>
+					<label>
+						<span>{t('share.password_optional', 'Password (optional)')}</span>
+						<input
+							type="text"
+							data-testid="share-dialog-link-password-input"
+							bind:value={password}
+							autocomplete="off"
+						/>
+					</label>
+					<label>
+						<span>{t('share.expires_optional', 'Expires (optional)')}</span>
+						<input
+							type="date"
+							data-testid="share-dialog-link-expires-input"
+							value={expiresAt ?? ''}
+							onchange={(e) => (expiresAt = e.currentTarget.value || null)}
+						/>
+					</label>
+				</div>
+				<button
+					class="btn btn-primary"
+					data-testid="share-dialog-create-btn"
+					disabled={creating}
+					onclick={createLink}
+				>
+					{t('share.create_link', 'Create link')}
+				</button>
+			</section>
+
+			{#if linkLoading}
+				<div class="skeleton" aria-hidden="true">
+					<div class="skeleton__line skeleton__line--medium"></div>
+					<div class="skeleton__line"></div>
+				</div>
+			{:else if shares.length === 0}
+				<p class="status">{t('share.none', 'No public links yet.')}</p>
+			{:else}
+				<ul class="links">
+					{#each shares as s (s.id)}
+						<li class="link-row">
+							<span class="link-row__title">
+								<Icon name={s.has_password ? 'lock' : 'link'} />
+								<span class="link-row__name"
+									>{s.item_name || t('share.sharedLink', 'Shared link')}</span
+								>
+							</span>
+							{@render expiryChip(shareExpiryIso(s), (v) => editLinkExpiry(s, v))}
+							<button
+								class="btn-action"
+								class:btn-action--on={s.has_password}
+								data-testid={`share-dialog-link-password-btn-${s.id}`}
+								title={s.has_password
+									? t('share.changePassword', 'Change password')
+									: t('share.addPassword', 'Add password')}
+								onclick={() => {
+									const pw = window.prompt(
+										s.has_password
+											? t('share.passwordPrompt_clear', 'New password (blank to remove):')
+											: t('share.passwordPrompt', 'Set a password:')
+									);
+									if (pw !== null) editLinkPassword(s, pw || null);
+								}}><Icon name={s.has_password ? 'lock' : 'lock-open'} /></button
+							>
+							<button
+								class="btn-action"
+								data-testid={`share-dialog-link-copy-btn-${s.id}`}
+								title={t('share.copy', 'Copy')}
+								onclick={() => copy(s.url)}
+							>
+								<Icon name="copy" />
+							</button>
+							<button
+								class="btn-action btn-action--delete"
+								data-testid={`share-dialog-link-delete-btn-${s.id}`}
+								title={t('common.delete', 'Delete')}
+								onclick={() => removeLink(s)}><Icon name="trash" /></button
+							>
+						</li>
+					{/each}
+				</ul>
+			{/if}
 		{/if}
-	{/if}
+	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (open = false)}>
+		<button
+			class="btn btn-secondary"
+			data-testid="share-dialog-close-btn"
+			onclick={() => (open = false)}
+		>
 			{t('common.close', 'Close')}
 		</button>
 	{/snippet}

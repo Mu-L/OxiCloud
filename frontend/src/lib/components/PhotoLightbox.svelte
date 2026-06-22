@@ -180,6 +180,7 @@
 		aria-modal="true"
 		aria-label={item.name}
 		tabindex="-1"
+		data-testid="photo-lightbox"
 		onclick={(e) => e.target === e.currentTarget && close()}
 	>
 		<div class="lb__info">
@@ -187,12 +188,18 @@
 			<div class="lb__meta">{meta}</div>
 		</div>
 
-		<button class="lb__close" aria-label={t('common.close', 'Close')} onclick={close}>×</button>
+		<button
+			class="lb__close"
+			aria-label={t('common.close', 'Close')}
+			data-testid="photo-lightbox-close-btn"
+			onclick={close}>×</button
+		>
 
 		<button
 			class="lb__nav lb__nav--prev"
 			aria-label={t('common.previous', 'Previous')}
 			disabled={index === 0}
+			data-testid="photo-lightbox-prev-btn"
 			onclick={(e) => {
 				e.stopPropagation();
 				prev();
@@ -221,6 +228,7 @@
 			class="lb__nav lb__nav--next"
 			aria-label={t('common.next', 'Next')}
 			disabled={index === items.length - 1}
+			data-testid="photo-lightbox-next-btn"
 			onclick={(e) => {
 				e.stopPropagation();
 				next();

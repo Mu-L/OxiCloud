@@ -78,10 +78,21 @@
 <svelte:window onkeydown={onKeydown} onmessage={onMessage} />
 
 {#if open}
-	<div class="wopi" role="dialog" aria-modal="true" aria-label={fileName}>
+	<div
+		class="wopi"
+		role="dialog"
+		data-testid="wopi-editor-dialog"
+		aria-modal="true"
+		aria-label={fileName}
+	>
 		<header class="wopi__bar">
 			<span class="wopi__title">{fileName}</span>
-			<button class="wopi__close" aria-label={t('common.close', 'Close')} onclick={close}>
+			<button
+				class="wopi__close"
+				data-testid="wopi-editor-close-btn"
+				aria-label={t('common.close', 'Close')}
+				onclick={close}
+			>
 				<Icon name="times" />
 			</button>
 		</header>
@@ -97,8 +108,18 @@
 					target="wopi_frame"
 					class="wopi__form"
 				>
-					<input type="hidden" name="access_token" value={token} />
-					<input type="hidden" name="access_token_ttl" value={tokenTtl} />
+					<input
+						type="hidden"
+						name="access_token"
+						value={token}
+						data-testid="wopi-editor-access-token-input"
+					/>
+					<input
+						type="hidden"
+						name="access_token_ttl"
+						value={tokenTtl}
+						data-testid="wopi-editor-access-token-ttl-input"
+					/>
 				</form>
 			{/if}
 			<iframe

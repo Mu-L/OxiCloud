@@ -231,7 +231,8 @@
 <main class="groups">
 	<header class="groups__head">
 		<h1>{t('nav.groups', 'Groups')}</h1>
-		<button class="btn btn--primary" onclick={onCreate}>{t('groups.create', 'Create group')}</button
+		<button class="btn btn--primary" data-testid="groups-create-btn" onclick={onCreate}
+			>{t('groups.create', 'Create group')}</button
 		>
 	</header>
 
@@ -247,7 +248,11 @@
 				{@const description = groupDescription(g)}
 				<li class="group">
 					<div class="group__row">
-						<button class="group__name" onclick={() => expand(g)}>
+						<button
+							class="group__name"
+							data-testid={`groups-expand-${g.id}`}
+							onclick={() => expand(g)}
+						>
 							<span class="avatar"><Icon name={groupIconName(g)} /></span>
 							<span class="group__text">
 								<span class="group__title">
@@ -264,10 +269,16 @@
 						</button>
 						{#if g.can_manage !== false && !g.is_virtual}
 							<div class="group__actions">
-								<button class="link-btn" onclick={() => onRename(g)}
-									>{t('common.rename', 'Rename')}</button
+								<button
+									class="link-btn"
+									data-testid={`groups-rename-${g.id}`}
+									onclick={() => onRename(g)}>{t('common.rename', 'Rename')}</button
 								>
-								<button class="link-btn link-btn--danger" onclick={() => onDelete(g)}>
+								<button
+									class="link-btn link-btn--danger"
+									data-testid={`groups-delete-${g.id}`}
+									onclick={() => onDelete(g)}
+								>
 									{t('common.delete', 'Delete')}
 								</button>
 							</div>
@@ -275,7 +286,7 @@
 					</div>
 
 					{#if expandedId === g.id}
-						<div class="members">
+						<div class="members" data-testid={`groups-members-panel-${g.id}`}>
 							<div class="members__head">
 								<h2>{t('groups.members', 'Members')}</h2>
 							</div>
@@ -284,6 +295,7 @@
 								<div class="add-member">
 									<input
 										class="add-member__input"
+										data-testid="groups-member-add-input"
 										placeholder={t('groups.add_member_search', 'Search users or groups to add…')}
 										bind:value={addQuery}
 										oninput={onAddQuery}
@@ -291,10 +303,14 @@
 									{#if addBusy}
 										<p class="muted">{t('common.loading', 'Loading…')}</p>
 									{:else if addResults.length > 0}
-										<ul class="add-member__results">
+										<ul class="add-member__results" data-testid="groups-member-add-results">
 											{#each addResults as r (r.type + r.id)}
 												<li>
-													<button class="add-member__opt" onclick={() => pickMember(g, r)}>
+													<button
+														class="add-member__opt"
+														data-testid={`groups-member-add-opt-${r.type}-${r.id}`}
+														onclick={() => pickMember(g, r)}
+													>
 														<span class="avatar avatar--sm">
 															<Icon name={r.type === 'group' ? 'user-group' : 'user'} />
 														</span>
@@ -338,6 +354,7 @@
 											{#if g.can_manage !== false && !g.is_virtual}
 												<button
 													class="link-btn link-btn--danger"
+													data-testid={`groups-member-remove-${m.kind}-${m.id}`}
 													onclick={() => onRemoveMember(g.id, m)}
 												>
 													{t('common.remove', 'Remove')}
@@ -354,7 +371,12 @@
 		</ul>
 
 		{#if hasMore}
-			<button class="btn load-more" disabled={loadingMore} onclick={loadMore}>
+			<button
+				class="btn load-more"
+				data-testid="groups-load-more-btn"
+				disabled={loadingMore}
+				onclick={loadMore}
+			>
 				{loadingMore ? t('common.loading', 'Loading…') : t('groups.load_more', 'Load more')}
 			</button>
 		{/if}

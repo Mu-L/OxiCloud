@@ -201,12 +201,18 @@
 		<div class="search-controls">
 			{#if filesStore.currentFolder}
 				<div class="seg" role="group" aria-label={t('search.scope', 'Scope')}>
-					<button class="seg__btn" class:active={scope === 'all'} onclick={() => (scope = 'all')}>
+					<button
+						class="seg__btn"
+						class:active={scope === 'all'}
+						data-testid="search-scope-all-btn"
+						onclick={() => (scope = 'all')}
+					>
 						{t('search.everywhere', 'Everywhere')}
 					</button>
 					<button
 						class="seg__btn"
 						class:active={scope === 'folder'}
+						data-testid="search-scope-folder-btn"
 						onclick={() => (scope = 'folder')}
 					>
 						{t('search.this_folder', 'This folder')}
@@ -217,28 +223,40 @@
 				class="sort-select"
 				bind:value={typeFilter}
 				aria-label={t('search.type_label', 'Type')}
+				data-testid="search-type-filter-select"
 			>
-				{#each TYPES as o (o.v)}<option value={o.v}>{o.l}</option>{/each}
+				{#each TYPES as o (o.v)}<option value={o.v} data-testid={`search-type-${o.v}`}>{o.l}</option
+					>{/each}
 			</select>
 			<select
 				class="sort-select"
 				bind:value={sizeFilter}
 				aria-label={t('search.size_label', 'Size')}
+				data-testid="search-size-filter-select"
 			>
-				{#each SIZES as o (o.v)}<option value={o.v}>{o.l}</option>{/each}
+				{#each SIZES as o (o.v)}<option value={o.v} data-testid={`search-size-${o.v}`}>{o.l}</option
+					>{/each}
 			</select>
 			<select
 				class="sort-select"
 				bind:value={dateFilter}
 				aria-label={t('search.date_label', 'Date')}
+				data-testid="search-date-filter-select"
 			>
-				{#each DATES as o (o.v)}<option value={o.v}>{o.l}</option>{/each}
+				{#each DATES as o (o.v)}<option value={o.v} data-testid={`search-date-${o.v}`}>{o.l}</option
+					>{/each}
 			</select>
-			<select class="sort-select" bind:value={sortBy} aria-label={t('search.sort_by', 'Sort by')}>
-				{#each SORTS as s (s.v)}<option value={s.v}>{s.l}</option>{/each}
+			<select
+				class="sort-select"
+				bind:value={sortBy}
+				aria-label={t('search.sort_by', 'Sort by')}
+				data-testid="search-sort-select"
+			>
+				{#each SORTS as s (s.v)}<option value={s.v} data-testid={`search-sort-${s.v}`}>{s.l}</option
+					>{/each}
 			</select>
 			{#if hasFilters}
-				<button class="clear-filters" onclick={clearFilters}>
+				<button class="clear-filters" data-testid="search-clear-filters-btn" onclick={clearFilters}>
 					<Icon name="times" />
 					{t('search.clear_filters', 'Clear filters')}
 				</button>
@@ -281,6 +299,8 @@
 							class="file-item"
 							role="button"
 							tabindex="0"
+							aria-label={e.folder.name}
+							data-testid={e.folder.name}
 							onclick={() => openFolder(e.folder)}
 							onkeydown={(ev) => ev.key === 'Enter' && openFolder(e.folder)}
 						>
@@ -297,6 +317,8 @@
 							class="file-item"
 							role="button"
 							tabindex="0"
+							aria-label={e.file.name}
+							data-testid={e.file.name}
 							onclick={() => openFile(e.file)}
 							onkeydown={(ev) => ev.key === 'Enter' && openFile(e.file)}
 						>

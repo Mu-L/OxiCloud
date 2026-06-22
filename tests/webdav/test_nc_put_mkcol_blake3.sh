@@ -60,19 +60,16 @@ header_value() {
 
 # ── Helper: list home folder, find file by name, capture id + content_hash ───
 #
-# Uses `/listing` (NOT `/contents`): `/contents` is deprecated AND
-# its response shape was changed from `{files, folders}` to a flat
-# array, so callers that try `.files[]` fail with "Cannot index
-# array with string 'files'". The non-deprecated `/listing`
-# endpoint still returns the `.files[] / .folders[]` shape we
-# need here. Same endpoint `wipe_home_folder` + the API cleanup
-# audit (`tests/api/storage_cleanup_check.sh`) use.
+# Uses the cursor-paginated `/resources` listing (the `/listing` and
+# `/contents` endpoints were removed). `?resource_types=file` returns only
+# file rows as `{ items: [{ resource_type, resource }], next_cursor }`, so
+# the file DTO (id + content_hash) is at `.items[].resource`.
 nc_lookup_via_rest() {
     local name="$1"
     local response
-    response=$(api_curl "$base_url/api/folders/$HOME_FOLDER_ID/listing")
-    LAST_FILE_ID=$(jq -r --arg n "$name" '.files[]? | select(.name == $n) | .id'           <<< "$response")
-    LAST_FILE_CONTENT_HASH=$(jq -r --arg n "$name" '.files[]? | select(.name == $n) | .content_hash' <<< "$response")
+    response=$(api_curl "$base_url/api/folders/$HOME_FOLDER_ID/resources?resource_types=file&limit=200")
+    LAST_FILE_ID=$(jq -r --arg n "$name" '.items[]?.resource | select(.name == $n) | .id'           <<< "$response")
+    LAST_FILE_CONTENT_HASH=$(jq -r --arg n "$name" '.items[]?.resource | select(.name == $n) | .content_hash' <<< "$response")
     [[ -n "$LAST_FILE_ID" && "$LAST_FILE_ID" != "null" ]] \
         || fail "REST lookup for '$name' in home folder returned no id (response: $response)"
 }

@@ -341,21 +341,29 @@
 >
 	{#snippet toolbar()}
 		{#if entries.length > 0}
-			<Button icon="broom" onclick={clearAll}>{t('recent.clear', 'Clear recent')}</Button>
+			<Button icon="broom" data-testid="recent-clear-btn" onclick={clearAll}
+				>{t('recent.clear', 'Clear recent')}</Button
+			>
 		{/if}
 	{/snippet}
 	{#snippet batchToolbar()}
-		<Button icon="download" onclick={batchDownload}>{t('common.download', 'Download')}</Button>
+		<Button icon="download" data-testid="recent-batch-download-btn" onclick={batchDownload}
+			>{t('common.download', 'Download')}</Button
+		>
 		<Button
 			icon="arrows-alt"
+			data-testid="recent-batch-move-btn"
 			onclick={() => {
 				moveTarget = null;
 				moveItems = batchTargets();
 				moveOpen = true;
 			}}>{t('files.move', 'Move')}</Button
 		>
-		<Button variant="danger" icon="trash" onclick={batchDelete}
-			>{t('common.delete', 'Delete')}</Button
+		<Button
+			variant="danger"
+			icon="trash"
+			data-testid="recent-batch-delete-btn"
+			onclick={batchDelete}>{t('common.delete', 'Delete')}</Button
 		>
 	{/snippet}
 </ResourceList>

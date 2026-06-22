@@ -1,6 +1,27 @@
 # Build artifacts
 target/
 
+# Dependency / tooling directories — NEVER needed in the build context.
+# These dominate the context by file count (frontend/node_modules alone is
+# ~11k tiny files); shipping them makes the Testcontainers build (which tars
+# the context in pure JS, matching every path against this file) crawl and can
+# blow past the e2e stack-setup timeout. The frontend stage runs its own
+# `npm ci`, so host node_modules is both unused and would clobber it via the
+# later `COPY frontend/ ./`. .devenv/.direnv are the Nix dev shell.
+**/node_modules/
+.devenv/
+.direnv/
+
+# Generated SPA output — the image builds the SPA fresh in the `frontend` stage
+# and pulls it via `COPY --from=frontend /static-dist`; the host copy is unused.
+static-dist/
+frontend/build/
+dist/
+
+# Standalone wasm sub-workspaces — not a path dependency of the server crate
+# (see Cargo.toml), so `cargo build` in the image never reads them.
+wasm/
+
 # Git
 .git/
 .gitignore

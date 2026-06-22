@@ -104,15 +104,21 @@ jsonpath "$.successful[0].files_copied" == 1
 # ─────────────────────────────────────────────────────────────
 # Step 6 – Verify the copied folder is inside the target folder
 # ─────────────────────────────────────────────────────────────
-GET {{base_url}}/api/folders/{{target_folder_id}}/listing
+GET {{base_url}}/api/folders/{{target_folder_id}}/resources?resource_types=folder
 Authorization: Bearer {{token}}
 
 HTTP 200
 [Asserts]
-jsonpath "$.folders" count == 1
-jsonpath "$.folders[0].id" == "{{new_root_folder_id}}"
-jsonpath "$.folders[0].name" == "hurl-copy-source"
-jsonpath "$.files" count == 0
+jsonpath "$.items" count == 1
+jsonpath "$.items[0].resource.id" == "{{new_root_folder_id}}"
+jsonpath "$.items[0].resource.name" == "hurl-copy-source"
+
+GET {{base_url}}/api/folders/{{target_folder_id}}/resources?resource_types=file
+Authorization: Bearer {{token}}
+
+HTTP 200
+[Asserts]
+jsonpath "$.items" count == 0
 
 
 # ─────────────────────────────────────────────────────────────

@@ -70,7 +70,12 @@
 	<Icon name="ban" class="nc-status__icon nc-status__icon--err" />
 	<h1>{view.title}</h1>
 	<p>{view.message}</p>
-	<button type="button" class="nc-status__action" onclick={onAction}>{view.actionLabel}</button>
+	<button
+		type="button"
+		class="nc-status__action"
+		data-testid="nextcloud-error-action-btn"
+		onclick={onAction}>{view.actionLabel}</button
+	>
 </main>
 
 <style>

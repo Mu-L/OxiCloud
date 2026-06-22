@@ -21,8 +21,11 @@
     just
     cargo-audit
 
-    # frontend tooling (no root package.json — these are expected as global bins)
-    nodejs_24
+    # frontend tooling (no root package.json — these are expected as global bins).
+    # Pinned to Node 26 to match CI (.github/workflows/ci.yml). Newer Node ships
+    # a native global Web Storage API, so a skew here vs CI silently changes
+    # jsdom/localStorage behaviour in the Vitest suite.
+    nodejs_26
     biome
     typescript   # provides `tsc`
     stylelint
@@ -39,6 +42,8 @@
   # (postgres://postgres:postgres@localhost:5432/oxicloud).
   services.postgres = {
     enable = true;
+    # Pinned to PostgreSQL 18 to match CI (postgres:18-alpine in ci.yml).
+    package = pkgs.postgresql_18;
     listen_addresses = "127.0.0.1";
     port = 5432;
     initialDatabases = [ { name = "oxicloud"; } ];

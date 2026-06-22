@@ -1455,13 +1455,21 @@
 >
 	<div class="page-sticky-header">
 		<!-- Hidden upload inputs stay mounted even while the batch bar is shown. -->
-		<input bind:this={fileInput} type="file" multiple hidden onchange={onUpload} />
+		<input
+			bind:this={fileInput}
+			type="file"
+			multiple
+			hidden
+			data-testid="files-upload-file-input"
+			onchange={onUpload}
+		/>
 		<input
 			bind:this={folderInput}
 			type="file"
 			multiple
 			hidden
 			webkitdirectory
+			data-testid="files-upload-folder-input"
 			onchange={onUploadFolder}
 		/>
 
@@ -1474,12 +1482,13 @@
 		>
 			{#snippet start()}
 				{#if selectedCount > 0}
-					<div class="action-buttons batch-selection-bar">
+					<div class="action-buttons batch-selection-bar" data-testid="files-batch-bar">
 						<div class="list-header-checkbox">
 							<button
 								class="batch-bar-close"
 								title={t('files.cancel_selection', 'Cancel selection')}
 								aria-label={t('files.cancel_selection', 'Cancel selection')}
+								data-testid="files-batch-cancel-btn"
 								onclick={clearSelection}
 							>
 								<Icon name="times" />
@@ -1493,22 +1502,34 @@
 								<button
 									class="batch-btn"
 									title={t('files.add_favorites', 'Add to favorites')}
+									data-testid="files-batch-favorite-btn"
 									onclick={() => void batchFavorites()}
 								>
 									<Icon name="star" />
 									<span>{t('files.add_favorites', 'Add to favorites')}</span>
 								</button>
-								<button class="batch-btn" title={t('files.move', 'Move')} onclick={batchMove}>
+								<button
+									class="batch-btn"
+									title={t('files.move', 'Move')}
+									data-testid="files-batch-move-btn"
+									onclick={batchMove}
+								>
 									<Icon name="arrows-alt" />
 									<span>{t('files.move', 'Move')}</span>
 								</button>
-								<button class="batch-btn" title={t('files.copy', 'Copy')} onclick={batchCopy}>
+								<button
+									class="batch-btn"
+									title={t('files.copy', 'Copy')}
+									data-testid="files-batch-copy-btn"
+									onclick={batchCopy}
+								>
 									<Icon name="copy" />
 									<span>{t('files.copy', 'Copy')}</span>
 								</button>
 								<button
 									class="batch-btn"
 									title={t('common.download', 'Download')}
+									data-testid="files-batch-download-btn"
 									onclick={() => void batchDownload()}
 								>
 									<Icon name="download" />
@@ -1517,6 +1538,7 @@
 								<button
 									class="batch-btn batch-btn-danger"
 									title={t('common.delete', 'Delete')}
+									data-testid="files-batch-delete-btn"
 									onclick={batchDelete}
 								>
 									<Icon name="trash" />
@@ -1527,9 +1549,10 @@
 					</div>
 				{:else}
 					<div class="action-buttons">
-						<div class="upload-dropdown">
+						<div class="upload-dropdown" data-testid="files-upload-dropdown">
 							<button
 								class="btn btn-primary"
+								data-testid="files-upload-btn"
 								onclick={() => (uploadMenuOpen = !uploadMenuOpen)}
 								disabled={uploading}
 								aria-haspopup="true"
@@ -1544,9 +1567,10 @@
 								<Icon name="caret-down" class="upload-caret" />
 							</button>
 							{#if uploadMenuOpen}
-								<div class="upload-dropdown-menu">
+								<div class="upload-dropdown-menu" data-testid="files-upload-menu">
 									<button
 										class="upload-dropdown-item"
+										data-testid="files-upload-files-item"
 										onclick={() => {
 											uploadMenuOpen = false;
 											fileInput?.click();
@@ -1557,6 +1581,7 @@
 									</button>
 									<button
 										class="upload-dropdown-item"
+										data-testid="files-upload-folder-item"
 										onclick={() => {
 											uploadMenuOpen = false;
 											folderInput?.click();
@@ -1568,7 +1593,11 @@
 								</div>
 							{/if}
 						</div>
-						<button class="btn btn-secondary" onclick={onNewFolder}>
+						<button
+							class="btn btn-secondary"
+							data-testid="files-new-folder-btn"
+							onclick={onNewFolder}
+						>
 							<Icon name="folder-plus" class="icon-mr" />
 							<span>{t('actions.new_folder', 'New folder')}</span>
 						</button>
@@ -1593,6 +1622,7 @@
 						class="breadcrumb-item breadcrumb-link"
 						class:breadcrumb-home={i === 0}
 						title={i === 0 ? t('breadcrumb.home', 'Home') : undefined}
+						data-testid={i === 0 ? 'files-breadcrumb-home-link' : `files-breadcrumb-${c.id}`}
 						ondragover={(e) => e.dataTransfer?.types.includes(DRAG_TYPE) && e.preventDefault()}
 						ondrop={(e) => onCrumbDrop(e, c.id)}
 					>
@@ -1655,6 +1685,7 @@
 			<input
 				type="checkbox"
 				aria-label={t('files.select_all', 'Select all')}
+				data-testid="files-select-all-checkbox"
 				checked={selectedCount > 0 && selectedCount === totalCount}
 				indeterminate={selectedCount > 0 && selectedCount < totalCount}
 				onchange={toggleSelectAll}
@@ -1668,6 +1699,7 @@
 					class="list-header-sort"
 					class:is-active={sortField === col.f}
 					data-sort-field={col.f}
+					data-testid={`files-sort-${col.f}-btn`}
 					onclick={() => toggleSort(col.f as SortField)}
 				>
 					{col.l}
@@ -1700,6 +1732,8 @@
 		role="button"
 		tabindex="0"
 		draggable="true"
+		aria-label={folder.name}
+		data-testid={folder.name}
 		ondragstart={(e) => onItemDragStart(e, 'folder', folder.id, folder.name)}
 		ondragover={(e) => {
 			if (e.dataTransfer?.types.includes(DRAG_TYPE)) {
@@ -1723,6 +1757,7 @@
 				type="checkbox"
 				checked={selected.has(folder.id)}
 				aria-label={folder.name}
+				data-testid={`files-folder-checkbox-${folder.id}`}
 				onclick={(e) => {
 					e.stopPropagation();
 					toggleSelected(folder.id);
@@ -1760,6 +1795,7 @@
 					? t('files.unfavorite', 'Remove favorite')
 					: t('files.favorite', 'Add favorite')}
 				aria-pressed={favoriteIds.has(folder.id)}
+				data-testid={`files-folder-favorite-${folder.id}`}
 				onclick={(e) => {
 					e.stopPropagation();
 					void toggleFavorite('folder', folder.id);
@@ -1768,6 +1804,7 @@
 			<button
 				class="btn-action"
 				title={t('files.share', 'Share')}
+				data-testid={`files-folder-share-${folder.id}`}
 				onclick={(e) => {
 					e.stopPropagation();
 					openShare('folder', folder.id, folder.name);
@@ -1776,6 +1813,7 @@
 			<button
 				class="btn-action"
 				title={t('files.move', 'Move')}
+				data-testid={`files-folder-move-${folder.id}`}
 				onclick={(e) => {
 					e.stopPropagation();
 					openMove('folder', folder.id, folder.name);
@@ -1784,6 +1822,7 @@
 			<button
 				class="btn-action"
 				title={t('common.rename', 'Rename')}
+				data-testid={`files-folder-rename-${folder.id}`}
 				onclick={(e) => {
 					e.stopPropagation();
 					renameItem('folder', folder.id, folder.name);
@@ -1792,6 +1831,7 @@
 			<button
 				class="btn-action btn-action--delete"
 				title={t('common.delete', 'Delete')}
+				data-testid={`files-folder-delete-${folder.id}`}
 				onclick={(e) => {
 					e.stopPropagation();
 					deleteItem('folder', folder.id, folder.name);
@@ -1802,6 +1842,7 @@
 				title={t('files.more_actions', 'More actions')}
 				aria-label={t('files.more_actions', 'More actions')}
 				aria-haspopup="menu"
+				data-testid={`files-folder-more-${folder.id}`}
 				onclick={(e) => openContext(e, 'folder', folder.id, folder.name)}
 				><Icon name="ellipsis-v" /></button
 			>
@@ -1817,6 +1858,8 @@
 		role="button"
 		tabindex="0"
 		draggable="true"
+		aria-label={file.name}
+		data-testid={file.name}
 		ondragstart={(e) => onItemDragStart(e, 'file', file.id, file.name)}
 		ondblclick={() => openFile(file)}
 		onclick={(e) => {
@@ -1830,6 +1873,7 @@
 				type="checkbox"
 				checked={selected.has(file.id)}
 				aria-label={file.name}
+				data-testid={`files-file-checkbox-${file.id}`}
 				onclick={(e) => {
 					e.stopPropagation();
 					toggleSelected(file.id);
@@ -1881,6 +1925,7 @@
 					? t('files.unfavorite', 'Remove favorite')
 					: t('files.favorite', 'Add favorite')}
 				aria-pressed={favoriteIds.has(file.id)}
+				data-testid={`files-file-favorite-${file.id}`}
 				onclick={(e) => {
 					e.stopPropagation();
 					void toggleFavorite('file', file.id);
@@ -1889,6 +1934,7 @@
 			<button
 				class="btn-action"
 				title={t('files.share', 'Share')}
+				data-testid={`files-file-share-${file.id}`}
 				onclick={(e) => {
 					e.stopPropagation();
 					openShare('file', file.id, file.name);
@@ -1897,6 +1943,7 @@
 			<button
 				class="btn-action"
 				title={t('files.move', 'Move')}
+				data-testid={`files-file-move-${file.id}`}
 				onclick={(e) => {
 					e.stopPropagation();
 					openMove('file', file.id, file.name);
@@ -1908,11 +1955,13 @@
 				rel="external"
 				download
 				title={t('common.download', 'Download')}
+				data-testid={`files-file-download-${file.id}`}
 				onclick={(e) => e.stopPropagation()}><Icon name="download" /></a
 			>
 			<button
 				class="btn-action"
 				title={t('common.rename', 'Rename')}
+				data-testid={`files-file-rename-${file.id}`}
 				onclick={(e) => {
 					e.stopPropagation();
 					renameItem('file', file.id, file.name);
@@ -1921,6 +1970,7 @@
 			<button
 				class="btn-action btn-action--delete"
 				title={t('common.delete', 'Delete')}
+				data-testid={`files-file-delete-${file.id}`}
 				onclick={(e) => {
 					e.stopPropagation();
 					deleteItem('file', file.id, file.name);
@@ -1931,6 +1981,7 @@
 				title={t('files.more_actions', 'More actions')}
 				aria-label={t('files.more_actions', 'More actions')}
 				aria-haspopup="menu"
+				data-testid={`files-file-more-${file.id}`}
 				onclick={(e) => openContext(e, 'file', file.id, file.name)}
 				><Icon name="ellipsis-v" /></button
 			>
@@ -1977,14 +2028,22 @@
 	<div
 		class="ctx-scrim"
 		role="presentation"
+		data-testid="files-context-menu-scrim"
 		onclick={closeContext}
 		oncontextmenu={(e) => e.preventDefault()}
 	></div>
-	<div class="ctx-menu" style:left="{ctxX}px" style:top="{ctxY}px" role="menu">
+	<div
+		class="ctx-menu"
+		style:left="{ctxX}px"
+		style:top="{ctxY}px"
+		role="menu"
+		data-testid="files-context-menu"
+	>
 		{#if ctxTarget.kind === 'folder'}
 			<button
 				class="ctx-item"
 				role="menuitem"
+				data-testid="files-ctx-folder-open-item"
 				onclick={() => {
 					const id = ctxTarget!.id;
 					closeContext();
@@ -1994,6 +2053,7 @@
 			<button
 				class="ctx-item"
 				role="menuitem"
+				data-testid="files-ctx-download-zip-item"
 				onclick={() => {
 					const tg = ctxTarget!;
 					closeContext();
@@ -2004,6 +2064,7 @@
 			<button
 				class="ctx-item"
 				role="menuitem"
+				data-testid="files-ctx-file-open-item"
 				onclick={() => {
 					const f = listing.files.find((x) => x.id === ctxTarget!.id);
 					closeContext();
@@ -2014,6 +2075,7 @@
 				<button
 					class="ctx-item"
 					role="menuitem"
+					data-testid="files-ctx-edit-item"
 					onclick={() => {
 						const tg = ctxTarget!;
 						closeContext();
@@ -2023,6 +2085,7 @@
 				<button
 					class="ctx-item"
 					role="menuitem"
+					data-testid="files-ctx-edit-new-tab-item"
 					onclick={() => {
 						const tg = ctxTarget!;
 						closeContext();
@@ -2036,11 +2099,13 @@
 				href={fileDownloadUrl(ctxTarget.id)}
 				rel="external"
 				download
+				data-testid="files-ctx-download-item"
 				onclick={closeContext}><Icon name="download" /> {t('common.download', 'Download')}</a
 			>
 			<button
 				class="ctx-item"
 				role="menuitem"
+				data-testid="files-ctx-open-parent-item"
 				onclick={() => {
 					const f = listing.files.find((x) => x.id === ctxTarget!.id);
 					closeContext();
@@ -2051,6 +2116,7 @@
 				<button
 					class="ctx-item"
 					role="menuitem"
+					data-testid="files-ctx-add-playlist-item"
 					onclick={() => {
 						const f = listing.files.find((x) => x.id === ctxTarget!.id);
 						closeContext();
@@ -2062,6 +2128,7 @@
 		<button
 			class="ctx-item"
 			role="menuitem"
+			data-testid="files-ctx-share-item"
 			onclick={() => {
 				const tg = ctxTarget!;
 				closeContext();
@@ -2071,6 +2138,7 @@
 		<button
 			class="ctx-item"
 			role="menuitem"
+			data-testid="files-ctx-move-item"
 			onclick={() => {
 				const tg = ctxTarget!;
 				closeContext();
@@ -2080,6 +2148,7 @@
 		<button
 			class="ctx-item"
 			role="menuitem"
+			data-testid="files-ctx-copy-item"
 			onclick={() => {
 				const tg = ctxTarget!;
 				closeContext();
@@ -2089,6 +2158,7 @@
 		<button
 			class="ctx-item"
 			role="menuitem"
+			data-testid="files-ctx-favorite-item"
 			onclick={() => {
 				const tg = ctxTarget!;
 				closeContext();
@@ -2103,6 +2173,7 @@
 		<button
 			class="ctx-item"
 			role="menuitem"
+			data-testid="files-ctx-rename-item"
 			onclick={() => {
 				const tg = ctxTarget!;
 				closeContext();
@@ -2112,6 +2183,7 @@
 		<button
 			class="ctx-item ctx-item--danger"
 			role="menuitem"
+			data-testid="files-ctx-delete-item"
 			onclick={() => {
 				const tg = ctxTarget!;
 				closeContext();

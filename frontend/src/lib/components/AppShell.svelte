@@ -268,7 +268,7 @@
 ></div>
 
 <div class="sidebar" class:open={sidebarOpen}>
-	<a href={resolve('/files')} class="logo-container">
+	<a href={resolve('/files')} class="logo-container" data-testid="appshell-logo-link">
 		<div class="logo">
 			<svg viewBox="95 67 320 320" aria-hidden="true">
 				<path
@@ -286,6 +286,7 @@
 				class:active={active(link.href)}
 				href={resolve(link.href)}
 				data-section={link.section}
+				data-testid={`appshell-nav-${link.href.replace(/^\//, '')}-link`}
 				onclick={() => (sidebarOpen = false)}
 			>
 				<Icon name={link.icon} />
@@ -324,6 +325,7 @@
 			class="sidebar-toggle"
 			aria-label={t('nav.toggle', 'Toggle navigation menu')}
 			aria-expanded={sidebarOpen}
+			data-testid="appshell-sidebar-toggle-btn"
 			onclick={() => (sidebarOpen = !sidebarOpen)}
 		>
 			<Icon name="bars" />
@@ -334,6 +336,7 @@
 			class="search-toggle-btn"
 			id="search-toggle-btn"
 			aria-label={t('actions.search_btn', 'Search')}
+			data-testid="appshell-search-toggle-btn"
 			onclick={openMobileSearch}
 		>
 			<Icon name="search" />
@@ -343,6 +346,7 @@
 		<button
 			class="search-back-btn"
 			aria-label={t('common.close', 'Close')}
+			data-testid="appshell-search-back-btn"
 			onclick={closeMobileSearch}
 		>
 			<Icon name="arrow-left" />
@@ -355,6 +359,7 @@
 					type="text"
 					bind:this={searchInputEl}
 					bind:value={searchQuery}
+					data-testid="appshell-search-input"
 					oninput={onSearchInput}
 					onfocus={() => (suggestOpen = suggestions.length > 0)}
 					onblur={() => setTimeout(() => (suggestOpen = false), 150)}
@@ -367,6 +372,7 @@
 						type="button"
 						title={t('common.clear', 'Clear')}
 						aria-label={t('common.clear', 'Clear')}
+						data-testid="appshell-search-clear-btn"
 						onclick={clearSearch}
 					>
 						<Icon name="times" />
@@ -377,6 +383,7 @@
 					type="submit"
 					title={t('actions.search_btn', 'Search')}
 					aria-label={t('actions.search_btn', 'Search')}
+					data-testid="appshell-search-submit-btn"
 				>
 					<Icon name="search" />
 				</button>
@@ -385,7 +392,12 @@
 					<ul class="suggest">
 						{#each suggestions as s (s.kind + s.item.id)}
 							<li>
-								<button class="suggest__item" type="button" onmousedown={() => pickSuggestion(s)}>
+								<button
+									class="suggest__item"
+									type="button"
+									data-testid={`appshell-search-suggestion-${s.kind}-${s.item.id}-item`}
+									onmousedown={() => pickSuggestion(s)}
+								>
 									<span class="suggest__icon">
 										{#if s.kind === 'folder'}
 											<Icon name="folder" />
@@ -398,7 +410,12 @@
 							</li>
 						{/each}
 						<li>
-							<button class="suggest__all" type="button" onmousedown={goToResults}>
+							<button
+								class="suggest__all"
+								type="button"
+								data-testid="appshell-search-see-all-btn"
+								onmousedown={goToResults}
+							>
 								{t('search.see_all', 'See all results')}
 							</button>
 						</li>
@@ -411,13 +428,14 @@
 
 		<div class="user-controls">
 			<!-- Notifications -->
-			<div class="notif-wrapper" class:open={notifOpen}>
+			<div class="notif-wrapper" class:open={notifOpen} data-testid="appshell-notif-menu">
 				<button
 					class="notif-bell-btn"
 					class:active={notifOpen}
 					class:ring={bellRinging}
 					aria-label={t('notifications.title', 'Notifications')}
 					aria-haspopup="true"
+					data-testid="appshell-notif-bell-btn"
 					onclick={(e) => {
 						e.stopPropagation();
 						notifOpen = !notifOpen;
@@ -436,6 +454,7 @@
 								class="notif-clear-btn"
 								title={t('notifications.clear', 'Clear all')}
 								aria-label={t('notifications.clear', 'Clear all')}
+								data-testid="appshell-notif-clear-btn"
 								onclick={(e) => {
 									e.stopPropagation();
 									ui.clearNotifications();
@@ -494,11 +513,12 @@
 			</div>
 
 			<!-- User menu -->
-			<div class="user-menu-wrapper" class:open={menuOpen}>
+			<div class="user-menu-wrapper" class:open={menuOpen} data-testid="appshell-user-menu">
 				<button
 					class="user-avatar-btn"
 					aria-label={t('user_menu.title', 'User menu')}
 					aria-haspopup="true"
+					data-testid="appshell-user-menu-btn"
 					onclick={(e) => {
 						e.stopPropagation();
 						menuOpen = !menuOpen;
@@ -555,15 +575,30 @@
 					<div class="user-menu-divider"></div>
 
 					{#if isAdmin}
-						<a class="user-menu-item" href={resolve('/admin')} onclick={() => (menuOpen = false)}>
+						<a
+							class="user-menu-item"
+							href={resolve('/admin')}
+							data-testid="appshell-user-menu-admin-item"
+							onclick={() => (menuOpen = false)}
+						>
 							<Icon name="cogs" /> <span>{t('user_menu.admin_panel', 'Admin panel')}</span>
 						</a>
-						<a class="user-menu-item" href={resolve('/groups')} onclick={() => (menuOpen = false)}>
+						<a
+							class="user-menu-item"
+							href={resolve('/groups')}
+							data-testid="appshell-user-menu-groups-item"
+							onclick={() => (menuOpen = false)}
+						>
 							<Icon name="user-group" />
 							<span>{t('user_menu.manage_groups', 'Manage groups')}</span>
 						</a>
 					{/if}
-					<a class="user-menu-item" href={resolve('/profile')} onclick={() => (menuOpen = false)}>
+					<a
+						class="user-menu-item"
+						href={resolve('/profile')}
+						data-testid="appshell-user-menu-profile-item"
+						onclick={() => (menuOpen = false)}
+					>
 						<Icon name="user-circle" /> <span>{t('user_menu.profile', 'My profile')}</span>
 					</a>
 
@@ -572,12 +607,17 @@
 					<div class="user-menu-item user-menu-item--lang">
 						<Icon name="globe" />
 						<span>{t('settings.language', 'Language')}</span>
-						<div class="lang-selector" class:lang-selector--open={langOpen}>
+						<div
+							class="lang-selector"
+							class:lang-selector--open={langOpen}
+							data-testid="appshell-lang-menu"
+						>
 							<button
 								type="button"
 								class="lang-selector__toggle"
 								aria-haspopup="listbox"
 								aria-expanded={langOpen}
+								data-testid="appshell-lang-toggle-btn"
 								onclick={(e) => {
 									e.stopPropagation();
 									langOpen = !langOpen;
@@ -597,6 +637,7 @@
 												class:lang-option--active={lang.code === i18n.locale}
 												role="option"
 												aria-selected={lang.code === i18n.locale}
+												data-testid={`appshell-lang-${lang.code}-option`}
 												onclick={(e) => {
 													e.stopPropagation();
 													chooseLocale(lang.code);
@@ -622,6 +663,7 @@
 							class="theme-segmented"
 							role="radiogroup"
 							aria-label={t('user_menu.appearance', 'Appearance')}
+							data-testid="appshell-theme-toggle"
 						>
 							{#each THEMES as th (th.mode)}
 								<button
@@ -632,6 +674,7 @@
 									aria-checked={theme.current === th.mode}
 									title={th.label}
 									aria-label={th.label}
+									data-testid={`appshell-theme-${th.mode}-option`}
 									onclick={(e) => {
 										e.stopPropagation();
 										theme.set(th.mode);
@@ -643,13 +686,21 @@
 						</div>
 					</div>
 
-					<button class="user-menu-item" onclick={openAbout}>
+					<button
+						class="user-menu-item"
+						data-testid="appshell-user-menu-about-item"
+						onclick={openAbout}
+					>
 						<Icon name="info-circle" /> <span>{t('user_menu.about', 'About OxiCloud')}</span>
 					</button>
 
 					<div class="user-menu-divider"></div>
 
-					<button class="user-menu-item user-menu-logout" onclick={onLogout}>
+					<button
+						class="user-menu-item user-menu-logout"
+						data-testid="appshell-user-menu-logout-btn"
+						onclick={onLogout}
+					>
 						<Icon name="sign-out-alt" /> <span>{t('actions.logout', 'Log out')}</span>
 					</button>
 				</div>
@@ -708,6 +759,7 @@
 					href="https://github.com/AtalayaLabs/OxiCloud/"
 					target="_blank"
 					rel="noopener"
+					data-testid="appshell-about-github-link"
 				>
 					<Icon name="github" /> GitHub
 				</a>
@@ -716,12 +768,17 @@
 					href="https://github.com/AtalayaLabs/OxiCloud/blob/main/LICENSE"
 					target="_blank"
 					rel="noopener"
+					data-testid="appshell-about-license-link"
 				>
 					<Icon name="file-alt" />
 					{t('user_menu.mit_license', 'MIT License')}
 				</a>
 			</div>
-			<button class="about-modal__close" onclick={() => (aboutOpen = false)}>
+			<button
+				class="about-modal__close"
+				data-testid="appshell-about-close-btn"
+				onclick={() => (aboutOpen = false)}
+			>
 				{t('actions.close', 'Close')}
 			</button>
 		</div>

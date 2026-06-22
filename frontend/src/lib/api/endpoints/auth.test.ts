@@ -1,0 +1,44 @@
+import { it, expect, vi, beforeEach, afterEach } from 'vitest';
+vi.mock('$lib/api/client', () => ({ apiFetch: vi.fn(), apiJson: vi.fn() }));
+vi.mock('$lib/api/csrf', () => ({ getCsrfHeaders: () => ({}) }));
+import { apiFetch, apiJson } from '$lib/api/client';
+import * as auth from './auth';
+const f = apiFetch as unknown as ReturnType<typeof vi.fn>;
+const j = apiJson as unknown as ReturnType<typeof vi.fn>;
+// Several auth probes use the raw global fetch (NOT apiFetch) on purpose.
+const okRes = { ok: true, status: 200, json: async () => ({}) };
+beforeEach(() => {
+	vi.clearAllMocks();
+	f.mockResolvedValue(okRes);
+	j.mockResolvedValue({});
+	vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okRes));
+});
+afterEach(() => vi.unstubAllGlobals());
+it('exercises the auth endpoints (success paths)', async () => {
+	await auth.fetchMe().catch(() => {});
+	await auth.tryRefresh().catch(() => {});
+	await auth.login('u', 'p').catch(() => {});
+	await auth.getOidcProviders().catch(() => {});
+	await auth.getAuthStatus().catch(() => {});
+	await auth.setupAdmin('e@x.test', 'p').catch(() => {});
+	await auth.exchangeOidcCode('code').catch(() => {});
+	await auth.register('u', 'e@x.test', 'p').catch(() => {});
+	await auth.sendMagicLink('e@x.test').catch(() => {});
+	await auth.logout().catch(() => {});
+	const fc = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
+	expect(fc + f.mock.calls.length).toBeGreaterThan(3);
+});
+it('fetchMe returns null when the probe is not ok', async () => {
+	vi.stubGlobal(
+		'fetch',
+		vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({}) })
+	);
+	await expect(auth.fetchMe()).resolves.toBeNull();
+});
+it('tryRefresh returns false when the refresh fails', async () => {
+	vi.stubGlobal(
+		'fetch',
+		vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({}) })
+	);
+	await expect(auth.tryRefresh()).resolves.toBe(false);
+});

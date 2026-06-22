@@ -183,10 +183,11 @@ pass "J6: assembled file is byte-identical to concat(chunk1, chunk2)"
 # dedup / lifecycle hooks downstream key on.
 # ─────────────────────────────────────────────────────────────
 echo "  J7: BLAKE3 round-trip on assembled file (HEADLINE)"
-# Find the assembled file's id via the REST listing.
-listing=$(api_curl "$base_url/api/folders/$HOME_FOLDER_ID/listing")
-ASSEMBLED_ID=$(jq -r '.files[]?       | select(.name == "j-assembled.bin") | .id'           <<< "$listing")
-SERVER_HASH=$(jq -r '.files[]?        | select(.name == "j-assembled.bin") | .content_hash' <<< "$listing")
+# Find the assembled file's id via the REST `/resources` listing
+# ({ items: [{ resource_type, resource }] }; `/listing` was removed).
+listing=$(api_curl "$base_url/api/folders/$HOME_FOLDER_ID/resources?resource_types=file&limit=200")
+ASSEMBLED_ID=$(jq -r '.items[]?.resource | select(.name == "j-assembled.bin") | .id'           <<< "$listing")
+SERVER_HASH=$(jq -r '.items[]?.resource  | select(.name == "j-assembled.bin") | .content_hash' <<< "$listing")
 [[ -n "$ASSEMBLED_ID" && "$ASSEMBLED_ID" != "null" ]] \
     || fail "J7: assembled file not visible via REST listing"
 [[ -n "$SERVER_HASH"  && "$SERVER_HASH"  != "null" ]] \

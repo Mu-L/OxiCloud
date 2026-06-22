@@ -10,10 +10,11 @@
 	aria-label={t('notifications.title', 'Notifications')}
 >
 	{#each ui.toasts as toast (toast.id)}
-		<div class="toast toast--{toast.kind}" role="status">
+		<div class="toast toast--{toast.kind}" role="status" data-testid={`toaster-toast-${toast.id}`}>
 			<span class="toast__msg">{toast.message}</span>
 			<button
 				class="toast__close"
+				data-testid={`toaster-dismiss-btn-${toast.id}`}
 				aria-label={t('common.dismiss', 'Dismiss')}
 				onclick={() => ui.dismiss(toast.id)}
 			>

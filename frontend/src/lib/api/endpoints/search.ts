@@ -26,7 +26,9 @@ export function searchFiles(query: string, opts: SearchOptions = {}): Promise<Se
 	params.append('query', query);
 	if (opts.folderId) params.append('folder_id', opts.folderId);
 	if (opts.recursive !== undefined) params.append('recursive', String(opts.recursive));
-	for (const ft of opts.fileTypes ?? []) params.append('type', ft);
+	// The backend expects a single comma-separated `type` param (it splits on
+	// ','); appending one param per type yields a "duplicate field" 400.
+	if (opts.fileTypes?.length) params.append('type', opts.fileTypes.join(','));
 	if (opts.minSize != null) params.append('min_size', String(opts.minSize));
 	if (opts.maxSize != null) params.append('max_size', String(opts.maxSize));
 	if (opts.createdAfter != null) params.append('created_after', String(opts.createdAfter));

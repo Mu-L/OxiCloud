@@ -309,6 +309,8 @@
 		class:file-item--selected={selectable && selected.has(entry.id)}
 		role={onopen ? 'button' : undefined}
 		tabindex={onopen ? 0 : undefined}
+		aria-label={onopen ? entry.name : undefined}
+		data-testid={entry.name}
 		title={showOwner ? ownerTitle(entry) : undefined}
 		onclick={onopen ? () => onopen(entry) : undefined}
 		onkeydown={onopen ? (e) => e.key === 'Enter' && onopen(entry) : undefined}
@@ -319,6 +321,7 @@
 				<input
 					type="checkbox"
 					aria-label={t('common.select', 'Select')}
+					data-testid={`resource-list-select-${entry.id}-checkbox`}
 					checked={selected.has(entry.id)}
 					onchange={() => toggleSelected(entry.id)}
 				/>
@@ -360,6 +363,7 @@
 			<button
 				class="rl-star"
 				class:rl-star--on={entry.isFavorite}
+				data-testid={`resource-list-favorite-${entry.id}-btn`}
 				title={entry.isFavorite
 					? t('files.unfavorite', 'Remove favorite')
 					: t('files.favorite', 'Add favorite')}
@@ -393,8 +397,18 @@
 </div>
 
 {#if selectable && selected.size > 0 && batchToolbar}
-	<div class="rl-batch" role="region" aria-label={t('files.selection', 'Selection')}>
-		<button class="rl-batch__close" title={t('common.clear', 'Clear')} onclick={clearSelection}>
+	<div
+		class="rl-batch"
+		role="region"
+		aria-label={t('files.selection', 'Selection')}
+		data-testid="resource-list-batch-toolbar"
+	>
+		<button
+			class="rl-batch__close"
+			title={t('common.clear', 'Clear')}
+			data-testid="resource-list-batch-close-btn"
+			onclick={clearSelection}
+		>
 			<Icon name="times" />
 		</button>
 		<span class="rl-batch__count"
@@ -454,7 +468,12 @@
 		{/if}
 
 		{#if hasMore}
-			<button class="btn btn-secondary rl-more" onclick={onloadmore} disabled={loading}>
+			<button
+				class="btn btn-secondary rl-more"
+				data-testid="resource-list-load-more-btn"
+				onclick={onloadmore}
+				disabled={loading}
+			>
 				{loading ? t('common.loading', 'Loading…') : t('common.load_more', 'Load more')}
 			</button>
 		{/if}
@@ -470,6 +489,7 @@
 				<input
 					type="checkbox"
 					aria-label={t('common.select_all', 'Select all')}
+					data-testid="resource-list-select-all-checkbox"
 					checked={allSelected}
 					onchange={toggleSelectAll}
 				/>
@@ -492,12 +512,19 @@
 		onclick={closeContext}
 		oncontextmenu={(e) => e.preventDefault()}
 	></div>
-	<div class="rl-ctx-menu" style:left="{ctxX}px" style:top="{ctxY}px" role="menu">
+	<div
+		class="rl-ctx-menu"
+		style:left="{ctxX}px"
+		style:top="{ctxY}px"
+		role="menu"
+		data-testid="resource-list-context-menu"
+	>
 		{#each contextActions as action (action.key)}
 			<button
 				class="rl-ctx-item"
 				class:rl-ctx-item--danger={action.danger}
 				role="menuitem"
+				data-testid={`resource-list-context-${action.key}-item`}
 				onclick={() => {
 					const e = ctxEntry!;
 					closeContext();

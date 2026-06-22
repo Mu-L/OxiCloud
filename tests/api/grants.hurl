@@ -424,7 +424,7 @@ Authorization: Bearer {{adam_token}}
 
 HTTP 404
 
-GET {{base_url}}/api/folders/{{perm_folder_id}}/listing
+GET {{base_url}}/api/folders/{{perm_folder_id}}/resources
 Authorization: Bearer {{adam_token}}
 
 HTTP 404
@@ -547,7 +547,7 @@ Authorization: Bearer {{adam_token}}
 
 HTTP 200
 
-GET {{base_url}}/api/folders/{{perm_folder_id}}/listing
+GET {{base_url}}/api/folders/{{perm_folder_id}}/resources
 Authorization: Bearer {{adam_token}}
 
 HTTP 200

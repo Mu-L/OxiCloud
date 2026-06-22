@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('$lib/api/csrf', () => ({ getCsrfToken: () => 'tok' }));
 
 // vi.mock is hoisted; build the spies with vi.hoisted so the factories can use them.
 const { blake3Mock, byHashMock, batchMock } = vi.hoisted(() => ({
@@ -13,7 +15,96 @@ vi.mock('$lib/api/endpoints/files', () => ({
 	dedupCheckBatch: batchMock
 }));
 
-import { DELTA_UPLOAD_MIN_SIZE, instantUploadOwned, resolveOwnedHashes } from './deltaUpload';
+import {
+	DELTA_UPLOAD_MIN_SIZE,
+	instantUploadOwned,
+	resolveOwnedHashes,
+	tryDeltaUpload
+} from './deltaUpload';
+
+describe('tryDeltaUpload (delta worker)', () => {
+	type Handler = ((e: { data: unknown }) => void) | null;
+	let lastWorker: FakeWorker | null = null;
+
+	class FakeWorker {
+		onmessage: Handler = null;
+		onerror: (() => void) | null = null;
+		posted: unknown[] = [];
+		terminated = false;
+		constructor() {
+			// Capture the instance the code-under-test creates so the test can drive its events.
+			// eslint-disable-next-line @typescript-eslint/no-this-alias
+			lastWorker = this;
+		}
+		postMessage(msg: unknown) {
+			this.posted.push(msg);
+		}
+		terminate() {
+			this.terminated = true;
+		}
+		emit(data: unknown) {
+			this.onmessage?.({ data });
+		}
+	}
+
+	function bigFile(): File {
+		const f = new File(['x'], 'big.bin');
+		Object.defineProperty(f, 'size', { value: DELTA_UPLOAD_MIN_SIZE + 1 });
+		return f;
+	}
+
+	beforeEach(() => {
+		lastWorker = null;
+		vi.stubGlobal('Worker', FakeWorker as unknown as typeof Worker);
+	});
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('skips delta for a small file', async () => {
+		const small = new File(['x'], 's.txt');
+		expect(await tryDeltaUpload(small, 'folder')).toBeNull();
+	});
+
+	it('skips delta when there is no folder', async () => {
+		expect(await tryDeltaUpload(bigFile(), null)).toBeNull();
+	});
+
+	it('resolves ok on a 201 done message and reports progress', async () => {
+		const onProgress = vi.fn();
+		const p = tryDeltaUpload(bigFile(), 'folder', onProgress);
+		await Promise.resolve();
+		expect(lastWorker).toBeTruthy();
+		lastWorker!.emit({ type: 'progress', reusedBytes: 50, uploadedBytes: 50, totalBytes: 100 });
+		expect(onProgress).toHaveBeenCalledWith(99);
+		lastWorker!.emit({ type: 'done', status: 201, body: { message: 'ok' } });
+		const res = await p;
+		expect(res?.ok).toBe(true);
+		expect(res?.savedBytes).toBe(50);
+		expect(lastWorker!.terminated).toBe(true);
+	});
+
+	it('falls back to null on a fallback message', async () => {
+		const p = tryDeltaUpload(bigFile(), 'folder');
+		await Promise.resolve();
+		lastWorker!.emit({ type: 'fallback', reason: 'no wasm' });
+		expect(await p).toBeNull();
+	});
+
+	it('reports a quota error on a 507 done message', async () => {
+		const p = tryDeltaUpload(bigFile(), 'folder');
+		await Promise.resolve();
+		lastWorker!.emit({ type: 'done', status: 507, body: { error: 'over quota' } });
+		const res = await p;
+		expect(res?.isQuotaError).toBe(true);
+		expect(res?.errorMsg).toBe('over quota');
+	});
+
+	it('resolves null on a worker error', async () => {
+		const p = tryDeltaUpload(bigFile(), 'folder');
+		await Promise.resolve();
+		lastWorker!.onerror?.();
+		expect(await p).toBeNull();
+	});
+});
 
 const fakeFile = (size: number, name = 'x.bin') => ({ size, name }) as unknown as File;
 const hashOf = (name: string) => name.padEnd(64, '0');

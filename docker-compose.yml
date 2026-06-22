@@ -32,6 +32,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Route `docker compose up --build` / `docker compose build` through the
+      # cache-mount builder so repeat local builds recompile only changed crates
+      # (true incremental). Compose v2 uses BuildKit by default, which the
+      # Dockerfile already requires. The image is functionally identical to the
+      # default `builder` stage CI uses; only the build path differs.
+      args:
+        BUILDER: builder-cache
+        BIN_DIR: /app/bin
     ports:
       - "8086:8086"
     networks:

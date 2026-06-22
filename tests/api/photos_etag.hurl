@@ -37,13 +37,17 @@ home_folder_id: jsonpath "$[0].id"
 
 
 # ─────────────────────────────────────────────────────────────
-# Step 3 – Upload an image so the photos timeline is non-empty
+# Step 3 – Upload an image so the photos timeline is non-empty.
+#          Uses oxicloud-logo.jpg (not dedup-test.jpg): the dedup
+#          blob-lifecycle test asserts an exact ref_count on the
+#          dedup-test.jpg blob and must own it exclusively, and
+#          blobs are content-addressed (shared across the suite).
 # ─────────────────────────────────────────────────────────────
 POST {{base_url}}/api/files/upload
 Authorization: Bearer {{token}}
 [MultipartFormData]
 folder_id: {{home_folder_id}}
-file: file,fixtures/dedup-test.jpg; image/jpeg
+file: file,fixtures/oxicloud-logo.jpg; image/jpeg
 
 HTTP 201
 

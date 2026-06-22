@@ -86,13 +86,17 @@
 			aria-modal="true"
 			aria-label={title}
 			tabindex="-1"
+			data-testid="modal"
 			bind:this={dialogEl}
 		>
 			{#if title}
 				<header class="modal__header">
 					<h2 class="modal__title">{title}</h2>
-					<button class="modal__close" aria-label={t('common.close', 'Close')} onclick={close}
-						>×</button
+					<button
+						class="modal__close"
+						aria-label={t('common.close', 'Close')}
+						data-testid="modal-close-btn"
+						onclick={close}>×</button
 					>
 				</header>
 			{/if}

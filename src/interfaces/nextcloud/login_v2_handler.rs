@@ -2,7 +2,7 @@ use askama::Template;
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
-    response::{Html, IntoResponse, Json, Response},
+    response::{Html, IntoResponse, Json, Redirect, Response},
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -29,30 +29,11 @@ struct DrivePickerTemplate {
     drives: Vec<DriveOption>,
 }
 
-/// The Nextcloud Login Flow v2 "Grant Access" page. Rendered server-side via
-/// askama (no template variables — the username/password are collected by the
-/// embedded form); the template is embedded at compile time by the derive macro.
-#[derive(Template)]
-#[template(path = "nextcloud/login.html")]
-struct NextcloudLoginTemplate;
-
 // Home identification is via `position_of_user_home_root_folder` from
 // `domain::repositories::drive_repository` — a generic helper that
 // keys off `drives.default_for_user == user_id` rather than folder
 // name, so user renames of the home folder don't silently break the
 // picker UX.
-
-/// Serve an HTML page with a Content-Security-Policy header as defense-in-depth.
-fn html_with_csp(html: String) -> Response {
-    (
-        [(
-            header::CONTENT_SECURITY_POLICY,
-            "default-src 'none'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'",
-        )],
-        Html(html),
-    )
-        .into_response()
-}
 
 pub async fn handle_login_initiate(State(state): State<Arc<AppState>>) -> Response {
     let nextcloud = match state.nextcloud.as_ref() {
@@ -167,13 +148,10 @@ pub async fn handle_login_page(
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    match NextcloudLoginTemplate.render() {
-        Ok(html) => html_with_csp(html),
-        Err(e) => {
-            tracing::error!(error = %e, "Login Flow v2: login page template render failed");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+    // The grant-access page is now owned by the SvelteKit SPA at
+    // /nextcloud/login; redirect the client's browser there with the flow
+    // token. The page POSTs back to /login/v2/flow/{token} (handle_login_submit).
+    Redirect::to(&format!("/nextcloud/login?token={token}")).into_response()
 }
 
 pub async fn handle_login_submit(

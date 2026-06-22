@@ -258,23 +258,32 @@
 			<p>{t('share.expired', 'This share link is no longer available.')}</p>
 		</div>
 	{:else if view === 'password'}
-		<form class="share__pw" onsubmit={submitPassword}>
+		<form class="share__pw" data-testid="public-share-password-form" onsubmit={submitPassword}>
 			<h1>{t('share.password_title', 'Password required')}</h1>
 			<input
 				type="password"
+				data-testid="public-share-password-input"
 				bind:value={pwInput}
 				placeholder={t('share.password', 'Password')}
 				disabled={busy}
 				autocomplete="off"
 			/>
 			{#if pwError}<p class="share__error" role="alert">{pwError}</p>{/if}
-			<button type="submit" disabled={busy}>{t('share.unlock', 'Unlock')}</button>
+			<button type="submit" data-testid="public-share-unlock-btn" disabled={busy}
+				>{t('share.unlock', 'Unlock')}</button
+			>
 		</form>
 	{:else if view === 'file'}
 		<div class="share__center">
 			<Icon name="file" class="share__big-icon" />
 			<h1>{meta?.item_name}</h1>
-			<a class="share__btn" href={shareDownloadUrl(token)} download rel="external">
+			<a
+				class="share__btn"
+				data-testid="public-share-download-btn"
+				href={shareDownloadUrl(token)}
+				download
+				rel="external"
+			>
 				{t('share.download', 'Download')}
 			</a>
 		</div>
@@ -286,7 +295,11 @@
 					{#if i === crumbs.length - 1}
 						<span class="breadcrumb__current">{c.name}</span>
 					{:else}
-						<button class="breadcrumb__link" onclick={() => gotoCrumb(i)}>{c.name}</button>
+						<button
+							class="breadcrumb__link"
+							data-testid={`public-share-breadcrumb-${i}`}
+							onclick={() => gotoCrumb(i)}>{c.name}</button
+						>
 					{/if}
 				{/each}
 			</nav>
@@ -296,6 +309,7 @@
 						type="button"
 						aria-pressed={viewMode === 'grid'}
 						class:active={viewMode === 'grid'}
+						data-testid="public-share-view-grid-btn"
 						title={t('files.grid', 'Grid')}
 						onclick={() => setViewMode('grid')}><Icon name="th" /></button
 					>
@@ -303,11 +317,18 @@
 						type="button"
 						aria-pressed={viewMode === 'list'}
 						class:active={viewMode === 'list'}
+						data-testid="public-share-view-list-btn"
 						title={t('files.list', 'List')}
 						onclick={() => setViewMode('list')}><Icon name="bars" /></button
 					>
 				</div>
-				<a class="share__btn" href={shareZipUrl(token, folderId)} download rel="external">
+				<a
+					class="share__btn"
+					data-testid="public-share-download-zip-btn"
+					href={shareZipUrl(token, folderId)}
+					download
+					rel="external"
+				>
 					<Icon name="file-archive" />
 					{t('share.download_zip', 'Download ZIP')}
 				</a>
@@ -323,7 +344,11 @@
 			<ul class="share__grid" class:share__grid--list={viewMode === 'list'}>
 				{#each listing.folders as f (f.id)}
 					<li>
-						<button class="card" onclick={() => openFolder(f.id, { id: f.id, name: f.name }, true)}>
+						<button
+							class="card"
+							data-testid={f.name}
+							onclick={() => openFolder(f.id, { id: f.id, name: f.name }, true)}
+						>
 							<span class="card__thumb"><Icon name="folder" class="card__icon" /></span>
 							<span class="card__name">{f.name}</span>
 						</button>
@@ -341,6 +366,7 @@
 						<li>
 							<button
 								class="card"
+								data-testid={f.name}
 								onclick={() => (lightbox = mediaFiles.findIndex((m) => m.id === f.id))}
 							>
 								<span class="card__thumb">
@@ -369,6 +395,7 @@
 						<li>
 							<a
 								class="card"
+								data-testid={f.name}
 								href={shareFileUrl(token, f.id)}
 								target="_blank"
 								rel="external noreferrer"
@@ -390,6 +417,7 @@
 	<div
 		class="lb"
 		role="dialog"
+		data-testid="public-share-lightbox-dialog"
 		aria-modal="true"
 		aria-label={m.name}
 		tabindex="-1"
@@ -397,11 +425,13 @@
 	>
 		<button
 			class="lb__close"
+			data-testid="public-share-lightbox-close-btn"
 			aria-label={t('common.close', 'Close')}
 			onclick={() => (lightbox = -1)}>×</button
 		>
 		<button
 			class="lb__nav lb__nav--prev"
+			data-testid="public-share-lightbox-prev-btn"
 			aria-label={t('common.previous', 'Previous')}
 			disabled={lightbox === 0}
 			onclick={(e) => {
@@ -417,6 +447,7 @@
 		{/if}
 		<button
 			class="lb__nav lb__nav--next"
+			data-testid="public-share-lightbox-next-btn"
 			aria-label={t('common.next', 'Next')}
 			disabled={lightbox === mediaFiles.length - 1}
 			onclick={(e) => {

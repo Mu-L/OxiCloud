@@ -128,3 +128,16 @@ describe('createApiFetch — 401 refresh/retry parity', () => {
 		expect(rawFetch).toHaveBeenCalledTimes(3);
 	});
 });
+
+describe('ApiError + apiJson', () => {
+	it('ApiError carries status, statusText, and a descriptive message', async () => {
+		const { ApiError } = await import('./client');
+		const e = new ApiError(404, 'Not Found', '/api/files/x');
+		expect(e.status).toBe(404);
+		expect(e.statusText).toBe('Not Found');
+		expect(e.name).toBe('ApiError');
+		expect(e.message).toContain('404');
+		expect(e.message).toContain('/api/files/x');
+		expect(e).toBeInstanceOf(Error);
+	});
+});

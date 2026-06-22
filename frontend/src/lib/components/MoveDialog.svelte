@@ -123,51 +123,73 @@
 </script>
 
 <Modal bind:open title={moveTitle}>
-	<div class="mv-nav">
-		<button
-			class="mv-nav-btn"
-			title={t('breadcrumb.home', 'Home')}
-			aria-label={t('breadcrumb.home', 'Home')}
-			disabled={atHome}
-			onclick={goHome}><Icon name="home" /></button
-		>
-		<button
-			class="mv-nav-btn"
-			title={t('dialogs.go_to_parent', 'Go to parent')}
-			aria-label={t('dialogs.go_to_parent', 'Go to parent')}
-			disabled={atHome}
-			onclick={goParent}><Icon name="level-up-alt" /></button
-		>
-		<nav class="mv-crumbs" aria-label="Breadcrumb">
-			{#each crumbs as c, i (c.id)}
-				{#if i > 0}<span class="mv-sep">/</span>{/if}
-				<button class="mv-crumb" onclick={() => gotoCrumb(i)}>{c.name}</button>
-			{/each}
-		</nav>
+	<div data-testid="move-dialog">
+		<div class="mv-nav">
+			<button
+				class="mv-nav-btn"
+				data-testid="move-dialog-home-btn"
+				title={t('breadcrumb.home', 'Home')}
+				aria-label={t('breadcrumb.home', 'Home')}
+				disabled={atHome}
+				onclick={goHome}><Icon name="home" /></button
+			>
+			<button
+				class="mv-nav-btn"
+				data-testid="move-dialog-parent-btn"
+				title={t('dialogs.go_to_parent', 'Go to parent')}
+				aria-label={t('dialogs.go_to_parent', 'Go to parent')}
+				disabled={atHome}
+				onclick={goParent}><Icon name="level-up-alt" /></button
+			>
+			<nav class="mv-crumbs" aria-label="Breadcrumb">
+				{#each crumbs as c, i (c.id)}
+					{#if i > 0}<span class="mv-sep">/</span>{/if}
+					<button
+						class="mv-crumb"
+						data-testid={`move-dialog-crumb-${c.id}`}
+						onclick={() => gotoCrumb(i)}>{c.name}</button
+					>
+				{/each}
+			</nav>
+		</div>
+
+		{#if loading}
+			<p class="mv-status">{t('common.loading', 'Loading…')}</p>
+		{:else if folders.length === 0}
+			<p class="mv-status">{t('files.no_subfolders', 'No subfolders here.')}</p>
+		{:else}
+			<ul class="mv-list">
+				{#each folders as f (f.id)}
+					<li>
+						<button
+							class="mv-folder"
+							data-testid={`move-dialog-folder-${f.id}`}
+							disabled={targetIds.has(f.id)}
+							onclick={() => enter(f)}
+						>
+							<Icon name="folder" /> <span>{f.name}</span>
+							<Icon name="chevron-right" class="mv-enter" />
+						</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
 	</div>
 
-	{#if loading}
-		<p class="mv-status">{t('common.loading', 'Loading…')}</p>
-	{:else if folders.length === 0}
-		<p class="mv-status">{t('files.no_subfolders', 'No subfolders here.')}</p>
-	{:else}
-		<ul class="mv-list">
-			{#each folders as f (f.id)}
-				<li>
-					<button class="mv-folder" disabled={targetIds.has(f.id)} onclick={() => enter(f)}>
-						<Icon name="folder" /> <span>{f.name}</span>
-						<Icon name="chevron-right" class="mv-enter" />
-					</button>
-				</li>
-			{/each}
-		</ul>
-	{/if}
-
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (open = false)}>
+		<button
+			class="btn btn-secondary"
+			data-testid="move-dialog-cancel-btn"
+			onclick={() => (open = false)}
+		>
 			{t('common.cancel', 'Cancel')}
 		</button>
-		<button class="btn btn-primary" disabled={working || !currentId} onclick={confirmMove}>
+		<button
+			class="btn btn-primary"
+			data-testid="move-dialog-confirm-btn"
+			disabled={working || !currentId}
+			onclick={confirmMove}
+		>
 			{mode === 'copy' ? t('files.copy_here', 'Copy here') : t('files.move_here', 'Move here')}
 		</button>
 	{/snippet}

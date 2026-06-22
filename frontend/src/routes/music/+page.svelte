@@ -512,7 +512,11 @@
 			<p class="music-empty-state-desc">
 				{t('music.empty_hint', 'Create a playlist to start collecting your tracks.')}
 			</p>
-			<button class="btn btn-primary" onclick={onCreate}>
+			<button
+				class="btn btn-primary"
+				data-testid="music-create-playlist-empty-btn"
+				onclick={onCreate}
+			>
 				<Icon name="plus" />
 				<span>{t('music.create_playlist', 'Create playlist')}</span>
 			</button>
@@ -526,6 +530,7 @@
 						class="music-sidebar-add-btn"
 						title={t('music.create_playlist', 'Create playlist')}
 						aria-label={t('music.create_playlist', 'Create playlist')}
+						data-testid="music-create-playlist-btn"
 						onclick={onCreate}
 					>
 						<Icon name="plus" />
@@ -538,6 +543,7 @@
 						<div
 							class="music-playlist-item"
 							class:active={current?.id === p.id}
+							data-testid={p.name}
 							onclick={() => select(p)}
 						>
 							<div class="music-playlist-icon"><Icon name="music" /></div>
@@ -561,6 +567,7 @@
 								class="music-playlist-cover"
 								title={t('music.set_cover', 'Set cover')}
 								aria-label={t('music.set_cover', 'Set cover')}
+								data-testid="music-set-cover-btn"
 								onclick={pickCover}
 							>
 								{#if coverUrl(current)}
@@ -585,12 +592,18 @@
 						</div>
 
 						<div class="music-playlist-actions">
-							<button class="btn btn-secondary" onclick={playAll} disabled={tracks.length === 0}>
+							<button
+								class="btn btn-secondary"
+								data-testid="music-play-all-btn"
+								onclick={playAll}
+								disabled={tracks.length === 0}
+							>
 								<Icon name="play" />
 								<span>{t('music.play_all', 'Play all')}</span>
 							</button>
 							<button
 								class="btn btn-secondary"
+								data-testid="music-shuffle-play-btn"
 								onclick={shufflePlay}
 								disabled={tracks.length === 0}
 								title={t('music.shuffle', 'Shuffle')}
@@ -598,12 +611,17 @@
 							>
 								<Icon name="shuffle" />
 							</button>
-							<button class="btn btn-secondary" onclick={openAdd}>
+							<button
+								class="btn btn-secondary"
+								data-testid="music-add-tracks-btn"
+								onclick={openAdd}
+							>
 								<Icon name="plus" />
 								<span>{t('music.add_tracks', 'Add tracks')}</span>
 							</button>
 							<button
 								class="btn btn-secondary"
+								data-testid="music-rename-playlist-btn"
 								onclick={onRenamePlaylist}
 								title={t('common.rename', 'Rename')}
 								aria-label={t('common.rename', 'Rename')}
@@ -612,6 +630,7 @@
 							</button>
 							<button
 								class="btn btn-secondary"
+								data-testid="music-edit-description-btn"
 								onclick={onEditDescription}
 								title={t('music.edit_description', 'Edit description')}
 								aria-label={t('music.edit_description', 'Edit description')}
@@ -620,6 +639,7 @@
 							</button>
 							<button
 								class="btn btn-secondary"
+								data-testid="music-manage-shares-btn"
 								onclick={openShares}
 								title={t('music.manage_shares', 'Manage shares')}
 								aria-label={t('music.manage_shares', 'Manage shares')}
@@ -629,6 +649,7 @@
 							<button
 								class="btn btn-secondary"
 								class:active={current.is_public}
+								data-testid="music-toggle-public-btn"
 								onclick={onTogglePublic}
 								title={current.is_public
 									? t('music.make_private', 'Make private')
@@ -641,6 +662,7 @@
 							</button>
 							<button
 								class="btn btn-secondary"
+								data-testid="music-delete-playlist-btn"
 								onclick={() => onDelete(current!)}
 								title={t('common.delete', 'Delete')}
 								aria-label={t('common.delete', 'Delete')}
@@ -673,6 +695,7 @@
 									<div
 										class="music-track"
 										class:playing={currentTrack?.id === track.id && playing}
+										data-testid={trackLabel(track)}
 										draggable="true"
 										ondblclick={() => playFromTracks(i)}
 										ondragstart={() => onDragStart(i)}
@@ -687,6 +710,7 @@
 											<!-- svelte-ignore a11y_click_events_have_key_events -->
 											<!-- svelte-ignore a11y_no_static_element_interactions -->
 											<span
+												data-testid={`music-track-play-${track.id}`}
 												onclick={(e) => {
 													e.stopPropagation();
 													if (currentTrack?.id === track.id) togglePlay();
@@ -714,6 +738,7 @@
 												class="music-track-remove-btn"
 												title={t('common.remove', 'Remove')}
 												aria-label={t('common.remove', 'Remove')}
+												data-testid={`music-track-remove-${track.id}`}
 												onclick={(e) => {
 													e.stopPropagation();
 													onRemoveTrack(track);
@@ -763,6 +788,7 @@
 					class:active={shuffle}
 					title={t('music.shuffle', 'Shuffle')}
 					aria-label={t('music.shuffle', 'Shuffle')}
+					data-testid="music-player-shuffle-btn"
 					onclick={() => (shuffle = !shuffle)}
 				>
 					<Icon name="shuffle" />
@@ -771,6 +797,7 @@
 					class="player-btn"
 					title={t('music.prev', 'Previous')}
 					aria-label={t('music.prev', 'Previous')}
+					data-testid="music-player-prev-btn"
 					onclick={prev}
 				>
 					<Icon name="backward" />
@@ -779,6 +806,7 @@
 					class="player-btn player-btn-main"
 					title={t('music.play', 'Play')}
 					aria-label={t('music.play', 'Play')}
+					data-testid="music-player-play-btn"
 					onclick={togglePlay}
 				>
 					<Icon name={playing ? 'pause' : 'play'} />
@@ -787,6 +815,7 @@
 					class="player-btn"
 					title={t('music.next', 'Next')}
 					aria-label={t('music.next', 'Next')}
+					data-testid="music-player-next-btn"
 					onclick={next}
 				>
 					<Icon name="forward" />
@@ -797,6 +826,7 @@
 					class:repeat-one={repeat === 'one'}
 					title={t('music.repeat', 'Repeat')}
 					aria-label={t('music.repeat', 'Repeat')}
+					data-testid="music-player-repeat-btn"
 					onclick={cycleRepeat}
 				>
 					<Icon name="repeat" />
@@ -813,6 +843,7 @@
 					value={currentTime}
 					oninput={seek}
 					aria-label={t('music.seek', 'Seek')}
+					data-testid="music-player-seek-input"
 				/>
 				<span class="player-time player-time-total">{fmtTime(duration)}</span>
 			</div>
@@ -824,6 +855,7 @@
 				class:active={queueOpen}
 				title={t('music.queue', 'Queue')}
 				aria-label={t('music.queue', 'Queue')}
+				data-testid="music-player-queue-toggle-btn"
 				onclick={() => (queueOpen = !queueOpen)}
 			>
 				<Icon name="list" />
@@ -832,6 +864,7 @@
 				class="player-btn player-btn-small"
 				title={t('music.mute', 'Mute')}
 				aria-label={t('music.mute', 'Mute')}
+				data-testid="music-player-mute-btn"
 				onclick={toggleMute}
 			>
 				<Icon name={volumeIcon} />
@@ -846,17 +879,19 @@
 					value={muted ? 0 : volume}
 					oninput={setVolume}
 					aria-label={t('music.volume', 'Volume')}
+					data-testid="music-player-volume-input"
 				/>
 			</div>
 		</div>
 	</div>
 
 	{#if queueOpen}
-		<div class="player-queue">
+		<div class="player-queue" data-testid="music-queue-panel">
 			<div class="player-queue-header">
 				<h3>{t('music.queue', 'Queue')}</h3>
 				<button
 					class="player-btn player-btn-small"
+					data-testid="music-queue-close-btn"
 					onclick={() => (queueOpen = false)}
 					aria-label={t('common.close', 'Close')}
 				>
@@ -876,6 +911,7 @@
 						<div
 							class="player-queue-item"
 							class:active={i === currentIndex}
+							data-testid={trackLabel(qt)}
 							onclick={() => jumpQueue(i)}
 						>
 							<span class="queue-item-num">{i + 1}</span>
@@ -887,6 +923,7 @@
 							<button
 								class="queue-item-remove"
 								aria-label={t('common.remove', 'Remove')}
+								data-testid={`music-queue-remove-${qt.id}`}
 								onclick={(e) => {
 									e.stopPropagation();
 									removeFromQueue(i);
@@ -917,6 +954,7 @@
 	type="file"
 	accept="image/*"
 	class="hidden-input"
+	data-testid="music-cover-input"
 	onchange={onCoverChosen}
 />
 
@@ -925,6 +963,7 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="music-picker-overlay active"
+		data-testid="music-add-tracks-dialog"
 		onclick={(e) => {
 			if (e.target === e.currentTarget) addOpen = false;
 		}}
@@ -935,6 +974,7 @@
 				<button
 					class="music-picker-close"
 					aria-label={t('common.close', 'Close')}
+					data-testid="music-add-tracks-close-btn"
 					onclick={() => (addOpen = false)}>&times;</button
 				>
 			</div>
@@ -948,6 +988,7 @@
 					oninput={onAddQueryInput}
 					autocomplete="off"
 					autofocus
+					data-testid="music-add-tracks-search-input"
 				/>
 			</div>
 			<div class="music-picker-list">
@@ -968,6 +1009,7 @@
 								type="checkbox"
 								checked={addSelected.has(f.id)}
 								onchange={() => addSelected.toggle(f.id)}
+								data-testid={f.name}
 							/>
 							<Icon name="file-audio" />
 							<span class="music-picker-name" title={f.name}>{f.name}</span>
@@ -980,10 +1022,19 @@
 					{t('music.selected_count', { n: addSelected.size }, '{{n}} selected')}
 				</span>
 				<div class="music-picker-actions">
-					<button class="btn btn-secondary" onclick={() => (addOpen = false)}>
+					<button
+						class="btn btn-secondary"
+						data-testid="music-add-tracks-cancel-btn"
+						onclick={() => (addOpen = false)}
+					>
 						{t('common.cancel', 'Cancel')}
 					</button>
-					<button class="btn btn-primary" disabled={addSelected.size === 0} onclick={confirmAdd}>
+					<button
+						class="btn btn-primary"
+						disabled={addSelected.size === 0}
+						data-testid="music-add-tracks-confirm-btn"
+						onclick={confirmAdd}
+					>
 						<Icon name="plus" />
 						{t('music.add_selected', 'Add selected')}
 					</button>
@@ -998,6 +1049,7 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="music-shares-overlay"
+		data-testid="music-shares-dialog"
 		onclick={(e) => {
 			if (e.target === e.currentTarget) sharesOpen = false;
 		}}
@@ -1008,6 +1060,7 @@
 				<button
 					class="music-shares-close-btn"
 					aria-label={t('common.close', 'Close')}
+					data-testid="music-shares-close-btn"
 					onclick={() => (sharesOpen = false)}
 				>
 					<Icon name="times" />
@@ -1029,6 +1082,7 @@
 								class="music-share-remove-btn"
 								title={t('music.remove_share', 'Remove')}
 								aria-label={t('music.remove_share', 'Remove')}
+								data-testid={`music-share-remove-${s.user_id}`}
 								onclick={() => onRemoveShare(s.user_id)}
 							>
 								<Icon name="times" />
@@ -1044,12 +1098,22 @@
 					placeholder={t('music.share_with_user', 'User ID or email')}
 					bind:value={shareUser}
 					autocomplete="off"
+					data-testid="music-share-user-input"
 				/>
 				<label class="music-shares-write-label">
-					<input type="checkbox" bind:checked={shareCanWrite} />
+					<input
+						type="checkbox"
+						bind:checked={shareCanWrite}
+						data-testid="music-share-can-write-checkbox"
+					/>
 					{t('music.can_write', 'Can edit')}
 				</label>
-				<button class="btn btn-primary btn-sm" disabled={!shareUser.trim()} onclick={onAddShare}>
+				<button
+					class="btn btn-primary btn-sm"
+					disabled={!shareUser.trim()}
+					data-testid="music-share-add-btn"
+					onclick={onAddShare}
+				>
 					<Icon name="plus" />
 					{t('music.share', 'Share')}
 				</button>

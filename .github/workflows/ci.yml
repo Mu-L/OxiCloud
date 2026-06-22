@@ -64,7 +64,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 26.3.1
+          node-version: 26.3.0
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -240,7 +240,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 26.3.1
+          node-version: 26.3.0
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Build SPA (Vite -> static-dist/)
@@ -324,11 +324,19 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 26.3.0
 
       - name: Install Node dependencies
         working-directory: tests/e2e
         run: npm ci
+
+      # The release binary serves the SPA from ./static-dist on disk (not
+      # embedded), and the Build job builds it WITHOUT VITE_E2E so it lacks the
+      # `data-testid` hooks the specs target. Build it here with VITE_E2E=1 so
+      # the server actually serves the e2e SPA the scenarios drive.
+      - name: Build SPA for e2e (VITE_E2E keeps data-testid hooks)
+        working-directory: frontend
+        run: npm ci && VITE_E2E=1 npm run build
 
       - name: Install Playwright browsers
         working-directory: tests/e2e
@@ -339,6 +347,10 @@ jobs:
         run: npm test
         env:
           BUILD_TARGET: release
+
+      - name: Print server startup log
+        if: always()
+        run: cat tests/e2e/server-startup.log || echo "no server-startup.log produced"
 
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
