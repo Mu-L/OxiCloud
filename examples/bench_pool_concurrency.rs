@@ -20,6 +20,7 @@
 //!   BENCH_K_LIST (1,2,4,8,16)  BENCH_GALLERY (48)  BENCH_SECONDS (4)
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use oxicloud::bench_support;
@@ -29,6 +30,55 @@ use tokio::sync::Semaphore;
 
 fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
     std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
+#[cfg(target_os = "linux")]
+fn rss_mb() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("VmRSS:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|kb| kb.parse::<u64>().ok())
+        })
+        .map(|kb| kb / 1024)
+        .unwrap_or(0)
+}
+#[cfg(not(target_os = "linux"))]
+fn rss_mb() -> u64 {
+    0
+}
+
+/// Peak RSS while exactly `k` renders run concurrently (one wave) — the resident
+/// cost of `k` simultaneous decode buffers, i.e. what the permit count bounds.
+fn bench_k_rss(rt: &tokio::runtime::Runtime, img: Arc<Vec<u8>>, k: usize) -> u64 {
+    rt.block_on(async move {
+        let peak = Arc::new(AtomicU64::new(rss_mb()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let p = peak.clone();
+        let s = stop.clone();
+        let sampler = tokio::spawn(async move {
+            while !s.load(Ordering::Relaxed) {
+                p.fetch_max(rss_mb(), Ordering::Relaxed);
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        });
+        let mut hs = Vec::with_capacity(k);
+        for _ in 0..k {
+            let img2 = img.clone();
+            hs.push(tokio::task::spawn_blocking(move || {
+                let _ = ThumbnailService::bench_render_all(&img2);
+            }));
+        }
+        for h in hs {
+            let _ = h.await;
+        }
+        peak.fetch_max(rss_mb(), Ordering::Relaxed);
+        stop.store(true, Ordering::Relaxed);
+        let _ = sampler.await;
+        peak.load(Ordering::Relaxed)
+    })
 }
 
 fn percentile(sorted: &[u64], p: f64) -> u64 {
@@ -145,19 +195,38 @@ fn main() {
     // Warm up (also triggers corpus generation / codec init).
     let _ = bench_k(&rt, img.clone(), 2, producers, 1);
 
-    let mut base_rps: Option<f64> = None;
     for &k in &k_list {
         let (renders, rps, p50, p99) = bench_k(&rt, img.clone(), k, producers, secs);
         let tag = if k == eff { "  ← effective" } else { "" };
-        let _ = base_rps.get_or_insert(rps);
         println!(
             "| {:>8} | {:>9} | {:>10.1} | {:>9.1} | {:>9.1} |{}",
             k, renders, rps, p50, p99, tag
         );
     }
+
+    // ── Part B: peak RSS for K concurrent decodes (the real over-permit cost) ──
+    println!("\n[B] Peak RSS with K concurrent decodes (one wave)\n");
+    println!("| {:>8} | {:>14} | {:>12} |", "permits", "peak RSS MiB", "vs effective");
+    println!("|{:-<10}|{:-<16}|{:-<14}|", "", "", "");
+    let mut eff_rss: Option<u64> = None;
+    for &k in &k_list {
+        let peak = bench_k_rss(&rt, img.clone(), k);
+        if k == eff {
+            eff_rss = Some(peak);
+        }
+        let delta = match eff_rss {
+            Some(base) if k > eff => format!("+{} MiB", peak.saturating_sub(base)),
+            _ => "—".to_string(),
+        };
+        let tag = if k == eff { "  ← effective" } else { "" };
+        println!("| {:>8} | {:>14} | {:>12} |{}", k, peak, delta, tag);
+    }
+
     println!(
-        "\nThroughput is CPU-bound (≈ flat past the core count); the signal is p99:\n\
-         over-subscribing the decode permits past the *effective* cores inflates\n\
-         per-request tail latency (gallery responsiveness) with no throughput gain.\n"
+        "\nThroughput (A) is CPU-bound — flat past the core count, so over-permitting\n\
+         buys no throughput. The cost of over-permitting is resident memory (B):\n\
+         each concurrent decode holds its buffer, so RSS scales with the permit\n\
+         count. Sizing to the *effective* cores (not the host count) is what keeps\n\
+         a many-core-host CPU quota from multiplying thumbnail RAM under load.\n"
     );
 }
