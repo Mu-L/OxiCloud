@@ -768,6 +768,7 @@ impl AppServiceFactory {
         repos: &RepositoryServices,
         core: &CoreServices,
         authz: &Arc<PgAclEngine>,
+        drive_repo: &Arc<crate::infrastructure::repositories::pg::DrivePgRepository>,
     ) -> Option<Arc<TrashService>> {
         if !self.config.features.enable_trash {
             tracing::info!("Trash service is disabled in configuration");
@@ -787,6 +788,7 @@ impl AppServiceFactory {
                 core.dedup_service.clone(),
                 Some(core.file_content_cache.clone()),
                 authz.clone(),
+                drive_repo.clone(),
             )
             .with_file_deleted_hook(core.file_lifecycle.clone()),
         );
@@ -1137,7 +1139,7 @@ impl AppServiceFactory {
 
         // 3b. Trash service (needed before application services)
         let trash_service = self
-            .create_trash_service(&repos, &core, &authorization)
+            .create_trash_service(&repos, &core, &authorization, &drive_repo)
             .await;
 
         // 3c. Storage usage / quota service (needed by the instant-upload

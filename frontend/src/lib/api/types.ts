@@ -120,6 +120,14 @@ export interface TrashResourceItem {
 	resource_type: ItemType;
 	trashed_at: string;
 	deletion_date: string;
+	/**
+	 * Drive the trashed item belongs to (D2b). Enables client-side
+	 * group-by-drive in the `/trash` UI without resolving the drive from
+	 * `resource.drive_id` per row. The drive's display name resolves
+	 * against `drives.svelte` (the in-memory store already populated by
+	 * the sidebar picker / config pages — no extra round-trip).
+	 */
+	drive_id: string;
 	resource: FileItem | FolderItem;
 }
 
