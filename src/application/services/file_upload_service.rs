@@ -299,23 +299,46 @@ impl FileUploadService {
         let Some(storage_service) = &self.storage_usage_service else {
             return;
         };
-        let Some(owner) = file
+        let delta = file.size as i64;
+
+        // Per-user delta — unchanged from `b5b80549` / `fbbae541`.
+        if let Some(owner) = file
             .owner_id
             .as_deref()
             .and_then(|s| Uuid::parse_str(s).ok())
-        else {
-            return;
-        };
-        let delta = file.size as i64;
-        let service_clone = Arc::clone(storage_service);
-        tokio::spawn(async move {
-            if let Err(e) = service_clone
-                .add_user_storage_usage_delta(owner, delta)
-                .await
-            {
-                warn!("Failed to bump storage usage for {owner}: {e}");
-            }
-        });
+        {
+            let service_clone = Arc::clone(storage_service);
+            tokio::spawn(async move {
+                if let Err(e) = service_clone
+                    .add_user_storage_usage_delta(owner, delta)
+                    .await
+                {
+                    warn!("Failed to bump storage usage for {owner}: {e}");
+                }
+            });
+        }
+
+        // Per-drive delta (D4) — same fire-and-forget shape, resolves
+        // the drive id from the file's parent folder in one SQL
+        // statement. `storage.drives.used_bytes` is what the per-drive
+        // quota check and the picker quota bar read; drift from
+        // deletes / trash is reconciled by the same sweep that handles
+        // user-side drift.
+        if let Some(folder) = file
+            .folder_id
+            .as_deref()
+            .and_then(|s| Uuid::parse_str(s).ok())
+        {
+            let service_clone = Arc::clone(storage_service);
+            tokio::spawn(async move {
+                if let Err(e) = service_clone
+                    .add_drive_storage_usage_delta_by_folder(folder, delta)
+                    .await
+                {
+                    warn!("Failed to bump drive usage for folder {folder}: {e}");
+                }
+            });
+        }
     }
 }
 

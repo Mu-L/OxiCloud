@@ -95,6 +95,13 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         // when `OXICLOUD_SMTP_MOCK` is off, so production deployments
         // can route the path freely without leaking inboxes.
         .route("/smtp/test/captured", get(get_captured_email))
+        // Test-only sweep triggers. Routes are always registered; the
+        // handlers themselves short-circuit to 404 when
+        // `features.enable_admin_internal_endpoints` is off — matches
+        // the `/smtp/test/captured` convention so production
+        // deployments don't need a different route table.
+        .route("/internal/trigger-sweep", post(internal_trigger_sweep))
+        .route("/internal/trigger-gc", post(internal_trigger_gc))
         // Drives — admin-wide view (distinct from `/api/drives` which
         // is filtered to the caller's role grants).
         .route("/drives", get(list_all_drives))

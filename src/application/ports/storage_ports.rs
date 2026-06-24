@@ -453,6 +453,42 @@ pub trait StorageUsagePort: Send + Sync + 'static {
 
     /// Returns (used_bytes, quota_bytes) for a user.
     async fn get_user_storage_info(&self, user_id: Uuid) -> Result<(i64, i64), DomainError>;
+
+    /// Incrementally adjust one drive's cached `storage.drives.used_bytes`
+    /// by `delta` bytes — O(1), the per-upload counterpart to the
+    /// O(N) full recompute below. Mirrors `add_user_storage_usage_delta`
+    /// in shape: single statement, `GREATEST(0, …)` clamp so a late or
+    /// duplicate adjustment can never drive the counter negative.
+    /// Deletes/trash do not decrement here (mirroring user-quota
+    /// design); the periodic reconciliation sweep is the correctness
+    /// backstop.
+    async fn add_drive_storage_usage_delta(
+        &self,
+        drive_id: Uuid,
+        delta: i64,
+    ) -> Result<(), DomainError>;
+
+    /// Reconcile every drive's cached `used_bytes` against the actual
+    /// sum of its non-trashed files in one set-based UPDATE. Same
+    /// shape as `update_all_users_storage_usage`: `LEFT JOIN` over a
+    /// `GROUP BY drive_id` aggregate, with an `IS DISTINCT FROM`
+    /// guard so idle drives don't churn dead tuples. Runs from the
+    /// same reconciliation ticker.
+    async fn update_all_drives_storage_usage(&self) -> Result<(), DomainError>;
+
+    /// Pre-upload quota check on a single drive.
+    ///
+    /// Returns `Ok(())` when `used_bytes + additional_bytes` fits under
+    /// `quota_bytes`, or `Err(QuotaExceeded)` otherwise.
+    /// `quota_bytes IS NULL` short-circuits to `Ok(())` — unlimited
+    /// drive. Single read-only `SELECT` on `storage.drives`; the
+    /// check/write window is a soft cap by design (same semantics as
+    /// the user-quota path), bounded by the sweep interval.
+    async fn check_drive_quota(
+        &self,
+        drive_id: Uuid,
+        additional_bytes: u64,
+    ) -> Result<(), DomainError>;
 }
 
 /// Generic storage service interface for calendar and contact services
