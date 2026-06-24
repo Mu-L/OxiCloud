@@ -301,6 +301,63 @@ impl WebDavAdapter {
         Ok(PropFindRequest { prop_find_type })
     }
 
+    fn folder_prop_is_known(prop: &QualifiedName) -> bool {
+        prop.namespace == "DAV:"
+            && matches!(
+                prop.name.as_str(),
+                "resourcetype"
+                    | "displayname"
+                    | "creationdate"
+                    | "getlastmodified"
+                    | "getetag"
+                    | "getcontentlength"
+                    | "getcontenttype"
+            )
+    }
+
+    fn file_prop_is_known(prop: &QualifiedName) -> bool {
+        prop.namespace == "DAV:"
+            && matches!(
+                prop.name.as_str(),
+                "resourcetype"
+                    | "displayname"
+                    | "getcontenttype"
+                    | "getcontentlength"
+                    | "creationdate"
+                    | "getlastmodified"
+                    | "getetag"
+            )
+    }
+
+    /// Write a 404 propstat block for unknown properties (RFC 4918 §9.2).
+    fn write_unknown_props_404<W: Write>(
+        xml_writer: &mut Writer<W>,
+        unknown: &[&QualifiedName],
+    ) -> Result<()> {
+        if unknown.is_empty() {
+            return Ok(());
+        }
+        xml_writer.write_event(Event::Start(BytesStart::new("D:propstat")))?;
+        xml_writer.write_event(Event::Start(BytesStart::new("D:prop")))?;
+        for prop in unknown {
+            if prop.namespace == "DAV:" {
+                xml_writer
+                    .write_event(Event::Empty(BytesStart::new(format!("D:{}", prop.name))))?;
+            } else {
+                xml_writer.write_event(Event::Empty(BytesStart::new(format!(
+                    "{}:{}",
+                    prop.namespace, prop.name
+                ))))?;
+            }
+        }
+        xml_writer.write_event(Event::End(BytesEnd::new("D:prop")))?;
+        xml_writer.write_event(Event::Start(BytesStart::new("D:status")))?;
+        xml_writer.write_event(Event::Text(BytesText::new("HTTP/1.1 404 Not Found")))?;
+        xml_writer.write_event(Event::End(BytesEnd::new("D:status")))?;
+        xml_writer.write_event(Event::End(BytesEnd::new("D:propstat")))?;
+        Ok(())
+    }
+
     /// Write folder properties as a response
     fn write_folder_response<W: Write>(
         xml_writer: &mut Writer<W>,
@@ -308,50 +365,50 @@ impl WebDavAdapter {
         request: &PropFindRequest,
         href: &str,
     ) -> Result<()> {
-        // Start response element
         xml_writer.write_event(Event::Start(BytesStart::new("D:response")))?;
 
-        // Write href
         xml_writer.write_event(Event::Start(BytesStart::new("D:href")))?;
         xml_writer.write_event(Event::Text(BytesText::new(href)))?;
         xml_writer.write_event(Event::End(BytesEnd::new("D:href")))?;
 
-        // Write propstat
-        xml_writer.write_event(Event::Start(BytesStart::new("D:propstat")))?;
-
-        // Start prop
-        xml_writer.write_event(Event::Start(BytesStart::new("D:prop")))?;
-
-        // Write properties based on request type
         match &request.prop_find_type {
-            PropFindType::AllProp => {
-                // Write all standard properties for a folder
-                Self::write_folder_standard_props(xml_writer, folder)?;
-            }
-            PropFindType::PropName => {
-                // Write only property names (empty elements)
-                Self::write_folder_prop_names(xml_writer)?;
-            }
             PropFindType::Prop(props) => {
-                // Write requested properties
-                Self::write_folder_requested_props(xml_writer, folder, props)?;
+                // RFC 4918 §9.2: known props → 200 propstat; unknown → 404 propstat.
+                let (known, unknown): (Vec<_>, Vec<_>) =
+                    props.iter().partition(|p| Self::folder_prop_is_known(p));
+
+                xml_writer.write_event(Event::Start(BytesStart::new("D:propstat")))?;
+                xml_writer.write_event(Event::Start(BytesStart::new("D:prop")))?;
+                Self::write_folder_requested_props(xml_writer, folder, &known)?;
+                xml_writer.write_event(Event::End(BytesEnd::new("D:prop")))?;
+                xml_writer.write_event(Event::Start(BytesStart::new("D:status")))?;
+                xml_writer.write_event(Event::Text(BytesText::new("HTTP/1.1 200 OK")))?;
+                xml_writer.write_event(Event::End(BytesEnd::new("D:status")))?;
+                xml_writer.write_event(Event::End(BytesEnd::new("D:propstat")))?;
+
+                Self::write_unknown_props_404(xml_writer, &unknown)?;
+            }
+            other => {
+                xml_writer.write_event(Event::Start(BytesStart::new("D:propstat")))?;
+                xml_writer.write_event(Event::Start(BytesStart::new("D:prop")))?;
+                match other {
+                    PropFindType::AllProp => {
+                        Self::write_folder_standard_props(xml_writer, folder)?;
+                    }
+                    PropFindType::PropName => {
+                        Self::write_folder_prop_names(xml_writer)?;
+                    }
+                    PropFindType::Prop(_) => unreachable!(),
+                }
+                xml_writer.write_event(Event::End(BytesEnd::new("D:prop")))?;
+                xml_writer.write_event(Event::Start(BytesStart::new("D:status")))?;
+                xml_writer.write_event(Event::Text(BytesText::new("HTTP/1.1 200 OK")))?;
+                xml_writer.write_event(Event::End(BytesEnd::new("D:status")))?;
+                xml_writer.write_event(Event::End(BytesEnd::new("D:propstat")))?;
             }
         }
 
-        // End prop
-        xml_writer.write_event(Event::End(BytesEnd::new("D:prop")))?;
-
-        // Write status
-        xml_writer.write_event(Event::Start(BytesStart::new("D:status")))?;
-        xml_writer.write_event(Event::Text(BytesText::new("HTTP/1.1 200 OK")))?;
-        xml_writer.write_event(Event::End(BytesEnd::new("D:status")))?;
-
-        // End propstat
-        xml_writer.write_event(Event::End(BytesEnd::new("D:propstat")))?;
-
-        // End response
         xml_writer.write_event(Event::End(BytesEnd::new("D:response")))?;
-
         Ok(())
     }
 
@@ -362,50 +419,50 @@ impl WebDavAdapter {
         request: &PropFindRequest,
         href: &str,
     ) -> Result<()> {
-        // Start response element
         xml_writer.write_event(Event::Start(BytesStart::new("D:response")))?;
 
-        // Write href
         xml_writer.write_event(Event::Start(BytesStart::new("D:href")))?;
         xml_writer.write_event(Event::Text(BytesText::new(href)))?;
         xml_writer.write_event(Event::End(BytesEnd::new("D:href")))?;
 
-        // Write propstat
-        xml_writer.write_event(Event::Start(BytesStart::new("D:propstat")))?;
-
-        // Start prop
-        xml_writer.write_event(Event::Start(BytesStart::new("D:prop")))?;
-
-        // Write properties based on request type
         match &request.prop_find_type {
-            PropFindType::AllProp => {
-                // Write all standard properties for a file
-                Self::write_file_standard_props(xml_writer, file)?;
-            }
-            PropFindType::PropName => {
-                // Write only property names (empty elements)
-                Self::write_file_prop_names(xml_writer)?;
-            }
             PropFindType::Prop(props) => {
-                // Write requested properties
-                Self::write_file_requested_props(xml_writer, file, props)?;
+                // RFC 4918 §9.2: known props → 200 propstat; unknown → 404 propstat.
+                let (known, unknown): (Vec<_>, Vec<_>) =
+                    props.iter().partition(|p| Self::file_prop_is_known(p));
+
+                xml_writer.write_event(Event::Start(BytesStart::new("D:propstat")))?;
+                xml_writer.write_event(Event::Start(BytesStart::new("D:prop")))?;
+                Self::write_file_requested_props(xml_writer, file, &known)?;
+                xml_writer.write_event(Event::End(BytesEnd::new("D:prop")))?;
+                xml_writer.write_event(Event::Start(BytesStart::new("D:status")))?;
+                xml_writer.write_event(Event::Text(BytesText::new("HTTP/1.1 200 OK")))?;
+                xml_writer.write_event(Event::End(BytesEnd::new("D:status")))?;
+                xml_writer.write_event(Event::End(BytesEnd::new("D:propstat")))?;
+
+                Self::write_unknown_props_404(xml_writer, &unknown)?;
+            }
+            other => {
+                xml_writer.write_event(Event::Start(BytesStart::new("D:propstat")))?;
+                xml_writer.write_event(Event::Start(BytesStart::new("D:prop")))?;
+                match other {
+                    PropFindType::AllProp => {
+                        Self::write_file_standard_props(xml_writer, file)?;
+                    }
+                    PropFindType::PropName => {
+                        Self::write_file_prop_names(xml_writer)?;
+                    }
+                    PropFindType::Prop(_) => unreachable!(),
+                }
+                xml_writer.write_event(Event::End(BytesEnd::new("D:prop")))?;
+                xml_writer.write_event(Event::Start(BytesStart::new("D:status")))?;
+                xml_writer.write_event(Event::Text(BytesText::new("HTTP/1.1 200 OK")))?;
+                xml_writer.write_event(Event::End(BytesEnd::new("D:status")))?;
+                xml_writer.write_event(Event::End(BytesEnd::new("D:propstat")))?;
             }
         }
 
-        // End prop
-        xml_writer.write_event(Event::End(BytesEnd::new("D:prop")))?;
-
-        // Write status
-        xml_writer.write_event(Event::Start(BytesStart::new("D:status")))?;
-        xml_writer.write_event(Event::Text(BytesText::new("HTTP/1.1 200 OK")))?;
-        xml_writer.write_event(Event::End(BytesEnd::new("D:status")))?;
-
-        // End propstat
-        xml_writer.write_event(Event::End(BytesEnd::new("D:propstat")))?;
-
-        // End response
         xml_writer.write_event(Event::End(BytesEnd::new("D:response")))?;
-
         Ok(())
     }
 
@@ -611,20 +668,11 @@ impl WebDavAdapter {
                         xml_writer.write_event(Event::End(BytesEnd::new("D:getcontenttype")))?;
                     }
                     _ => {
-                        // Property not supported - write empty element
-                        xml_writer.write_event(Event::Empty(BytesStart::new(format!(
-                            "D:{}",
-                            prop.name
-                        ))))?;
+                        // Unknown prop — skipped here; caller writes 404 propstat.
                     }
                 }
-            } else {
-                // Non-DAV namespace, not supported
-                xml_writer.write_event(Event::Empty(BytesStart::new(format!(
-                    "{}:{}",
-                    prop.namespace, prop.name
-                ))))?;
             }
+            // Non-DAV namespace props are unknown — skipped; caller writes 404 propstat.
         }
 
         Ok(())
@@ -694,20 +742,11 @@ impl WebDavAdapter {
                         xml_writer.write_event(Event::End(BytesEnd::new("D:getetag")))?;
                     }
                     _ => {
-                        // Property not supported - write empty element
-                        xml_writer.write_event(Event::Empty(BytesStart::new(format!(
-                            "D:{}",
-                            prop.name
-                        ))))?;
+                        // Unknown prop — skipped here; caller writes 404 propstat.
                     }
                 }
-            } else {
-                // Non-DAV namespace, not supported
-                xml_writer.write_event(Event::Empty(BytesStart::new(format!(
-                    "{}:{}",
-                    prop.namespace, prop.name
-                ))))?;
             }
+            // Non-DAV namespace props are unknown — skipped; caller writes 404 propstat.
         }
 
         Ok(())
