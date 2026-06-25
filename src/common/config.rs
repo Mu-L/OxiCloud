@@ -906,6 +906,15 @@ pub struct FeaturesConfig {
     /// thumbnail through the same WebP pipeline as photos; otherwise videos have
     /// no thumbnail. Env: `OXICLOUD_ENABLE_VIDEO_THUMBNAILS`.
     pub enable_video_thumbnails: bool,
+    /// Expose `/api/admin/internal/*` test-only endpoints that trigger
+    /// background sweeps on demand (storage-usage reconciliation, blob
+    /// GC). Intended for Hurl / integration tests that need to wait
+    /// for these maintenance jobs deterministically rather than
+    /// polling the cached value. Off by default — these endpoints
+    /// short-circuit the operator-visible cadence, so production
+    /// deployments don't want them reachable. Env:
+    /// `OXICLOUD_ENABLE_ADMIN_INTERNAL_ENDPOINTS`.
+    pub enable_admin_internal_endpoints: bool,
 }
 
 impl Default for FeaturesConfig {
@@ -921,6 +930,10 @@ impl Default for FeaturesConfig {
             enable_faces: false,           // People/faces (biometric) — opt-in, off by default
             expose_system_users: true,     // Expose OxiCloud users as address book by default
             enable_video_thumbnails: true, // Video thumbs via ffmpeg (if detected)
+            // Test-only sweep triggers — strictly opt-in. Production
+            // deployments do NOT need this; the periodic ticker handles
+            // reconciliation transparently.
+            enable_admin_internal_endpoints: false,
         }
     }
 }
@@ -1480,6 +1493,16 @@ impl AppConfig {
             && let Ok(val) = enable_video_thumbnails
         {
             config.features.enable_video_thumbnails = val;
+        }
+
+        // `/api/admin/internal/*` test-only triggers. Disabled by
+        // default; production deployments never need this. The Hurl
+        // suite flips it on via `OXICLOUD_ENABLE_ADMIN_INTERNAL_ENDPOINTS=true`.
+        if let Ok(enable_internal) =
+            env::var("OXICLOUD_ENABLE_ADMIN_INTERNAL_ENDPOINTS").map(|v| v.parse::<bool>())
+            && let Ok(val) = enable_internal
+        {
+            config.features.enable_admin_internal_endpoints = val;
         }
 
         if let Ok(enable_faces) = env::var("OXICLOUD_ENABLE_FACES").map(|v| v.parse::<bool>())

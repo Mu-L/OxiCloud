@@ -331,6 +331,21 @@ impl DeltaUploadService {
             .check_storage_quota(caller_id, total_size)
             .await?;
 
+        // ── Per-drive quota (D4) ─────────────────────────────────
+        // Mirrors the per-user check above on the same `total_size`.
+        // Only on CREATE — Update replaces an existing row's content;
+        // tight size-delta accounting on update is a follow-up (today
+        // the periodic sweep reconciles drift either way). The
+        // single-statement `check_drive_quota_by_folder` lookup is a
+        // PK probe; cost matches the existing per-user check.
+        if let CommitMode::Create { folder_id, .. } = &mode {
+            let folder_uuid = Uuid::parse_str(folder_id)
+                .map_err(|_| DomainError::not_found("Folder", folder_id.clone()))?;
+            self.quota
+                .check_drive_quota_by_folder(folder_uuid, total_size)
+                .await?;
+        }
+
         // ── Whole-file fast path: caller already owns this exact content ──
         // Mirrors the instant-upload endpoint: a reference bump, no chunk
         // work at all. Ownership is required — an existing-but-foreign

@@ -87,6 +87,14 @@
 		dateLabel?: string;
 		/** Custom renderer for the date cell (e.g. trash expiry chip). */
 		dateCell?: Snippet<[ResourceEntry]>;
+		/**
+		 * Optional per-bucket action button rendered alongside the swimlane
+		 * header label. Receives the bucket key (the value `bucketOf`
+		 * returned for the active group-by). Used by the trash page to expose
+		 * a per-drive "Empty" affordance — the page decides which group-bys
+		 * the action is meaningful for and returns nothing otherwise.
+		 */
+		bucketAction?: Snippet<[string]>;
 		/** Show the owner column + vignette (list view) and hover tooltip. */
 		showOwner?: boolean;
 		/** Allow grid/list toggle (shares the app-wide view mode). */
@@ -131,6 +139,7 @@
 		showDate = true,
 		dateLabel,
 		dateCell,
+		bucketAction,
 		showOwner = false,
 		showViewToggle = true,
 		selectable = false,
@@ -434,7 +443,14 @@
 			<div class={viewClass} style="--files-list-columns: {columns}">
 				{@render listHeader()}
 				{#each sections as section (section.key)}
-					<div class="rl-swimlane-header" role="rowheader">{section.label}</div>
+					<div class="rl-swimlane-header" role="rowheader">
+						<span class="rl-swimlane-header__label">{section.label}</span>
+						{#if bucketAction}
+							<span class="rl-swimlane-header__action">
+								{@render bucketAction(section.key)}
+							</span>
+						{/if}
+					</div>
 					{#if filesStore.viewMode === 'list'}
 						<!-- Window each section's rows so a large grouped list (e.g. a big
 						     trash, grouped by remaining days) doesn't mount every row. The
@@ -651,6 +667,16 @@
 		font-weight: var(--weight-semibold);
 		color: var(--color-text-secondary);
 		border-bottom: 1px solid var(--color-border-faint);
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-2);
+	}
+
+	/* Optional per-bucket action (e.g. trash page's per-drive Empty). */
+	.rl-swimlane-header__action {
+		display: inline-flex;
+		align-items: center;
 	}
 
 	/* Grid view date meta line. */

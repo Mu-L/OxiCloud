@@ -43,6 +43,7 @@
 		type PluginRetention,
 		type ReextractResult,
 		addDriveMemberAdmin,
+		deleteDriveAdmin,
 		listAllDrives,
 		listDriveMembersAdmin,
 		removeDriveMemberAdmin,
@@ -1060,6 +1061,30 @@
 				)
 			: []
 	);
+
+	// Admin-driven delete-drive flow (D3b). Guarded by the confirm modal
+	// because the action is destructive and irreversible. The backend
+	// refuses the default Personal drive (405) and any non-empty drive
+	// (409); we surface those as toasts rather than silently swallow.
+	async function requestDeleteDrive(d: Drive) {
+		const msg = t(
+			'admin.drive_delete_confirm',
+			{ name: d.name },
+			'Delete drive "{{name}}"? This cannot be undone.'
+		);
+		if (!(await showConfirm(msg))) return;
+		try {
+			await deleteDriveAdmin(d.id);
+			// Refresh the listing + the sidebar picker. Both have a cached
+			// view of this drive; without the invalidate the row lingers
+			// until the next full reload.
+			await loadDrivesTab();
+			drivesStore.invalidate();
+			ui.notify(t('admin.drive_deleted', 'Drive deleted.'), 'success');
+		} catch (e) {
+			reportError(e);
+		}
+	}
 
 	async function submitDriveCreate(e: SubmitEvent) {
 		e.preventDefault();
@@ -2190,6 +2215,20 @@
 											onclick={() => openManageOwners(d)}
 										>
 											<Icon name="users-cog" />
+										</button>
+									{/if}
+									<!-- Default-personal drives can never be deleted
+									     (backend returns 405). Hide the action entirely
+									     so the admin doesn't get a meaningless 405 toast. -->
+									{#if !d.default_for_user}
+										<button
+											class="icon-btn icon-btn--danger"
+											data-testid={`admin-drive-delete-${d.id}`}
+											title={t('admin.drive_delete', 'Delete drive')}
+											aria-label={t('admin.drive_delete', 'Delete drive')}
+											onclick={() => requestDeleteDrive(d)}
+										>
+											<Icon name="trash-alt" />
 										</button>
 									{/if}
 								</div>

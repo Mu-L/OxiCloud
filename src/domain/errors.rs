@@ -33,6 +33,12 @@ pub enum ErrorKind {
     DatabaseError,
     /// Storage quota exceeded
     QuotaExceeded,
+    /// State conflict — the request is well-formed and permitted, but
+    /// the resource is in a state that refuses it (e.g. "drive must
+    /// be empty before delete"). Maps to HTTP 409. Distinct from
+    /// `AlreadyExists` (which is a uniqueness violation) so audit
+    /// readers can tell them apart.
+    Conflict,
 }
 
 impl Display for ErrorKind {
@@ -48,6 +54,7 @@ impl Display for ErrorKind {
             ErrorKind::UnsupportedOperation => write!(f, "Unsupported Operation"),
             ErrorKind::DatabaseError => write!(f, "Database Error"),
             ErrorKind::QuotaExceeded => write!(f, "Quota Exceeded"),
+            ErrorKind::Conflict => write!(f, "Conflict"),
         }
     }
 }

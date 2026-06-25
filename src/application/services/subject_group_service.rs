@@ -210,6 +210,69 @@ impl SubjectGroupService {
             ));
         }
 
+        // Refuse if this group is the **sole Owner** of any drive — the
+        // cascade-delete below would otherwise wipe the only `owner`
+        // grant on that drive and leave it orphaned (no one can ever
+        // manage it again). The check is "for every drive where this
+        // group holds Owner, does another Owner exist?". A single drive
+        // failing the check is enough to refuse.
+        //
+        // Matching D3a's last-owner-protection rule on `set_member_role`
+        // / `remove_member` — they catch the case where the drive's
+        // last Owner is *directly* a user or group being demoted /
+        // removed via the membership API. This guard catches the same
+        // invariant from the group-lifecycle side.
+        let orphaning: Option<(Uuid,)> = sqlx::query_as(
+            r#"
+            WITH group_owned AS (
+                SELECT resource_id
+                  FROM storage.role_grants
+                 WHERE subject_type = 'group'
+                   AND subject_id   = $1
+                   AND resource_type = 'drive'
+                   AND role         = 'owner'
+                   AND (expires_at IS NULL OR expires_at > NOW())
+            )
+            SELECT resource_id
+              FROM storage.role_grants
+             WHERE resource_type = 'drive'
+               AND role         = 'owner'
+               AND (expires_at IS NULL OR expires_at > NOW())
+               AND resource_id IN (SELECT resource_id FROM group_owned)
+             GROUP BY resource_id
+            HAVING COUNT(*) = 1
+             LIMIT 1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| {
+            DomainError::new(
+                ErrorKind::InternalError,
+                "SubjectGroup",
+                format!("sole-owner check: {e}"),
+            )
+        })?;
+        if let Some((drive_id,)) = orphaning {
+            tracing::info!(
+                target: "audit",
+                event = "group_delete.rejected",
+                reason = "sole_drive_owner",
+                group_id = %id,
+                drive_id = %drive_id,
+                by = %caller_id,
+                "👮🏻‍♂️ refused group delete — sole Owner of drive {drive_id}",
+            );
+            return Err(DomainError::new(
+                ErrorKind::Conflict,
+                "SubjectGroup",
+                "Group is the sole Owner of at least one shared drive — \
+                 promote another Owner first or delete the drive."
+                    .to_string(),
+            ));
+        }
+
         // Atomically delete grants pointing at this group, then the group
         // itself. If either fails, both roll back.
         let mut tx = self.pool.begin().await.map_err(|e| {

@@ -303,6 +303,84 @@ impl DriveRepository for DrivePgRepository {
         Self::row_to_drive_with_name(&row)
     }
 
+    async fn is_empty(&self, drive_id: Uuid) -> Result<bool, DriveRepositoryError> {
+        // A "live" non-root folder = any folder with `parent_id IS NOT
+        // NULL` (root is the only NULL-parent row per drive) and not in
+        // the trash. Trashed items don't count — owners can delete a
+        // drive even when its trash bin still holds rows; the trash GC
+        // will clean those up after the standard retention window.
+        let count: (i64,) = sqlx::query_as(
+            r#"
+            SELECT (
+                (SELECT COUNT(*) FROM storage.folders
+                  WHERE drive_id = $1 AND parent_id IS NOT NULL AND NOT is_trashed)
+              + (SELECT COUNT(*) FROM storage.files
+                  WHERE drive_id = $1 AND NOT is_trashed)
+            )
+            "#,
+        )
+        .bind(drive_id)
+        .fetch_one(self.pool.as_ref())
+        .await
+        .map_err(|e| Self::map_sqlx_err("is_empty", e))?;
+        Ok(count.0 == 0)
+    }
+
+    async fn delete_atomic(&self, drive_id: Uuid) -> Result<(), DriveRepositoryError> {
+        // Three-statement transaction:
+        //   1. Drop every role_grants row scoped to the drive itself
+        //      (folder/file grants under it are gone by step 3 cascade).
+        //   2. Look up the root folder id (we'll need it to delete the
+        //      folder row AFTER the drive row releases its FK).
+        //   3. Delete the drive — release the drive→root FK first.
+        //   4. Delete the root folder (drive_id FK on folders cascades
+        //      from this row going away; only the root remains because
+        //      is_empty was true).
+        //
+        // `drive_id` is bound once per statement; failure at any step
+        // rolls back. Caller (`DriveManagementService::delete_drive`)
+        // is responsible for the `is_empty` precheck.
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Self::map_sqlx_err("delete_atomic.begin", e))?;
+
+        sqlx::query(
+            "DELETE FROM storage.role_grants \
+             WHERE resource_type = 'drive' AND resource_id = $1",
+        )
+        .bind(drive_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Self::map_sqlx_err("delete_atomic.grants", e))?;
+
+        let root: (Uuid,) =
+            sqlx::query_as("SELECT root_folder_id FROM storage.drives WHERE id = $1")
+                .bind(drive_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| Self::map_sqlx_err("delete_atomic.lookup_root", e))?
+                .ok_or_else(|| DriveRepositoryError::NotFound(drive_id.to_string()))?;
+
+        sqlx::query("DELETE FROM storage.drives WHERE id = $1")
+            .bind(drive_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Self::map_sqlx_err("delete_atomic.drive", e))?;
+
+        sqlx::query("DELETE FROM storage.folders WHERE id = $1")
+            .bind(root.0)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Self::map_sqlx_err("delete_atomic.root", e))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| Self::map_sqlx_err("delete_atomic.commit", e))?;
+        Ok(())
+    }
+
     async fn get_by_id(&self, id: Uuid) -> Result<DriveWithRootName, DriveRepositoryError> {
         let row = sqlx::query(
             r#"

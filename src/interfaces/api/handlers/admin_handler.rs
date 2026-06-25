@@ -23,6 +23,7 @@ use crate::application::dtos::settings_dto::{
 };
 use crate::application::ports::authorization_ports::AuthorizationEngine;
 use crate::application::ports::plugin_ports::{LogQuery, PluginManagementPort, PluginMgmtError};
+use crate::application::ports::storage_ports::StorageUsagePort;
 use crate::common::di::AppState;
 use crate::domain::repositories::drive_repository::DriveRepository;
 use crate::domain::services::authorization::{Resource, Subject};
@@ -95,9 +96,17 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         // when `OXICLOUD_SMTP_MOCK` is off, so production deployments
         // can route the path freely without leaking inboxes.
         .route("/smtp/test/captured", get(get_captured_email))
+        // Test-only sweep triggers. Routes are always registered; the
+        // handlers themselves short-circuit to 404 when
+        // `features.enable_admin_internal_endpoints` is off — matches
+        // the `/smtp/test/captured` convention so production
+        // deployments don't need a different route table.
+        .route("/internal/trigger-sweep", post(internal_trigger_sweep))
+        .route("/internal/trigger-gc", post(internal_trigger_gc))
         // Drives — admin-wide view (distinct from `/api/drives` which
         // is filtered to the caller's role grants).
         .route("/drives", get(list_all_drives))
+        .route("/drives/{id}", delete(delete_drive_admin))
         .route(
             "/drives/{id}/members",
             get(list_drive_members_admin).post(add_drive_member_admin),
@@ -1956,4 +1965,192 @@ pub async fn remove_drive_member_admin(
         .await
         .map_err(AppError::from)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/admin/drives/{id}` — admin-only drive delete (D3b).
+///
+/// Same shape as the user-facing `DELETE /api/drives/{id}`, but
+/// bypasses the per-drive `Manage` check (the admin guard at the
+/// route edge is the access control). The remaining invariants —
+/// default Personal drive is undeletable, drive must be empty — still
+/// apply: an admin can't accidentally wipe a populated drive or the
+/// default home folder of any user. Audit emits
+/// `drive.deleted_via_admin` on success.
+#[utoipa::path(
+    delete,
+    path = "/api/admin/drives/{id}",
+    params(("id" = Uuid, Path, description = "Drive UUID")),
+    responses(
+        (status = 204, description = "Drive deleted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin required"),
+        (status = 405, description = "Default Personal drive — undeletable"),
+        (status = 409, description = "Drive is not empty"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "admin"
+)]
+pub async fn delete_drive_admin(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    axum::extract::Path(drive_id): axum::extract::Path<Uuid>,
+) -> Result<impl IntoResponse, AppError> {
+    let (admin_id, _) = admin_guard(&state, &headers).await?;
+    state
+        .drive_management_service
+        .delete_drive(admin_id, true, drive_id)
+        .await
+        .map_err(AppError::from)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test-only sweep triggers (`/api/admin/internal/*`)
+//
+// Wraps the periodic background jobs (storage-usage reconciliation,
+// blob garbage collection) behind admin-gated synchronous endpoints
+// so Hurl / integration tests can wait for them deterministically
+// rather than polling the cached value. Disabled at the handler edge
+// when `features.enable_admin_internal_endpoints == false` — match
+// the `/smtp/test/captured` convention so production deployments
+// don't need a different route table.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Refusal when the test-only endpoints are disabled. Returns 404
+/// rather than 403 to avoid leaking the route's existence (and the
+/// corresponding config flag) to an unauthenticated probe — the
+/// legitimate test runner sets the env explicitly.
+fn internal_endpoints_disabled() -> axum::response::Response {
+    use axum::response::IntoResponse;
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({ "error": "endpoint not available" })),
+    )
+        .into_response()
+}
+
+/// `POST /api/admin/internal/trigger-sweep` — run the storage-usage
+/// reconciliation sweep synchronously.
+///
+/// Test-only. Recomputes `users.storage_used_bytes` and
+/// `drives.used_bytes` from `SUM(size) WHERE NOT is_trashed`, in the
+/// same set-based UPDATEs the periodic ticker runs. Used by Hurl
+/// suites that need to assert post-delete quota convergence without
+/// waiting out the sweep interval (default 600 s).
+#[utoipa::path(
+    post,
+    path = "/api/admin/internal/trigger-sweep",
+    responses(
+        (status = 200, description = "Sweep ran"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin required"),
+        (status = 404, description = "Endpoint disabled (set OXICLOUD_ENABLE_ADMIN_INTERNAL_ENDPOINTS=true)"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "admin"
+)]
+pub async fn internal_trigger_sweep(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !state.core.config.features.enable_admin_internal_endpoints {
+        return internal_endpoints_disabled();
+    }
+    if let Err(e) = admin_guard(&state, &headers).await {
+        return e.into_response();
+    }
+    let svc = match state.storage_usage_service.as_ref() {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "storage_usage_service not available",
+                })),
+            )
+                .into_response();
+        }
+    };
+    if let Err(e) = svc.update_all_users_storage_usage().await {
+        return AppError::internal_error(format!("user sweep failed: {e}")).into_response();
+    }
+    if let Err(e) = svc.update_all_drives_storage_usage().await {
+        return AppError::internal_error(format!("drive sweep failed: {e}")).into_response();
+    }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "ok": true, "ran": ["users", "drives"] })),
+    )
+        .into_response()
+}
+
+/// Query parameters for `POST /api/admin/internal/trigger-gc`.
+///
+/// `force=true` bypasses the orphan-grace window so the sweep reaps
+/// just-orphaned blobs in the same call. Without this, a blob orphaned
+/// less than `GC_ORPHAN_GRACE_SECS` (1 h) ago survives the sweep — the
+/// grace exists so a concurrent uploader pinning a just-orphaned chunk
+/// can't race the row-delete → file-unlink gap. Integration tests
+/// don't have concurrent uploaders, so the test runner sets
+/// `force=true` to make the sweep deterministic within a test's
+/// runtime.
+#[derive(Debug, serde::Deserialize, Default)]
+pub struct InternalTriggerGcQuery {
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// `POST /api/admin/internal/trigger-gc` — run the blob garbage
+/// collector synchronously.
+///
+/// Test-only. Drops `file_blobs` rows with `ref_count = 0` (subject
+/// to the orphan-grace window) and their on-disk content. Same call
+/// as the inline post-purge GC and the periodic blob-GC sweep — just
+/// exposed under an admin route so Hurl can wait for it
+/// deterministically. Add `?force=true` to bypass the grace window —
+/// see [`InternalTriggerGcQuery`].
+#[utoipa::path(
+    post,
+    path = "/api/admin/internal/trigger-gc",
+    params(("force" = Option<bool>, Query, description = "Bypass the orphan-grace window (test-only)")),
+    responses(
+        (status = 200, description = "GC ran"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin required"),
+        (status = 404, description = "Endpoint disabled (set OXICLOUD_ENABLE_ADMIN_INTERNAL_ENDPOINTS=true)"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "admin"
+)]
+pub async fn internal_trigger_gc(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<InternalTriggerGcQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !state.core.config.features.enable_admin_internal_endpoints {
+        return internal_endpoints_disabled();
+    }
+    if let Err(e) = admin_guard(&state, &headers).await {
+        return e.into_response();
+    }
+    let result = if query.force {
+        state.core.dedup_service.garbage_collect_force().await
+    } else {
+        state.core.dedup_service.garbage_collect().await
+    };
+    match result {
+        Ok((blobs_deleted, bytes_freed)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "ok": true,
+                "blobs_deleted": blobs_deleted,
+                "bytes_freed": bytes_freed,
+                "forced": query.force,
+            })),
+        )
+            .into_response(),
+        Err(e) => AppError::internal_error(format!("gc failed: {e}")).into_response(),
+    }
 }

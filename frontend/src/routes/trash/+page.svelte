@@ -4,6 +4,7 @@
 	import {
 		deleteTrashItem,
 		emptyTrash,
+		emptyTrashForDrive,
 		expiryChip,
 		fetchTrashPage,
 		remainingDaysBucket,
@@ -184,6 +185,60 @@
 		}
 	}
 
+	// Per-drive empty (D2b stage 4 follow-up). The bucket key on the
+	// Drive group-by encodes "{rank}:{driveId}" so the natural lexical
+	// sort puts default-personal first; we strip the rank prefix here
+	// to recover the raw drive UUID. Only an Owner of the drive
+	// (Delete-bearing role) reaches the per-drive Empty button because
+	// the backend resolves a Delete-set first and refuses (404) any
+	// other drive.
+	function driveIdFromBucketKey(key: string): string {
+		return key.includes(':') ? (key.split(':')[1] ?? key) : key;
+	}
+
+	async function purgeDrive(bucketKey: string) {
+		const driveId = driveIdFromBucketKey(bucketKey);
+		const drive = drivesStore.findById(driveId);
+		// Owner-only check mirrors the backend gate so the UI doesn't
+		// surface the action for non-Owners — keeps the affordance
+		// honest. The bucket only appears on the page if the trash list
+		// already contained items the caller could see, but caller_role
+		// distinguishes Owner from Viewer/Editor on shared drives.
+		const ok = await confirmDialog({
+			title: t('trash.empty_drive_title', 'Empty drive trash'),
+			message: t(
+				'trash.confirm_empty_drive',
+				{ name: drive?.name ?? driveId },
+				'Empty the trash on drive "{{name}}"? This cannot be undone.'
+			),
+			confirmText: t('trash.empty_action', 'Empty trash'),
+			danger: true
+		});
+		if (!ok) return;
+		try {
+			await emptyTrashForDrive(driveId);
+			// Drop every entry that belonged to this drive; cheaper than a
+			// full refetch and matches what the user just saw.
+			raw = raw.filter((it) => it.drive_id !== driveId);
+		} catch (e) {
+			errorToast(e);
+		}
+	}
+
+	// The Drive group-by is the only one where a per-bucket empty
+	// affordance is meaningful — every other bucket key (remaining
+	// days, type, size, trashed time) isn't a permission scope. Hide
+	// the button on those group-bys.
+	const showPerDriveEmpty = $derived(groupBy === 'drive');
+
+	function driveCanPurge(driveId: string): boolean {
+		const d = drivesStore.findById(driveId);
+		// `caller_role === 'owner'` is the same gate the backend
+		// applies via Permission::Delete in the role bundle. Hide the
+		// button on Viewer/Editor drives so a click can't 404.
+		return d?.caller_role === 'owner';
+	}
+
 	onMount(() => {
 		// Drive names for the "Drive" group-by labels — `drivesStore.load()` is
 		// idempotent (cached on the singleton) so this is essentially free.
@@ -227,6 +282,23 @@
 			<Icon name={chip.icon} class="expiry-chip__icon" />
 			{chip.label}
 		</span>
+	{/snippet}
+	{#snippet bucketAction(bucketKey: string)}
+		{#if showPerDriveEmpty}
+			{@const driveId = driveIdFromBucketKey(bucketKey)}
+			{#if driveCanPurge(driveId)}
+				<button
+					type="button"
+					class="btn-action btn-action--delete"
+					data-testid={`trash-empty-drive-btn-${driveId}`}
+					title={t('trash.empty_drive_title', 'Empty drive trash')}
+					aria-label={t('trash.empty_drive_title', 'Empty drive trash')}
+					onclick={() => purgeDrive(bucketKey)}
+				>
+					<Icon name="trash" />
+				</button>
+			{/if}
+		{/if}
 	{/snippet}
 	{#snippet actions(entry)}
 		<button

@@ -177,6 +177,19 @@ pub trait DriveRepository: Send + Sync + 'static {
         subject_ids: &[Uuid],
     ) -> Result<Vec<DriveWithRootName>, DriveRepositoryError>;
 
+    /// `true` when the drive holds no live (non-trashed) folders other
+    /// than its own root and no live files at all. Used by
+    /// `DriveManagementService::delete_drive` to enforce the
+    /// "empty-before-delete" rule — owners must clear / trash the
+    /// content first so a single click can't wipe a populated drive.
+    async fn is_empty(&self, drive_id: Uuid) -> Result<bool, DriveRepositoryError>;
+
+    /// Hard-delete a drive: its `role_grants` rows, its root folder,
+    /// and the drive row itself, in one transaction. Caller is
+    /// responsible for ensuring `is_empty` first; this method does
+    /// **not** re-check. Returns `NotFound` if the drive id is gone.
+    async fn delete_atomic(&self, drive_id: Uuid) -> Result<(), DriveRepositoryError>;
+
     /// List every drive on the system, regardless of caller membership.
     ///
     /// Used by the admin panel's `GET /api/admin/drives`. Distinct from

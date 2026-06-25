@@ -157,6 +157,35 @@ export async function removeDriveMemberAdmin(
 	}
 }
 
+/**
+ * `DELETE /api/admin/drives/{id}` — admin-only drive delete (D3b).
+ *
+ * Bypasses the per-drive `Manage` check (the admin guard at the route
+ * edge is the access control). The default-personal-drive guard and
+ * the "drive must be empty" check still fire server-side — admins
+ * can't accidentally wipe a populated drive or a user's home folder.
+ * Throws on non-2xx so the caller can branch on `405` (default
+ * personal) vs `409` (non-empty) when surfacing the failure.
+ */
+export async function deleteDriveAdmin(driveId: string): Promise<void> {
+	const res = await apiFetch(`/api/admin/drives/${encodeURIComponent(driveId)}`, {
+		method: 'DELETE',
+		credentials: 'same-origin',
+		headers: getCsrfHeaders()
+	});
+	if (!res.ok) {
+		let detail = '';
+		try {
+			const parsed = (await res.json()) as { error?: string; message?: string };
+			detail = parsed.error ?? parsed.message ?? '';
+		} catch {
+			/* response body wasn't JSON */
+		}
+		// 405 / 409 carry actionable messages from the backend; bubble them.
+		throw new Error(detail || `delete drive failed: ${res.status}`);
+	}
+}
+
 // ── Users ───────────────────────────────────────────────────────────────
 
 export interface AdminUsersPage {

@@ -105,6 +105,32 @@ export async function updateDriveMember(
 }
 
 /**
+ * `DELETE /api/drives/{id}` — Owner-only drive delete (D3b).
+ *
+ * Refused with `405` for the default Personal drive and `409` for a
+ * non-empty drive (caller must move/trash content first). Throws on
+ * non-2xx with the server's detail message when present so the caller
+ * can decide whether to surface a confirmation prompt vs an error.
+ */
+export async function deleteDrive(driveId: string): Promise<void> {
+	const res = await apiFetch(`/api/drives/${encodeURIComponent(driveId)}`, {
+		method: 'DELETE',
+		credentials: 'same-origin',
+		headers: getCsrfHeaders()
+	});
+	if (!res.ok) {
+		let detail = '';
+		try {
+			const parsed = (await res.json()) as { error?: string; message?: string };
+			detail = parsed.error ?? parsed.message ?? '';
+		} catch {
+			/* response body wasn't JSON */
+		}
+		throw new Error(detail || `delete drive failed: ${res.status}`);
+	}
+}
+
+/**
  * `DELETE /api/drives/{id}/members/{kind}/{sid}` — remove a member.
  * Idempotent (removing a non-member returns 204). Refused with 400 if it
  * would leave a shared drive without an owner.

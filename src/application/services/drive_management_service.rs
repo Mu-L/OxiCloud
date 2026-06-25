@@ -274,6 +274,105 @@ impl DriveManagementService {
         Ok(())
     }
 
+    /// `DELETE /api/drives/{id}` and `DELETE /api/admin/drives/{id}`.
+    ///
+    /// Policy (drive.md §6 + memos):
+    /// - Caller must hold `Permission::Manage` on the drive — typically
+    ///   the Owner. `caller_is_admin = true` bypasses this check; the
+    ///   route gate is the access control then. Audit emits
+    ///   `drive.deleted_via_admin` when the bypass fires.
+    /// - The user's default Personal drive (`drives.default_for_user
+    ///   IS NOT NULL`) is refused with `405` — deleting your home is a
+    ///   category error. Secondary personal drives + shared drives
+    ///   follow the same content-empty rule below.
+    /// - The drive must be empty (no live folders other than the root,
+    ///   no live files). Trashed rows are excluded — owners can
+    ///   delete a drive whose trash bin still holds rows; the trash GC
+    ///   cleans them up after the retention window. Non-empty drives
+    ///   return `409 Conflict` so the UI can prompt the owner to
+    ///   move/trash content first.
+    ///
+    /// On success the drive row, its root folder, and every
+    /// `role_grants` row scoped to the drive are removed in one
+    /// transaction.
+    pub async fn delete_drive(
+        &self,
+        caller_id: Uuid,
+        caller_is_admin: bool,
+        drive_id: Uuid,
+    ) -> Result<(), DomainError> {
+        let resource = Resource::Drive(drive_id);
+        if !caller_is_admin {
+            self.authz
+                .require(Subject::User(caller_id), Permission::Manage, resource)
+                .await?;
+        }
+
+        let drive = self.drive_repo.get_by_id(drive_id).await.map_err(|e| {
+            DomainError::internal_error("Drive", format!("Failed to fetch drive: {e:?}"))
+        })?;
+
+        if drive.drive.default_for_user.is_some() {
+            tracing::info!(
+                target: "audit",
+                event = "drive_delete.rejected",
+                reason = "default_personal_drive",
+                drive_id = %drive_id,
+                by = %caller_id,
+                "👮🏻‍♂️ refused delete on default personal drive {drive_id}",
+            );
+            return Err(DomainError::operation_not_supported(
+                "Drive",
+                "The default Personal drive cannot be deleted.",
+            ));
+        }
+
+        let empty = self.drive_repo.is_empty(drive_id).await.map_err(|e| {
+            DomainError::internal_error("Drive", format!("Failed to check emptiness: {e:?}"))
+        })?;
+        if !empty {
+            tracing::info!(
+                target: "audit",
+                event = "drive_delete.rejected",
+                reason = "drive_not_empty",
+                drive_id = %drive_id,
+                by = %caller_id,
+                "👮🏻‍♂️ refused delete on non-empty drive {drive_id}",
+            );
+            return Err(DomainError::new(
+                crate::common::errors::ErrorKind::Conflict,
+                "Drive",
+                "Drive is not empty — move or trash its contents before deleting.",
+            ));
+        }
+
+        self.drive_repo
+            .delete_atomic(drive_id)
+            .await
+            .map_err(|e| DomainError::internal_error("Drive", format!("delete failed: {e:?}")))?;
+
+        // Drop every cached drive-role entry for this drive so the next
+        // /api/drives listing for any subject doesn't show a row pointing
+        // at a deleted drive_id. Single-key cache invalidations are safe
+        // even when no entry matches.
+        self.authz
+            .invalidate_drive_role_cache_for_drive(drive_id)
+            .await;
+
+        tracing::info!(
+            target: "audit",
+            event = if caller_is_admin {
+                "drive.deleted_via_admin"
+            } else {
+                "drive.deleted"
+            },
+            drive_id = %drive_id,
+            by = %caller_id,
+            "🗑 drive deleted",
+        );
+        Ok(())
+    }
+
     // ── Business rules ──────────────────────────────────────────────────────
 
     /// Personal drives are single-user single-owner; any member mutation is

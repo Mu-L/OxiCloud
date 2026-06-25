@@ -214,8 +214,39 @@ impl ChunkedUploadHandler {
                 .await
         {
             tracing::warn!(
-                "⛔ CHUNKED UPLOAD REJECTED (quota): user={}, file={}, size={} — {}",
+                "⛔ CHUNKED UPLOAD REJECTED (user quota): user={}, file={}, size={} — {}",
                 auth_user.username,
+                request.filename,
+                request.total_size,
+                err.message
+            );
+            return (
+                StatusCode::INSUFFICIENT_STORAGE,
+                Json(serde_json::json!({
+                    "error": err.message,
+                    "error_type": "QuotaExceeded"
+                })),
+            )
+                .into_response();
+        }
+
+        // ── Per-drive quota (D4) ─────────────────────────────────
+        // Native-chunked declares `total_size` at session creation,
+        // so we can refuse here before any chunk is accepted — same
+        // wasted-bandwidth optimisation the multipart path has via
+        // the post-ingest check. No folder_id means root-level which
+        // the folder-permission check above already rejects.
+        if let Some(storage_svc) = state.storage_usage_service.as_ref()
+            && let Some(fid_str) = request.folder_id.as_deref()
+            && let Ok(fid) = uuid::Uuid::parse_str(fid_str)
+            && let Err(err) = storage_svc
+                .check_drive_quota_by_folder(fid, request.total_size)
+                .await
+        {
+            tracing::warn!(
+                "⛔ CHUNKED UPLOAD REJECTED (drive quota): user={}, folder={}, file={}, size={} — {}",
+                auth_user.username,
+                fid,
                 request.filename,
                 request.total_size,
                 err.message

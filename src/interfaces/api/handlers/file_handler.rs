@@ -267,8 +267,33 @@ impl FileHandler {
                 {
                     upload_ingest::discard_ingested(dedup, &ingested).await;
                     tracing::warn!(
-                        "⛔ UPLOAD REJECTED (quota): user={}, file={}, size={}",
+                        "⛔ UPLOAD REJECTED (user quota): user={}, file={}, size={}",
                         auth_user.username,
+                        filename,
+                        ingested.size
+                    );
+                    return Err(Self::quota_error_response(err));
+                }
+
+                // ── Per-drive quota enforcement (D4) ─────────────────
+                // Sibling to the per-user check above: same read-only
+                // SELECT shape, same discard-then-507 outcome. Skipped
+                // when there's no folder_id (root-level upload — no
+                // drive to charge; folder service refuses these
+                // independently). Unlimited-quota drives (`NULL`)
+                // short-circuit inside the service.
+                if let Some(storage_svc) = state.storage_usage_service.as_ref()
+                    && let Some(fid_str) = folder_id.as_deref()
+                    && let Ok(fid) = uuid::Uuid::parse_str(fid_str)
+                    && let Err(err) = storage_svc
+                        .check_drive_quota_by_folder(fid, ingested.size)
+                        .await
+                {
+                    upload_ingest::discard_ingested(dedup, &ingested).await;
+                    tracing::warn!(
+                        "⛔ UPLOAD REJECTED (drive quota): user={}, folder={}, file={}, size={}",
+                        auth_user.username,
+                        fid,
                         filename,
                         ingested.size
                     );

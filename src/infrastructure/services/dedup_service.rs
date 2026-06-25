@@ -1895,6 +1895,24 @@ impl DedupService {
     /// The grace window and reference cross-checks together make the sweep safe
     /// against a concurrent uploader re-referencing a just-orphaned chunk.
     pub async fn garbage_collect(&self) -> Result<(u64, u64), DomainError> {
+        self.garbage_collect_with_grace(Self::GC_ORPHAN_GRACE_SECS)
+            .await
+    }
+
+    /// Test-only variant that bypasses the orphan grace window — used by
+    /// `POST /api/admin/internal/trigger-gc?force=true` so the
+    /// integration suite can reap just-orphaned blobs synchronously
+    /// (waiting out the production 1 h grace inside a test run is a
+    /// non-starter). Drops the same rows the regular sweep would, just
+    /// without the time floor. Unsafe under concurrent uploads because
+    /// it reopens the TOCTOU window the grace closes — only the
+    /// admin-internal route, itself gated by
+    /// `OXICLOUD_ENABLE_ADMIN_INTERNAL_ENDPOINTS`, may reach here.
+    pub async fn garbage_collect_force(&self) -> Result<(u64, u64), DomainError> {
+        self.garbage_collect_with_grace(0).await
+    }
+
+    async fn garbage_collect_with_grace(&self, grace_secs: i64) -> Result<(u64, u64), DomainError> {
         const BATCH_SIZE: i64 = 500;
 
         let mut total_deleted = 0u64;
@@ -1951,6 +1969,16 @@ impl DedupService {
                     DomainError::internal_error("Dedup", format!("GC decrement chunks: {e}"))
                 })?;
 
+                // Fire the blob hooks against the **manifest's file_hash** —
+                // that's the key thumbnails are stored under (whole-file
+                // BLAKE3, not chunk hashes). Phase 2 below fires hooks for
+                // individual chunk hashes only; without this call, a
+                // CDC-chunked file's thumbnails leak on disk because the
+                // chunk-keyed hook never finds them. Symptom: orphan webp
+                // under `.thumbnails/{icon,preview,large}/<file_hash>.webp`
+                // after a user-cascade-delete of a video upload.
+                self.fire_blob_hooks(file_hash);
+
                 total_bytes += *size as u64;
                 tracing::debug!(
                     "GC: removed manifest {} ({} chunks)",
@@ -2001,7 +2029,7 @@ impl DedupService {
                   RETURNING hash, size",
             )
             .bind(BATCH_SIZE)
-            .bind(Self::GC_ORPHAN_GRACE_SECS as i32)
+            .bind(grace_secs as i32)
             .fetch_all(self.maintenance_pool.as_ref())
             .await
             .map_err(|e| DomainError::internal_error("Dedup", format!("GC blobs: {e}")))?;
@@ -3219,6 +3247,17 @@ mod delta_upload_integration_tests {
 
     /// Store `data` through the streaming path and give `user_id` a file
     /// row referencing it — making its chunks claimable by that user.
+    ///
+    /// **Order matters.** BLAKE3 is deterministic, so the file row is
+    /// inserted BEFORE `store_from_stream` runs. This closes a race in
+    /// the shared test pool: Phase 1 of `garbage_collect()` deletes
+    /// manifests with `NOT EXISTS (file referencing it)`. With the old
+    /// order (store first, file second), a concurrent GC-invoking test
+    /// (`garbage_collect_honours_grace_window_and_references`,
+    /// `manifest_dereference_defers_chunk_reclamation_to_gc`) could
+    /// reap our manifest in the microsecond window between the two
+    /// statements, causing CI-flaky `RowNotFound` panics in producers
+    /// like `hash_chunk_sequence_recomputes_and_validates_sizes`.
     async fn seed_owned_content(
         svc: &DedupService,
         pool: &PgPool,
@@ -3227,19 +3266,7 @@ mod delta_upload_integration_tests {
         data: &[u8],
         label: &str,
     ) -> (String, Vec<String>, Uuid) {
-        let source = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::copy_from_slice(data))]);
-        let stored = svc
-            .store_from_stream(source, Some("application/octet-stream".into()))
-            .await
-            .expect("store");
-        let file_hash = stored.hash().to_string();
-        let chunks: Vec<String> = sqlx::query_scalar(
-            "SELECT UNNEST(chunk_hashes) FROM storage.chunk_manifests WHERE file_hash = $1",
-        )
-        .bind(&file_hash)
-        .fetch_all(pool)
-        .await
-        .expect("chunks");
+        let file_hash = blake3::hash(data).to_hex().to_string();
 
         let file_id: Uuid = sqlx::query_scalar(
             "INSERT INTO storage.files (name, user_id, drive_id, blob_hash, size)
@@ -3256,6 +3283,26 @@ mod delta_upload_integration_tests {
         .fetch_one(pool)
         .await
         .expect("file row");
+
+        let source = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::copy_from_slice(data))]);
+        let stored = svc
+            .store_from_stream(source, Some("application/octet-stream".into()))
+            .await
+            .expect("store");
+        assert_eq!(
+            stored.hash(),
+            file_hash,
+            "pre-computed BLAKE3 must match CDC-store output"
+        );
+
+        let chunks: Vec<String> = sqlx::query_scalar(
+            "SELECT UNNEST(chunk_hashes) FROM storage.chunk_manifests WHERE file_hash = $1",
+        )
+        .bind(&file_hash)
+        .fetch_all(pool)
+        .await
+        .expect("chunks");
+
         (file_hash, chunks, file_id)
     }
 
@@ -3325,8 +3372,17 @@ mod delta_upload_integration_tests {
         let orphan = blake3::hash(format!("orphan-{}", Uuid::new_v4()).as_bytes())
             .to_hex()
             .to_string();
+        // Stamp `orphaned_at = now()` on the ref-0 row so it sits inside the
+        // GC grace window for the duration of this test. Without it,
+        // `orphaned_at IS NULL` is treated by `garbage_collect` as
+        // "pre-migration, immediately reapable" — and any sibling test in
+        // the shared pool that calls `garbage_collect()` (e.g.
+        // `garbage_collect_respects_grace_and_cross_checks`) would race
+        // with the pin below and delete the row first.
         sqlx::query(
-            "INSERT INTO storage.blobs (hash, size, ref_count) VALUES ($1, 10, 1), ($2, 10, 0)",
+            "INSERT INTO storage.blobs (hash, size, ref_count, orphaned_at) VALUES
+                ($1, 10, 1, NULL),
+                ($2, 10, 0, now())",
         )
         .bind(&foreign)
         .bind(&orphan)

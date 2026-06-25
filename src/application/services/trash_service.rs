@@ -725,6 +725,46 @@ impl TrashUseCase for TrashService {
         // the drives where the caller is effectively Owner (direct or via a
         // group). Single-drive users: this resolves to just their personal
         // drive, identical to the legacy `WHERE user_id = $1` scope.
+        let drive_ids = self.drives_with_delete_for(user_id).await?;
+        if drive_ids.is_empty() {
+            info!("empty_trash: caller has Delete on no drive — nothing to do");
+            return Ok(());
+        }
+        self.clear_trash_in(&drive_ids, user_id).await
+    }
+
+    #[instrument(skip(self))]
+    async fn empty_trash_for_drive(&self, user_id: Uuid, drive_id: Uuid) -> Result<()> {
+        // Per-drive trash empty — the Drive group-by on `/trash` exposes
+        // this as a per-row affordance so multi-drive owners can clear
+        // one drive without touching the others. Refuses with
+        // `NotFound` (anti-enum) when the caller lacks Delete on the
+        // named drive — same shape as the user-facing drive listing
+        // would emit for an unknown id.
+        let allowed = self.drives_with_delete_for(user_id).await?;
+        if !allowed.contains(&drive_id) {
+            tracing::info!(
+                target: "audit",
+                event = "trash.empty_drive_rejected",
+                reason = "no_delete_on_drive",
+                user_id = %user_id,
+                drive_id = %drive_id,
+                "👮🏻‍♂️ refused per-drive empty — caller lacks Delete on this drive",
+            );
+            return Err(DomainError::not_found("Drive", drive_id.to_string()));
+        }
+        info!("Emptying trash for drive {} (user {})", drive_id, user_id);
+        self.clear_trash_in(&[drive_id], user_id).await
+    }
+}
+
+impl TrashService {
+    /// Drives where the caller has `Permission::Delete` (via any role
+    /// bundle, direct or group-mediated). Shared by `empty_trash` and
+    /// `empty_trash_for_drive`; lifting the lookup out of both methods
+    /// keeps the two HTTP surfaces semantically consistent and avoids
+    /// duplicating the subject-expansion plumbing.
+    async fn drives_with_delete_for(&self, user_id: Uuid) -> Result<Vec<Uuid>> {
         let (subject_types, subject_ids) = self
             .authz
             .expand_subject_for_listing(Subject::User(user_id))
@@ -739,29 +779,32 @@ impl TrashUseCase for TrashService {
                     format!("Failed to resolve accessible drives: {e:?}"),
                 )
             })?;
-        let drive_ids: Vec<Uuid> = drives
+        Ok(drives
             .iter()
             .filter(|d| {
                 d.caller_role
                     .is_some_and(|r| r.expand().contains(&Permission::Delete))
             })
             .map(|d| d.drive.id)
-            .collect();
+            .collect())
+    }
 
-        if drive_ids.is_empty() {
-            info!("empty_trash: caller has Delete on no drive — nothing to do");
-            return Ok(());
-        }
-
-        // Collect ALL trashed file IDs BEFORE bulk-deleting so hooks (thumbnail
-        // cleanup, etc.) can run afterward.  We use get_all_trashed_file_ids (not
-        // get_trash_items) because the trash_items view excludes files inside a
-        // trashed folder — those files will still be deleted by clear_trash via
-        // the folder CASCADE, but their hooks would otherwise be missed.
+    /// Bulk-clear trash within the given drives, running every side
+    /// effect once: trashed-file id list (for hooks), `clear_trash`
+    /// SQL, dedup GC, content-cache invalidation, file-deleted hook.
+    /// The two `TrashUseCase` entry points compose this with their
+    /// respective drive-id scopes — call-once, no duplication.
+    async fn clear_trash_in(&self, drive_ids: &[Uuid], user_id: Uuid) -> Result<()> {
+        // Collect ALL trashed file IDs BEFORE bulk-deleting so hooks
+        // (thumbnail cleanup, etc.) can run afterward. We use
+        // `get_all_trashed_file_ids` (not `get_trash_items`) because the
+        // trash_items view excludes files inside a trashed folder —
+        // those files will still be deleted by `clear_trash` via the
+        // folder CASCADE, but their hooks would otherwise be missed.
         let trashed_file_ids: Vec<String> = if self.file_deleted_hook.is_some() {
             match self
                 .trash_repository
-                .get_all_trashed_file_ids(&drive_ids)
+                .get_all_trashed_file_ids(drive_ids)
                 .await
             {
                 Ok(ids) => ids,
@@ -781,29 +824,33 @@ impl TrashUseCase for TrashService {
         // Folder deletion cascades (FK ON DELETE CASCADE) to child folders and
         // their files. The PG trigger `trg_files_decrement_blob_ref` automatically
         // decrements blob ref_counts for every deleted file row.
-        self.trash_repository.clear_trash(&drive_ids).await?;
+        self.trash_repository.clear_trash(drive_ids).await?;
 
-        // The PG trigger decremented ref_counts but cannot delete disk files or
-        // thumbnails.  Run garbage_collect() to remove any blobs whose ref_count
-        // reached 0, along with their blob-keyed thumbnail files.
+        // The PG trigger decremented ref_counts but cannot delete disk
+        // files or thumbnails. `garbage_collect()` removes any blobs
+        // whose ref_count reached 0, along with their blob-keyed
+        // thumbnail files. Failure here is non-fatal — the rows are
+        // gone in any case; the next GC pass mops up.
         if let Err(e) = self.dedup_service.garbage_collect().await {
-            warn!("empty_trash: garbage_collect failed: {:?}", e);
+            warn!("clear_trash_in: garbage_collect failed: {:?}", e);
         }
 
-        // Invalidate content cache for all permanently deleted files.
         if let Some(cc) = &self.content_cache {
             for file_id in &trashed_file_ids {
                 cc.invalidate(file_id).await;
             }
         }
-
         if let Some(hook) = &self.file_deleted_hook {
             for file_id in &trashed_file_ids {
                 hook.on_file_deleted(file_id);
             }
         }
 
-        info!("Trash emptied for user {}", user_id);
+        info!(
+            "Trash cleared across {} drive(s) for user {}",
+            drive_ids.len(),
+            user_id
+        );
         Ok(())
     }
 }

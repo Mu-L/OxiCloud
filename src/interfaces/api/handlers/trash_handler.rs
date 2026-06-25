@@ -405,3 +405,61 @@ pub async fn empty_trash(
         }
     }
 }
+
+/// `DELETE /api/trash/drive/{drive_id}` — per-drive empty trash.
+///
+/// Same destructive shape as the all-drives `DELETE /api/trash`, but
+/// scoped to a single drive the caller can Delete in. Used by the
+/// `/trash` page's Drive group-by, which exposes a per-row "Empty"
+/// affordance so multi-drive owners don't have to wipe everything at
+/// once.
+///
+/// Refused with `404` (anti-enum) when the caller has no Delete-bearing
+/// role on the named drive — the user-facing drive listing would emit
+/// the same shape for an unknown id.
+#[utoipa::path(
+    delete,
+    path = "/api/trash/drive/{drive_id}",
+    params(("drive_id" = Uuid, Path, description = "Drive UUID")),
+    responses(
+        (status = 200, description = "Drive trash emptied successfully"),
+        (status = 404, description = "Caller lacks Delete on this drive"),
+        (status = 501, description = "Trash feature not enabled"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "trash"
+)]
+#[instrument(skip_all)]
+pub async fn empty_trash_for_drive(
+    State(state): State<Arc<AppState>>,
+    auth_user: AuthUser,
+    Path(drive_id): Path<uuid::Uuid>,
+) -> impl IntoResponse {
+    debug!(
+        "Request to empty trash for drive {} by user {}",
+        drive_id, auth_user.id
+    );
+
+    let trash_service = match state.trash_service.as_ref() {
+        Some(service) => service,
+        None => {
+            return (
+                StatusCode::NOT_IMPLEMENTED,
+                Json(json!({ "error": "Trash feature is not enabled" })),
+            )
+                .into_response();
+        }
+    };
+
+    match trash_service
+        .empty_trash_for_drive(auth_user.id, drive_id)
+        .await
+    {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(json!({ "success": true, "drive_id": drive_id })),
+        )
+            .into_response(),
+        Err(e) => AppError::from(e).into_response(),
+    }
+}

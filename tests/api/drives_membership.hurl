@@ -734,6 +734,8 @@ Content-Type: application/json
 }
 
 HTTP 201
+[Captures]
+editor_created_folder_id: jsonpath "$.id"
 [Asserts]
 jsonpath "$.name" == "editor-created-folder"
 
@@ -813,3 +815,75 @@ GET {{base_url}}/api/drives/{{team_drive_id}}/members
 Authorization: Bearer {{dave_token}}
 
 HTTP 404
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 30 — Drive delete (D3b).
+#           - Non-Owner → 404 (Bob is Viewer post-Step 28).
+#           - Owner on non-empty drive → 409 (the editor-created-folder
+#             from Step 27 is still live).
+#           - Owner after the folder is trashed → 204.
+#           Personal-drive refusal (default_for_user IS NOT NULL) is
+#           covered separately — `mbr_dave` keeps his default drive,
+#           we exercise its 405 below.
+# ─────────────────────────────────────────────────────────────
+
+# 30a — Viewer (Bob) cannot delete the drive → 404, anti-enum same as
+#       the member-mutation refusals.
+DELETE {{base_url}}/api/drives/{{team_drive_id}}
+Authorization: Bearer {{bob_token}}
+
+HTTP 404
+
+
+# 30b — Owner (Alice) on a non-empty drive → 409 with the canonical
+#       "drive_not_empty" reason in the audit log.
+DELETE {{base_url}}/api/drives/{{team_drive_id}}
+Authorization: Bearer {{alice_token}}
+
+HTTP 409
+
+
+# 30c — Clear the lingering content (the Editor-created folder from
+#       Step 27). Delete via the regular folder endpoint so the row
+#       lands in trash, not the live tree; `is_empty` excludes
+#       trashed rows so a populated trash bin is allowed.
+DELETE {{base_url}}/api/folders/{{editor_created_folder_id}}
+Authorization: Bearer {{alice_token}}
+
+HTTP 204
+
+
+# 30d — Owner on an empty drive → 204.
+DELETE {{base_url}}/api/drives/{{team_drive_id}}
+Authorization: Bearer {{alice_token}}
+
+HTTP 204
+
+
+# 30e — Drive is gone; subsequent reads return 404.
+GET {{base_url}}/api/drives/{{team_drive_id}}/members
+Authorization: Bearer {{alice_token}}
+
+HTTP 404
+
+
+# 30f — Default Personal drive — Dave's home — cannot be deleted.
+#       Look up the drive id via the picker listing. Dave is a fresh
+#       user and only has his default personal drive, so `$[0].id`
+#       is unambiguous. (Avoiding the `[?(...)]` filter — Hurl
+#       collapses single-match results to a scalar, which breaks
+#       `nth` / list-style assertions; see memory.)
+GET {{base_url}}/api/drives
+Authorization: Bearer {{dave_token}}
+
+HTTP 200
+[Captures]
+dave_default_drive_id: jsonpath "$[0].id"
+[Asserts]
+jsonpath "$[0].default_for_user" == "{{dave_user_id}}"
+
+DELETE {{base_url}}/api/drives/{{dave_default_drive_id}}
+Authorization: Bearer {{dave_token}}
+
+HTTP 405

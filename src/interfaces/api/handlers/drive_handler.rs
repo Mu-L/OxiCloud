@@ -356,3 +356,42 @@ pub async fn remove_drive_member(
         Err(e) => AppError::from(e).into_response(),
     }
 }
+
+/// `DELETE /api/drives/{id}` — Owner-only deletion (D3b).
+///
+/// Refuses (per `DriveManagementService::delete_drive`):
+/// - `404` when the caller lacks Manage on the drive (anti-enum).
+/// - `405` when the drive is the user's default Personal drive.
+/// - `409` when the drive still holds live folders/files; the caller
+///   must trash or move them first.
+///
+/// On success the drive row, its root folder, and every role grant
+/// scoped to the drive are removed in one transaction; cached drive
+/// roles are invalidated.
+#[utoipa::path(
+    delete,
+    path = "/api/drives/{id}",
+    params(("id" = Uuid, Path, description = "Drive UUID")),
+    responses(
+        (status = 204, description = "Drive deleted"),
+        (status = 404, description = "Drive not found or caller lacks Manage"),
+        (status = 405, description = "Default Personal drive — undeletable"),
+        (status = 409, description = "Drive is not empty — move/trash contents first"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "drives"
+)]
+pub async fn delete_drive(
+    State(state): State<Arc<AppState>>,
+    auth_user: AuthUser,
+    Path(drive_id): Path<Uuid>,
+) -> impl IntoResponse {
+    match state
+        .drive_management_service
+        .delete_drive(auth_user.id, false, drive_id)
+        .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => AppError::from(e).into_response(),
+    }
+}

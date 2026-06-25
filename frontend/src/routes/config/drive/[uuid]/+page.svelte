@@ -3,9 +3,12 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 
-	import { listDriveMembers } from '$lib/api/endpoints/drives';
+	import { goto } from '$app/navigation';
+
+	import { deleteDrive, listDriveMembers } from '$lib/api/endpoints/drives';
 	import { renameFolder } from '$lib/api/endpoints/folders';
 	import { errorToast } from '$lib/utils/errors';
+	import { ui } from '$lib/stores/ui.svelte';
 	import type { Drive, DriveMember, DriveRole } from '$lib/api/types';
 	import ShareDialog from '$lib/components/ShareDialog.svelte';
 	import UserVignette from '$lib/components/UserVignette.svelte';
@@ -33,6 +36,42 @@
 	// folder which only the Owner bundle carries. Personal-drive Owners
 	// are the user themselves (seeded by the lifecycle hook).
 	const canRename = $derived(drive?.caller_role === 'owner');
+
+	// Delete is allowed for Owners — backend additionally refuses the
+	// default Personal drive (405) and non-empty drives (409). We hide
+	// the button on the default-personal drive so the affordance only
+	// appears when it can actually succeed.
+	const canDelete = $derived(drive?.caller_role === 'owner' && !drive?.default_for_user);
+
+	let deleting = $state(false);
+
+	async function confirmAndDelete() {
+		if (!drive) return;
+		const confirmText = t(
+			'drive.delete_confirm',
+			{ name: drive.name },
+			'Delete drive "{{name}}"? This cannot be undone — the drive ' +
+				'must be empty first or the server will refuse.'
+		);
+		if (typeof window === 'undefined' || !window.confirm(confirmText)) return;
+		deleting = true;
+		try {
+			await deleteDrive(drive.id);
+			drivesStore.invalidate();
+			await drivesStore.load();
+			ui.notify(t('drive.deleted', 'Drive deleted.'), 'success');
+			// Send the user back to /files. The picker's reload above
+			// already removed the now-deleted drive from the sidebar.
+			await goto(resolve('/files'));
+		} catch (e) {
+			// 409 (non-empty) and 405 (default personal) come back as
+			// thrown errors with the server's detail in the message —
+			// surface as a toast rather than a silent failure.
+			errorToast(e);
+		} finally {
+			deleting = false;
+		}
+	}
 
 	// Inline rename state. `renameDraft` shadows `drive.name` while the
 	// input is open; we don't write back to the store until the server
@@ -385,6 +424,32 @@
 				</dl>
 			</div>
 		{/if}
+
+		{#if canDelete}
+			<!-- Danger zone: drive delete (D3b). Only rendered for Owners on
+			     non-default drives. Backend enforces the empty-drive rule —
+			     if the drive still has live content the request returns 409
+			     with a message that surfaces as a toast. -->
+			<div class="card danger-zone">
+				<h2><Icon name="exclamation-triangle" /> {t('drive.danger_zone', 'Danger zone')}</h2>
+				<p class="muted">
+					{t(
+						'drive.delete_hint',
+						'Deleting a drive removes it permanently. The drive must be empty (no live files or folders) before delete is allowed.'
+					)}
+				</p>
+				<button
+					type="button"
+					class="btn btn-danger"
+					data-testid="drive-delete-btn"
+					onclick={confirmAndDelete}
+					disabled={deleting}
+				>
+					<Icon name="trash-alt" />
+					{deleting ? t('common.deleting', 'Deleting…') : t('drive.delete', 'Delete drive')}
+				</button>
+			</div>
+		{/if}
 	{/if}
 </div>
 
@@ -527,6 +592,39 @@
 		border-radius: var(--radius-md);
 		background: var(--color-bg-input);
 		color: var(--color-text);
+	}
+
+	/* Danger zone card hosts the delete-drive button at the bottom of
+	   the page. Border tint makes the destructive context unmissable
+	   without hijacking the whole layout — same convention as
+	   admin/users delete affordances. */
+	.danger-zone {
+		border-color: var(--color-error-text);
+	}
+
+	.danger-zone h2 {
+		color: var(--color-error-text);
+	}
+
+	.btn-danger {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.5rem 0.875rem;
+		border: 1px solid var(--color-error-text);
+		border-radius: var(--radius-md);
+		background: var(--color-error-text);
+		color: var(--color-text-light);
+		cursor: pointer;
+	}
+
+	.btn-danger:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.icon-btn--danger {
+		color: var(--color-error-text);
 	}
 
 	/* Compact icon button used in the title row + nowhere else here.

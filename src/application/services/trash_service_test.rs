@@ -319,6 +319,14 @@ where
         // via `drive_repo.list_for_subjects` + role-bundle filter.
         self.trash_repository.clear_trash(&[user_id]).await
     }
+
+    async fn empty_trash_for_drive(&self, _user_id: Uuid, drive_id: Uuid) -> Result<()> {
+        // Test mock — uses the passed-in drive id verbatim. Production
+        // checks the caller's Delete-bearing drives first and refuses
+        // with NotFound on a mismatch; the mock skips that and just
+        // clears the given drive directly.
+        self.trash_repository.clear_trash(&[drive_id]).await
+    }
 }
 
 // Mock repositories for testing
