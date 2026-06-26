@@ -25,6 +25,12 @@ pub struct FolderService {
     /// to reap. Always present — the dispatcher itself is a no-op when
     /// no hooks are registered, so callers don't need an Option branch.
     file_lifecycle: Arc<FileLifecycleService>,
+    /// Drive repository — used by D5's `forbid_cross_drive_move` gate
+    /// on `move_folder_with_perms`. Optional so stubs / test factories
+    /// can build the service without wiring the full drive repo; in
+    /// that case the cross-drive move check is skipped (the policy is
+    /// silently off). Production DI wires it via `with_drive_repo`.
+    drive_repo: Option<Arc<dyn crate::domain::repositories::drive_repository::DriveRepository>>,
 }
 
 impl FolderService {
@@ -38,7 +44,20 @@ impl FolderService {
             folder_storage,
             authz,
             file_lifecycle,
+            drive_repo: None,
         }
+    }
+
+    /// Wires the drive repository, enabling D5
+    /// `forbid_cross_drive_move` enforcement on
+    /// `move_folder_with_perms`. Without it, the gate is silently
+    /// skipped.
+    pub fn with_drive_repo(
+        mut self,
+        drive_repo: Arc<dyn crate::domain::repositories::drive_repository::DriveRepository>,
+    ) -> Self {
+        self.drive_repo = Some(drive_repo);
+        self
     }
 
     /// Batch counterpart of `get_folder`: resolve many folder ids in ONE
@@ -537,6 +556,43 @@ impl FolderUseCase for FolderService {
                 )
                 .await?;
             // TODO: full descendant-cycle check (moving a folder into one of its own descendants)
+        }
+
+        // D5 `forbid_cross_drive_move`: refuse when src and dst sit in
+        // different drives and the source drive's policy is on.
+        // Skipped for parent_id=None (root namespace, same-drive
+        // semantics) and when drive_repo isn't wired (stubs/tests) —
+        // same shape as `move_file_with_perms`.
+        if let Some(drive_repo) = &self.drive_repo
+            && let Some(parent_id) = &dto.parent_id
+        {
+            let src_folder_uuid =
+                Uuid::parse_str(id).map_err(|_| DomainError::not_found("Folder", id))?;
+            let dst_folder_uuid = Uuid::parse_str(parent_id)
+                .map_err(|_| DomainError::not_found("Folder", parent_id.as_str()))?;
+            let (src_drive_id, src_policies) = drive_repo
+                .get_drive_id_and_policies_for_folder(src_folder_uuid)
+                .await
+                .map_err(|e| {
+                    DomainError::internal_error("Drive", format!("source drive lookup: {e:?}"))
+                })?;
+            let dst_drive_id = drive_repo
+                .drive_id_for_folder(dst_folder_uuid)
+                .await
+                .map_err(|e| {
+                    DomainError::internal_error("Drive", format!("destination drive lookup: {e:?}"))
+                })?;
+            if src_drive_id != dst_drive_id {
+                src_policies.refuse_cross_drive_move(
+                    crate::domain::entities::drive::CrossDriveMoveGateContext {
+                        caller_id,
+                        resource_type: "folder",
+                        resource_id: src_folder_uuid,
+                        src_drive_id,
+                        dst_drive_id,
+                    },
+                )?;
+            }
         }
 
         let parent_ref = dto.parent_id.as_deref();

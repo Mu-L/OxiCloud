@@ -314,7 +314,9 @@ For reference, the equivalent (broken) one-CTE form looks like:
 WITH new_drive AS (
     INSERT INTO storage.drives
         (kind, default_for_user, quota_bytes, policies)
-    VALUES ('personal', $user_id, $quota, '{}'::jsonb)
+    VALUES ('personal', $user_id, NULL, '{}'::jsonb)  -- personal drives carry
+                                                       -- NULL quota; the cap is
+                                                       -- the user envelope, §7
     RETURNING id
 ),
 new_root AS (
@@ -366,10 +368,12 @@ The fix is the four-step transaction described above. Rust:
 
 ```rust
 let mut tx = pool.begin().await?;
+// Personal drives carry NULL quota_bytes — the cap is the user envelope
+// (`auth.users.storage_quota_bytes`, §7), not the per-drive column.
 let drive_id: Uuid = sqlx::query_scalar(
     r#"INSERT INTO storage.drives (kind, default_for_user, quota_bytes)
-       VALUES ('personal', $1, $2) RETURNING id"#,
-).bind(owner).bind(quota).fetch_one(&mut *tx).await?;
+       VALUES ('personal', $1, NULL) RETURNING id"#,
+).bind(owner).fetch_one(&mut *tx).await?;
 
 let folder_id: Uuid = sqlx::query_scalar(
     r#"INSERT INTO storage.folders
@@ -450,7 +454,7 @@ that try to bypass it now hit a DB-level wall.
 | Per-resource grant outward | yes (subject to drive policies) | yes | yes |
 | Cross-drive move | yes (subject to `forbid_cross_drive_move`) | yes | yes |
 | Kind conversion | no — always default-personal | yes → may be promoted to `kind='shared'` later (drops the single-user restriction, picks up members) | no |
-| Change `quota_bytes` | **OxiCloud admin only** (not the drive owner — §7) | **OxiCloud admin only** | **OxiCloud admin only** |
+| Change `quota_bytes` | N/A — `drives.quota_bytes` is NULL for personal drives. The envelope is `auth.users.storage_quota_bytes` (admin-only — §7) | N/A — same | **OxiCloud admin only** (not the drive owner — §7) |
 
 ### 4. Roles → permission bundles
 
@@ -461,7 +465,7 @@ expansion:
 |---|---|
 | `viewer` | `Read` |
 | `editor` | `Read`, `Create`, `Update`, `Comment` |
-| `owner`  | `Read`, `Create`, `Update`, `Comment`, `Delete`, `Share`, *and* drive-level admin (rename, edit policies, manage members) |
+| `owner`  | `Read`, `Create`, `Update`, `Comment`, `Delete`, `Share`, *and* drive-level admin (rename, manage non-Owner members). **Policy mutation and quota mutation are OxiCloud-admin only (§7, §8)** — owners cannot self-grant capacity or relax compliance gates. Owner-role mutations are admin-only when `forbid_owner_role_change` is on (§8). |
 
 ### 5. Permission resolution — additive over `role_grants`
 
@@ -493,7 +497,7 @@ against the same table.
 
 | Event | Behaviour |
 |---|---|
-| New internal user registers | Auto-create a default personal drive (`kind='personal'`, `default_for_user=<new_user>`, `quota_bytes=<OXICLOUD_DEFAULT_QUOTA_BYTES>`) + its root folder (`name='Personal'`, `parent_id=NULL`, drive_id pinned) + the Owner role_grant (`role_grants(subject_type='user', subject_id=<user>, resource_type='drive', resource_id=<drive>, role='owner')`) — **all four writes in one CTE statement** (§3), atomic against server crash. |
+| New internal user registers | Auto-create a default personal drive (`kind='personal'`, `default_for_user=<new_user>`, `quota_bytes=NULL` — the envelope lives on `auth.users.storage_quota_bytes`, see §7) + its root folder (`name='Personal'`, `parent_id=NULL`, drive_id pinned) + the Owner role_grant (`role_grants(subject_type='user', subject_id=<user>, resource_type='drive', resource_id=<drive>, role='owner')`) — **all four writes in one transaction** (§3), atomic against server crash. |
 | External user invited (magic-link only) | **No personal drive created.** External users are grant-only recipients with no storage. |
 | External user converts to internal (future flow) | Default personal drive created at conversion time. |
 | User deleted | **Default** personal drive cascade-deletes via `ON DELETE CASCADE` on `default_for_user`. **Secondary** personal drives (`kind='personal' AND default_for_user IS NULL` and whose sole owner `role_grants` row points at the user) are deleted by an application-layer pass in the same transaction. `role_grants` rows referencing the deleted user are removed from all shared drives. If a removal would leave a shared drive with zero owners, deletion is refused — admin must transfer first. |
@@ -506,67 +510,157 @@ against the same table.
 
 ### 7. Quota model
 
-The per-user `auth.users.storage_quota_bytes` field is **migrated to
-the user's personal drive's `quota_bytes`** in one step, then the
-column is deprecated (kept for one release cycle as a no-op, dropped
-in a later migration).
+Two ceilings, two different jobs:
 
-After the cutover:
-- Every drive owns its quota. Files inside a drive count against that
-  drive's `used_bytes` only.
-- A user who collaborates in a 1 TB shared drive sees their personal
-  drive's quota as "their" quota; the shared drive's quota is owned
-  by the team.
-- New drives default to a tenant-configured `OXICLOUD_DEFAULT_DRIVE_QUOTA_BYTES`
-  setting (separate env var, replacing today's per-user equivalent).
+- **Per-user envelope** — `auth.users.storage_quota_bytes` stays
+  as the canonical "how much can this user store on this server."
+  It caps the sum of `used_bytes` across **every personal drive
+  the user owns** (default + any secondaries — see §2). Shared
+  drives never count against any user envelope.
+- **Per-drive ceiling** — `drives.quota_bytes` is a per-drive cap
+  that applies **only to shared drives**. For personal drives
+  this column is `NULL` (unlimited at the drive layer); the
+  effective cap comes from the user envelope.
 
-`used_bytes` is maintained incrementally on every file insert/delete
-(plus a periodic reconciliation job to fix drift, similar to the
-existing per-user accounting).
+Why the asymmetry: a user's personal storage is a single budget
+that the operator has agreed to provide; splitting it into
+sub-quotas per personal drive is a sub-quota UX trap (users now
+have to plan how to allocate "their" bytes between drives they
+own). A shared drive's quota IS the team's resource budget, owned
+by the operator, set independently.
+
+#### Upload gate
+
+Pre-upload, both checks run, in order:
+
+1. **Drive cap** (`drives.quota_bytes`) — skipped when NULL.
+   Always skipped for personal drives by virtue of the NULL
+   convention; applies for shared drives.
+2. **User envelope** (`auth.users.storage_quota_bytes`) — runs
+   only when the target drive is personal. The check sums
+   `used_bytes` across the caller's personal drives (or, fast
+   path while no secondaries exist on the UI, reads the cached
+   `auth.users.storage_used_bytes`).
+
+For shared-drive uploads, only the per-drive check applies and the
+user envelope is untouched — collaborating in a 1 TB shared drive
+costs no personal bytes.
+
+#### `used_bytes` accounting
+
+Maintained incrementally on every file insert/delete in
+`storage.drives.used_bytes`. The user-side cached counter
+(`auth.users.storage_used_bytes`) is updated **only when the
+target drive is personal** — the per-upload delta hook reads
+`drives.kind` from the same query that already fetches
+`drives.used_bytes` for the drive-cap check, so the hot path adds
+zero round-trips.
+
+A periodic reconciliation job rebuilds both counters from ground
+truth:
+
+```sql
+-- Per-drive: unchanged from today.
+UPDATE storage.drives SET used_bytes = (
+    SELECT COALESCE(SUM(size), 0) FROM storage.files
+     WHERE drive_id = d.id AND NOT is_trashed
+) d;
+
+-- Per-user: sum of personal-drive used_bytes owned by the user.
+UPDATE auth.users u SET storage_used_bytes = COALESCE((
+    SELECT SUM(d.used_bytes)
+      FROM storage.drives d
+      JOIN storage.role_grants g
+        ON g.resource_type = 'drive' AND g.resource_id = d.id
+       AND g.role = 'owner'
+       AND g.subject_type = 'user' AND g.subject_id = u.id
+     WHERE d.kind = 'personal'
+), 0);
+```
+
+Fast-path variant while only default personals are exposed:
+
+```sql
+UPDATE auth.users u SET storage_used_bytes = COALESCE((
+    SELECT used_bytes FROM storage.drives WHERE default_for_user = u.id
+), 0);
+```
+
+Reconciliation runs on the maintenance pool — never blocks
+uploads. Drift between deltas and the sweep is bounded by the
+sweep interval (default 10 min).
 
 #### Quota mutation is OxiCloud-admin only
 
-Changing `drives.quota_bytes` is **not** in the drive `owner` role
-bundle (§4). It requires the tenant-level OxiCloud admin role
-(`auth.users.role = 'admin'`), checked at
-`PATCH /api/admin/drives/{id}/quota` — the only callsite that
-mutates the column. Drive owners can rename, edit policies, and
-manage members; they cannot self-grant capacity.
+Changing `drives.quota_bytes` (shared drives only) is **not** in
+the drive `owner` role bundle (§4). It requires the tenant-level
+OxiCloud admin role (`auth.users.role = 'admin'`), checked at
+`PATCH /api/admin/drives/{id}/quota`. Drive owners can rename,
+edit policies, and manage members; they cannot self-grant
+capacity.
+
+Changing `auth.users.storage_quota_bytes` (the personal envelope)
+is likewise admin-only — same surface and audit pattern as today.
 
 Why this seam matters:
 
-- **Resource allocation is a tenant concern, not a drive
-  concern.** Storage bytes are a finite system resource the
-  operator pays for. The drive owner is empowered over the
-  drive's *use*; the admin is empowered over its *budget*. Same
-  separation that exists today between a user and the operator
-  who set `OXICLOUD_DEFAULT_QUOTA_BYTES`.
-- **Privilege-escalation seam closed.** Without this carve-out,
-  any user with a personal drive (= every internal user) could
-  raise their own quota by virtue of being its sole owner —
-  trivially defeating the quota system.
+- **Resource allocation is a tenant concern.** Storage bytes are
+  a finite system resource the operator pays for. The drive owner
+  is empowered over the drive's *use*; the admin is empowered
+  over its *budget*.
+- **Privilege-escalation seam closed.** Without the per-drive
+  carve-out, an Owner of a shared drive could raise its quota.
+  Without the per-user carve-out, any internal user could raise
+  their own envelope by virtue of owning their personal drive.
 - **Shared-drive coherence.** A shared drive's quota is set by
   the operator at provisioning; subsequent capacity requests go
-  through the admin, not the drive's group owners. Keeps the
-  capacity decision auditable and out of intra-team politics.
+  through the admin, not the drive's group owners.
 
-The admin endpoint is the same surface the operator uses today to
-change `auth.users.storage_quota_bytes`; D4 simply re-targets the
-write at `storage.drives.quota_bytes`. Audit log emits
-`drive.quota_changed` with `granted_by=<admin_user_id>` and the
-old/new values, mirroring the existing user-quota change event.
+Audit log emits `drive.quota_changed` (shared drives) and
+`user.quota_changed` (envelope) with `granted_by=<admin_user_id>`
+and the old/new values.
 
-**Chunk dedup vs per-drive quota.** With the CDC chunk store landed
-in v0.7.0 (see `delta_upload_service`, `upload_ingest`, instant
-upload by hash), a single chunk can be referenced by files in
-multiple drives. The accounting decision: **each drive counts the
-file's logical size in full against its own `used_bytes`** — dedup
-savings are server-side only and never visible in the per-drive
-quota number. This matches the existing per-user blob-dedup model
-and avoids the alternative "pro-rated quota" trap (which makes
-quota math depend on cross-drive content and breaks the user's
-mental model of "I have 1 TB free"). Reconciliation job sums file
-sizes per drive, not chunk allocations.
+#### Multiple personal drives — schema-ready, no public surface
+
+The schema and service layer treat personal drives as "any
+personal drive owned by a user counts against the envelope," so
+secondary personal drives (`kind='personal' AND
+default_for_user IS NULL`) just work the day they ship. Today
+there is **no public API surface to create them** — the only
+`POST /api/drives` flow creates shared drives, and personal-drive
+provisioning happens at user registration via the lifecycle hook
+(§6). The capability matrix (§3) keeps the secondary column for
+the migration backfill path and for the future, but it is not
+user-reachable.
+
+When secondary personals are eventually exposed (e.g. a "Vault"
+end-to-end-encrypted drive kind, or a "Work" silo with a stricter
+policy bag), the quota model needs no change — the sum-of-personal
+formula already accounts for them.
+
+#### Chunk dedup vs per-drive quota
+
+With the CDC chunk store landed in v0.7.0 (see
+`delta_upload_service`, `upload_ingest`, instant upload by hash),
+a single chunk can be referenced by files in multiple drives. The
+accounting decision: **each drive counts the file's logical size
+in full against its own `used_bytes`** — dedup savings are
+server-side only and never visible in the per-drive quota number.
+This matches the existing per-user blob-dedup model and avoids
+the "pro-rated quota" trap (which makes quota math depend on
+cross-drive content and breaks the user's mental model of "I have
+1 TB free"). Reconciliation sums file sizes per drive, not chunk
+allocations.
+
+#### Migration
+
+One-shot at deploy: NULL out `drives.quota_bytes` for every
+`kind='personal'` row (D4 backfilled them from
+`auth.users.storage_quota_bytes` for the original "every drive
+owns its quota" plan). Then run the new reconciliation sweep once
+to resync `auth.users.storage_used_bytes` to "sum of personal
+drives" (excludes any shared-drive bytes the old delta path may
+have charged to it). Both steps idempotent.
 
 ### 8. Policies (JSONB, extensible)
 
@@ -577,21 +671,43 @@ Each drive carries a `policies` JSON object. Five known keys for v1:
     "forbid_sharing":           false,  // disables per-resource grants on this drive
     "forbid_external_sharing":  false,  // blocks grants to is_external=true subjects
     "forbid_public_links":      false,  // blocks token-share (anonymous link) creation
-    "forbid_cross_drive_move":  false   // blocks MOVE when src.drive_id != dst.drive_id
+    "forbid_cross_drive_move":  false,  // blocks MOVE when src.drive_id != dst.drive_id
+    "forbid_owner_role_change": false   // locks the Owner roster against non-admin callers
 }
 ```
+
+#### Mutation: OxiCloud-admin only
+
+`PATCH /api/drives/{id}/policies` is **OxiCloud-admin only** — the
+same carve-out that guards `drives.quota_bytes` and
+`users.storage_quota_bytes` (§7). The original design had policies
+owner-mutable, but that made them **self-policing soft caps**: an
+owner could disable `forbid_external_sharing`, mint the grant, and
+re-enable the policy. The audit log would capture the toggle but
+the policy gave no compliance-grade enforcement.
+
+Restricting mutation to the tenant operator closes that hole. Drive
+owners can still see the current policy values via
+`GET /api/drives` (read-only) but can't flip them; a UI surface that
+submits an admin ticket handles the self-service case for
+single-owner shadow.tech-style deployments.
+
+Anti-enumeration: non-admin callers receive `404` on the PATCH (the
+same response a non-existent drive would carry), never `403`, so a
+probe can't tell the policy state apart from the drive's existence.
 
 Enforcement points (one place per policy — single grep target):
 
 | Policy | Enforcement callsite |
 |---|---|
 | `forbid_sharing` | `grant_handler::create_grant` — checks `resource.drive_id`'s policy before insertion |
-| `forbid_external_sharing` | `magic_link_invite_service::resolve_or_create_recipient` and `grant_handler::create_grant` (when subject is `is_external=true`) |
-| `forbid_public_links` | `share_handler::create_shared_link` |
-| `forbid_cross_drive_move` | `file_handler::move_file` and `folder_handler::move_folder` — refuse when `src.drive_id != dst.drive_id` |
+| `forbid_external_sharing` | `grant_handler::create_grant` (early Email + late User checks for File/Folder) and `DriveManagementService::set_member_role` (Drive resource + the membership endpoints) |
+| `forbid_public_links` | `share_service::create_shared_link` and `grant_handler::create_grant` (when subject is `Token`) |
+| `forbid_cross_drive_move` | `file_management_service::move_file_with_perms` and `folder_service::move_folder_with_perms` — refuse when `src.drive_id != dst.drive_id` |
+| `forbid_owner_role_change` | `DriveManagementService::set_member_role` (refuses Owner-role writes + demotions of current Owners) and `::remove_member` (refuses removals of Owners) — non-admin callers only |
 
-Default to `false` (everything allowed) — opt-in by drive owner via
-the drive settings UI.
+Default to `false` (everything allowed). Admin opts in per drive via
+`PATCH /api/drives/{id}/policies`.
 
 #### Policy semantics — subtleties to remember
 
@@ -604,6 +720,16 @@ the drive settings UI.
   move. It does **not** stop download + re-upload (that's a different
   category of policy — file-egress, future). UI surface should make
   this explicit so users don't read it as data-leak protection.
+- **`forbid_owner_role_change`** locks the Owner roster against
+  non-admin mutation. After admin provisions the drive's owners, no
+  Owner can add a co-owner, be demoted, or be removed by another
+  Owner — only admin can change the roster. Editor / Viewer
+  mutations by remaining owners are unaffected. Personal drives
+  already refuse every member mutation via `refuse_if_personal`, so
+  this policy only adds value on shared drives. Pairs naturally with
+  the admin-only `PATCH /policies` carve-out above: once admin sets
+  the owners + locks the policies, the configuration is genuinely
+  immutable from the owner side.
 
 #### Future policy keys (out of scope for v1 — but the JSONB shape
 accommodates them without schema migration)
@@ -1416,7 +1542,7 @@ us a real rollback window while the new model bakes in production.
 | **D2 — drive membership API + per-drive trash auth** | `POST /api/drives/{id}/members`, `DELETE`, `PUT` for role changes — thin handlers that translate to `role_grants` INSERT/DELETE/UPDATE with `resource_type='drive'`. `Resource::Drive(Uuid)` (added in D-Prep at the enum level) gets its specialised handler surface here. Shared-drive last-owner protection. Group-as-subject support reuses the existing `subject_groups` machinery. **Personal-drive guards** (`add_member`, `remove_member`, `delete_drive` refuse on `kind='personal'` — see §2). **Per-drive trash authorisation** (§12): trash listing filters by drive(s) the caller can read; trash mutations (send/restore/permanent-delete) require `role='owner'` on the drive; `storage.trash_items` VIEW updated to surface `drive_id`; orphan/aborted-upload sweep becomes per-drive. | Medium |
 | **D3 — group-owned shared drives** | "Create shared drive" flow — admin or group owner triggers, drive created with `kind='shared'`, initial owner row is the group. Group-deletion guard refuses if the group is the last owner of any drive. Drive-rename, drive-delete. | Low |
 | **D4 — per-drive quota** | Move storage accounting off `auth.users.storage_used_bytes` onto `storage.drives.used_bytes`. **Re-point the existing per-user incremental CTE** (introduced in v0.7.0 — see `b5b80549`, `d6987329`) at drive rows; don't reinvent the counting logic. Upload paths check `drive.quota_bytes` instead of (or in addition to) the user's quota for the dual-write window. **Per-chunk incremental quota check on the NC chunked path** (see §13): MKCOL refuses when the drive is already over quota; each PUT chunk runs an O(1) `used + session_so_far + chunk_size > quota` test and refuses with 507 within one chunk of wasted upload. Closes a pre-existing wart where NC clients could upload GB before learning they were over quota. Reconciliation job runs once per day to fix drift. | Medium |
-| **D5 — policies** | JSONB policies column + enforcement at the four known callsites. Owner-only UI in drive settings. Ship policies one at a time if you want fine-grained rollout — `forbid_public_links` first (lowest risk), then `forbid_external_sharing`, then `forbid_sharing`, then `forbid_cross_drive_move`. | Low |
+| **D5 — policies** | JSONB policies column + enforcement at the known callsites. **Mutation is OxiCloud-admin only** (the original "owner-mutable" plan made policies self-policing soft caps — see §8). Five policies in v1: `forbid_public_links`, `forbid_external_sharing`, `forbid_sharing`, `forbid_cross_drive_move`, and `forbid_owner_role_change`. Ship one at a time if you want fine-grained rollout in that order. | Low |
 | **D6 — cross-drive move + audit** | Move folder/file between drives (allowed by default; gated by `forbid_cross_drive_move` policy on the source drive). Audit events for every drive lifecycle event (`drive.created`, `drive.member_added`, `drive.member_removed`, `drive.policy_changed`, `drive.deleted`, `resource.moved_between_drives`). | Low |
 | **D7 — back-compat sweep** | Drop `user_id` from `storage.folders` / `storage.files`. Drop dual-write code. Drop or deprecate `auth.users.storage_quota_bytes`. **Provenance columns (`created_by`, `updated_by`) stay** — they were populated from D0 and are now the sole source of authorship signal. | Low — but the point of no return |
 

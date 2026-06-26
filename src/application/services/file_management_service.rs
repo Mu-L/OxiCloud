@@ -37,6 +37,12 @@ pub struct FileManagementService {
     /// downloads. Distinct from the lifecycle hook because lifecycle hooks
     /// don't carry the `caller_id` the recording side needs.
     resource_access_hook: Option<Arc<dyn ResourceAccessHook>>,
+    /// Drive repository — used by D5's `forbid_cross_drive_move` gate
+    /// on `move_file_with_perms`. Optional so stubs / test factories
+    /// can build the service without wiring the full drive repo; in
+    /// that case the cross-drive move check is skipped (the policy
+    /// is silently off). Production DI wires it in.
+    drive_repo: Option<Arc<dyn crate::domain::repositories::drive_repository::DriveRepository>>,
 }
 
 impl FileManagementService {
@@ -60,6 +66,7 @@ impl FileManagementService {
             authz,
             file_lifecycle_hook: None,
             resource_access_hook: None,
+            drive_repo: None,
         }
     }
 
@@ -80,6 +87,17 @@ impl FileManagementService {
         if let Some(hook) = &self.resource_access_hook {
             hook.on_file_accessed(caller_id, file_id);
         }
+    }
+
+    /// Wires the drive repository, enabling D5 `forbid_cross_drive_move`
+    /// enforcement on `move_file_with_perms`. Without it, the gate is
+    /// silently skipped.
+    pub fn with_drive_repo(
+        mut self,
+        drive_repo: Arc<dyn crate::domain::repositories::drive_repository::DriveRepository>,
+    ) -> Self {
+        self.drive_repo = Some(drive_repo);
+        self
     }
 
     /// Engine check for a file resource. Parses the id into a `Uuid` and
@@ -283,6 +301,46 @@ impl FileManagementUseCase for FileManagementService {
             .await?;
         self.require_target_folder_perm(folder_id.as_deref(), Permission::Create, caller_id)
             .await?;
+
+        // D5 `forbid_cross_drive_move`: refuse when the destination
+        // folder belongs to a different drive than the source file and
+        // the source drive's policy is on. Silently skipped if the
+        // drive repo isn't wired (stub builders) or the move target is
+        // None (root namespace — same-drive semantics). Source policy
+        // is canonical per §8: the drive that owns the content
+        // controls outbound moves.
+        if let Some(drive_repo) = &self.drive_repo
+            && let Some(target_folder_id) = folder_id.as_deref()
+        {
+            let file_uuid =
+                Uuid::parse_str(file_id).map_err(|_| DomainError::not_found("File", file_id))?;
+            let dst_folder_uuid = Uuid::parse_str(target_folder_id)
+                .map_err(|_| DomainError::not_found("Folder", target_folder_id))?;
+            let (src_drive_id, src_policies) = drive_repo
+                .get_drive_id_and_policies_for_file(file_uuid)
+                .await
+                .map_err(|e| {
+                    DomainError::internal_error("Drive", format!("source drive lookup: {e:?}"))
+                })?;
+            let dst_drive_id = drive_repo
+                .drive_id_for_folder(dst_folder_uuid)
+                .await
+                .map_err(|e| {
+                    DomainError::internal_error("Drive", format!("destination drive lookup: {e:?}"))
+                })?;
+            if src_drive_id != dst_drive_id {
+                src_policies.refuse_cross_drive_move(
+                    crate::domain::entities::drive::CrossDriveMoveGateContext {
+                        caller_id,
+                        resource_type: "file",
+                        resource_id: file_uuid,
+                        src_drive_id,
+                        dst_drive_id,
+                    },
+                )?;
+            }
+        }
+
         self.move_file(file_id, folder_id, caller_id).await
     }
 

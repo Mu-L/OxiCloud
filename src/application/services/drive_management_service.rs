@@ -24,11 +24,12 @@ use uuid::Uuid;
 
 use crate::application::ports::authorization_ports::AuthorizationEngine;
 use crate::common::errors::DomainError;
-use crate::domain::repositories::drive_repository::DriveRepository;
+use crate::domain::repositories::drive_repository::{DriveRepository, DriveRepositoryError};
 use crate::domain::repositories::subject_group_repository::SubjectGroupRepository;
 use crate::domain::services::authorization::{Grant, Permission, Resource, Role, Subject};
 use crate::infrastructure::repositories::pg::DrivePgRepository;
 use crate::infrastructure::repositories::pg::SubjectGroupPgRepository;
+use crate::infrastructure::repositories::pg::UserPgRepository;
 use crate::infrastructure::services::pg_acl_engine::PgAclEngine;
 
 pub struct DriveManagementService {
@@ -39,6 +40,11 @@ pub struct DriveManagementService {
     /// constructing an orphan-owned drive (the "drive must always have
     /// ≥1 effective Owner-user" invariant from day one).
     group_repo: Arc<SubjectGroupPgRepository>,
+    /// D5: `set_member_role` reads `users.is_external` to enforce
+    /// `forbid_external_sharing` on the drive — closes the gap that the
+    /// `POST /api/drives/{id}/members` route would otherwise open
+    /// (the grant_handler check only catches `POST /api/grants`).
+    user_repo: Arc<UserPgRepository>,
 }
 
 impl DriveManagementService {
@@ -46,11 +52,13 @@ impl DriveManagementService {
         drive_repo: Arc<DrivePgRepository>,
         authz: Arc<PgAclEngine>,
         group_repo: Arc<SubjectGroupPgRepository>,
+        user_repo: Arc<UserPgRepository>,
     ) -> Self {
         Self {
             drive_repo,
             authz,
             group_repo,
+            user_repo,
         }
     }
 
@@ -201,6 +209,30 @@ impl DriveManagementService {
 
         self.refuse_if_personal(drive_id, "set_member_role").await?;
 
+        // D5: `forbid_external_sharing` on a shared drive — refuses
+        // grant writes whose User subject is `is_external = true`.
+        // Closes the `POST /api/drives/{id}/members` gap that
+        // grant_handler's same-shaped check (covering `POST /api/grants`
+        // only) doesn't reach. Group/Token subjects can't be external
+        // by construction, so the lookup runs only for User subjects.
+        // See `docs/plan/drive.md` §8.
+        self.refuse_if_forbid_external_sharing(drive_id, subject, caller_id)
+            .await?;
+
+        // D5: `forbid_owner_role_change` — locks the Owner roster
+        // against non-admin callers. Fires when this write would add a
+        // new Owner (role == Owner) OR demote a current Owner
+        // (subject is currently Owner and role != Owner).
+        self.refuse_if_forbid_owner_role_change(
+            drive_id,
+            subject,
+            Some(role),
+            caller_id,
+            caller_is_admin,
+            "set_member_role",
+        )
+        .await?;
+
         // Demotion of the last owner = last-owner protection trips. A fresh
         // owner-role write or any non-owner subject is fine; only the case
         // "this subject is currently the only owner AND the new role is not
@@ -254,6 +286,19 @@ impl DriveManagementService {
         }
 
         self.refuse_if_personal(drive_id, "remove_member").await?;
+
+        // D5: `forbid_owner_role_change` — locks the Owner roster
+        // against non-admin callers. Fires when this would remove a
+        // current Owner.
+        self.refuse_if_forbid_owner_role_change(
+            drive_id,
+            subject,
+            None, // None = removal, not a role write
+            caller_id,
+            caller_is_admin,
+            "remove_member",
+        )
+        .await?;
 
         self.refuse_if_last_owner_change(drive_id, subject, caller_id)
             .await?;
@@ -373,6 +418,100 @@ impl DriveManagementService {
         Ok(())
     }
 
+    /// `PATCH /api/drives/{id}/policies`. OxiCloud-admin only.
+    ///
+    /// The drive's `policies` JSONB bag is a compliance surface — same
+    /// category as `drives.quota_bytes` and `users.storage_quota_bytes`
+    /// (§7). Owner mutation would make the policies self-policing
+    /// (an owner could disable `forbid_external_sharing`, share, and
+    /// re-enable), so mutation is restricted to the tenant operator.
+    /// The handler is the gate (refuses non-admin callers with 404 for
+    /// anti-enumeration); this method trusts that gate and writes
+    /// unconditionally.
+    ///
+    /// JSONB-level merge preserves unknown keys; only the partial
+    /// supplied is overwritten. Returns the post-merge typed view.
+    /// Audit emits `drive.policy_changed` with the post-merge bag for
+    /// steady-state observability.
+    pub async fn update_policies(
+        &self,
+        caller_id: Uuid,
+        drive_id: Uuid,
+        partial: crate::domain::entities::drive::DrivePolicies,
+    ) -> Result<crate::domain::entities::drive::DrivePolicies, DomainError> {
+        let merged = self
+            .drive_repo
+            .update_policies(drive_id, &partial)
+            .await
+            .map_err(|e| match e {
+                DriveRepositoryError::NotFound(_) => {
+                    DomainError::not_found("Drive", drive_id.to_string())
+                }
+                other => DomainError::internal_error(
+                    "Drive",
+                    format!("update_policies failed: {other:?}"),
+                ),
+            })?;
+
+        tracing::info!(
+            target: "audit",
+            event = "drive.policy_changed",
+            drive_id = %drive_id,
+            by = %caller_id,
+            forbid_sharing = merged.forbid_sharing,
+            forbid_external_sharing = merged.forbid_external_sharing,
+            forbid_public_links = merged.forbid_public_links,
+            forbid_cross_drive_move = merged.forbid_cross_drive_move,
+            forbid_owner_role_change = merged.forbid_owner_role_change,
+            "📜 drive policies updated",
+        );
+        Ok(merged)
+    }
+
+    /// D5 `forbid_external_sharing` for `set_member_role`. Fetches the
+    /// data this surface has but grant_handler doesn't (drive policies +
+    /// user flags), then defers the decision + audit + canonical error
+    /// to `DrivePolicies::refuse_external_sharing` — the same gate
+    /// `grant_handler::create_grant` runs for File/Folder resources. One
+    /// rejection shape across both entry points.
+    ///
+    /// Group / Token subjects can't be external by construction, so the
+    /// user lookup is skipped (the gate handles those branches too, but
+    /// returning early avoids a wasted SELECT on the drive row).
+    async fn refuse_if_forbid_external_sharing(
+        &self,
+        drive_id: Uuid,
+        subject: Subject,
+        caller_id: Uuid,
+    ) -> Result<(), DomainError> {
+        let Subject::User(uid) = subject else {
+            return Ok(());
+        };
+        let drive = self.drive_repo.get_by_id(drive_id).await.map_err(|e| {
+            DomainError::internal_error("Drive", format!("Failed to fetch drive: {e:?}"))
+        })?;
+        let policies = drive.drive.typed_policies();
+        if !policies.forbid_external_sharing {
+            return Ok(());
+        }
+        let flags = self
+            .user_repo
+            .get_user_flags(uid)
+            .await
+            .map_err(|e| DomainError::internal_error("User", format!("flags lookup: {e:?}")))?;
+        policies.refuse_external_sharing(
+            subject,
+            flags.is_external,
+            crate::domain::entities::drive::ExternalSharingGateContext {
+                caller_id,
+                stage: "drive_member",
+                drive_id: Some(drive_id),
+                resource_type: None,
+                resource_id: None,
+            },
+        )
+    }
+
     // ── Business rules ──────────────────────────────────────────────────────
 
     /// Personal drives are single-user single-owner; any member mutation is
@@ -396,6 +535,73 @@ impl DriveManagementService {
             ));
         }
         Ok(())
+    }
+
+    /// D5 `forbid_owner_role_change`. Fetches drive policies (one PK
+    /// probe), bails out early when the policy is off or the caller is
+    /// admin, then determines whether the requested op actually
+    /// mutates the Owner roster:
+    ///
+    /// - `new_role = Some(Role::Owner)` — Owner add or refresh. Owner
+    ///   roster mutation.
+    /// - `new_role = Some(Role::X)` and subject is currently Owner —
+    ///   demotion. Owner roster mutation.
+    /// - `new_role = None` (remove) and subject is currently Owner —
+    ///   removal. Owner roster mutation.
+    ///
+    /// In any of those cases, defers to
+    /// `DrivePolicies::refuse_owner_role_change` for the audit + error.
+    async fn refuse_if_forbid_owner_role_change(
+        &self,
+        drive_id: Uuid,
+        subject: Subject,
+        new_role: Option<Role>,
+        caller_id: Uuid,
+        caller_is_admin: bool,
+        operation: &'static str,
+    ) -> Result<(), DomainError> {
+        // Fast bypass for the tenant operator.
+        if caller_is_admin {
+            return Ok(());
+        }
+        let drive = self.drive_repo.get_by_id(drive_id).await.map_err(|e| {
+            DomainError::internal_error("Drive", format!("Failed to fetch drive: {e:?}"))
+        })?;
+        let policies = drive.drive.typed_policies();
+        if !policies.forbid_owner_role_change {
+            return Ok(());
+        }
+
+        // Determine whether this op touches the Owner roster. An Owner
+        // add (role == Owner) always does; a non-Owner write or a
+        // removal only does when the subject currently holds Owner —
+        // fetched lazily on the second case to skip the round-trip
+        // when we already know the answer.
+        let touches_owner = if matches!(new_role, Some(Role::Owner)) {
+            true
+        } else {
+            let grants = self
+                .authz
+                .list_grants_on_resource(Resource::Drive(drive_id))
+                .await?;
+            grants
+                .iter()
+                .any(|g| g.subject == subject && matches!(g.role, Role::Owner))
+        };
+        if !touches_owner {
+            return Ok(());
+        }
+
+        policies.refuse_owner_role_change(
+            crate::domain::entities::drive::OwnerRoleChangeGateContext {
+                caller_id,
+                caller_is_admin,
+                drive_id,
+                operation,
+                subject_type: subject.type_str(),
+                subject_id: subject.id(),
+            },
+        )
     }
 
     /// Refuse the change if `subject` is currently the sole `Owner` on the
