@@ -127,7 +127,6 @@ required-features = ["load_seed_bin"]
 lto = "thin"
 codegen-units = 1
 opt-level = 3
-panic = "abort"
 strip = true
 
 [profile.dev]
