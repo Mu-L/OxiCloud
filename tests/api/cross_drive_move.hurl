@@ -123,10 +123,12 @@ file_id: jsonpath "$.id"
 
 
 # Baseline used_bytes after the upload settles. Trigger-sweep is
-# the deterministic sync point — without it the fire-and-forget
-# delta hook may not yet have landed in the row when we read it.
+# the deterministic sync point — but only after the spawn'd hook
+# has had a chance to land (bug_trigger_sweep_vs_spawn_hook_race.md).
 POST {{base_url}}/api/admin/internal/trigger-sweep
 Authorization: Bearer {{admin_token}}
+[Options]
+delay: 200ms
 
 HTTP 200
 
@@ -161,6 +163,8 @@ HTTP 200
 
 POST {{base_url}}/api/admin/internal/trigger-sweep
 Authorization: Bearer {{admin_token}}
+[Options]
+delay: 200ms
 
 HTTP 200
 
@@ -229,8 +233,22 @@ nested_file_id: jsonpath "$.id"
 
 # Baseline post-creation. Personal holds both hello.txt (32 B) +
 # nested hello-copy.txt (32 B) = 64. Shared is empty.
+#
+# `[Options] delay: 200ms` is the workaround for the
+# trigger-sweep-vs-spawn-hook race documented in
+# bug_trigger_sweep_vs_spawn_hook_race.md: the upload responds 201 as
+# soon as the row is written, but the storage-usage delta hook is
+# tokio::spawn'd — without the delay, trigger-sweep can run while the
+# hook from THIS upload (or a prior move) is still in flight, the
+# sweep then recomputes from stale numbers, the late hook adds its
+# delta on top, and used_bytes ends up too high by exactly one file's
+# size. Symptom: expected 64, got 96 (one extra hook landed late).
+# Real fix is await'ing the hook inline server-side; until then this
+# delay deflakes the test.
 POST {{base_url}}/api/admin/internal/trigger-sweep
 Authorization: Bearer {{admin_token}}
+[Options]
+delay: 200ms
 
 HTTP 200
 
@@ -262,6 +280,8 @@ HTTP 200
 # drive_id wasn't cascaded by the trigger.
 POST {{base_url}}/api/admin/internal/trigger-sweep
 Authorization: Bearer {{admin_token}}
+[Options]
+delay: 200ms
 
 HTTP 200
 

@@ -126,8 +126,20 @@ HTTP 201
 file_id: jsonpath "$.id"
 
 # Baseline used_bytes after the upload settles.
+#
+# `[Options] delay: 200ms` is the workaround for the
+# trigger-sweep-vs-spawn-hook race documented in
+# bug_trigger_sweep_vs_spawn_hook_race.md: the upload responds 201 as
+# soon as the row lands, but the storage-usage delta hook is
+# tokio::spawn'd — without the delay, trigger-sweep can run while
+# that hook is still in flight, the sweep then snapshots stale
+# numbers, the late hook adds its delta on top, and used_bytes ends
+# up high by exactly one file's size. Symptom: expected 32, got 64.
+# Real fix is await'ing the hook inline server-side.
 POST {{base_url}}/api/admin/internal/trigger-sweep
 Authorization: Bearer {{admin_token}}
+[Options]
+delay: 200ms
 
 HTTP 200
 
@@ -161,6 +173,8 @@ shared_file_id: jsonpath "$.successful[0].id"
 
 POST {{base_url}}/api/admin/internal/trigger-sweep
 Authorization: Bearer {{admin_token}}
+[Options]
+delay: 200ms
 
 HTTP 200
 
@@ -336,6 +350,8 @@ jsonpath "$.name"     == "dc-subtree-inner"
 # drive_id.
 POST {{base_url}}/api/admin/internal/trigger-sweep
 Authorization: Bearer {{admin_token}}
+[Options]
+delay: 200ms
 
 HTTP 200
 
