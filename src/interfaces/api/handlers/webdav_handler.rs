@@ -17,7 +17,9 @@ use chrono::Utc;
 use quick_xml::Writer;
 use uuid::Uuid;
 
-use crate::application::adapters::webdav_adapter::{LockInfo, PropFindRequest, WebDavAdapter};
+use crate::application::adapters::webdav_adapter::{
+    LockInfo, PropFindRequest, PropPatchOp, QualifiedName, WebDavAdapter,
+};
 use crate::application::dtos::file_dto::FileDto;
 use crate::application::dtos::folder_dto::FolderDto;
 use crate::application::ports::file_ports::FileRetrievalUseCase;
@@ -391,6 +393,12 @@ async fn handle_propfind(
     // ── 2. Authenticate ──────────────────────────────────────────
     let user = extract_user(&req)?;
 
+    // Client-facing path for href construction — must be extracted before
+    // req.into_body() consumes the request. The `path` parameter already has
+    // the home-folder prefix prepended (e.g. `admin/docs`) so it's correct for
+    // DB lookups but wrong for WebDAV hrefs (clients see `/webdav/docs`).
+    let client_path = extract_webdav_path(req.uri());
+
     // ── 3. Parse PROPFIND XML body ───────────────────────────────
     let body_bytes = {
         let body = req.into_body();
@@ -413,10 +421,11 @@ async fn handle_propfind(
     let folder_service = state.applications.folder_service.clone();
     let file_retrieval_service = state.applications.file_retrieval_service.clone();
 
-    let base_href = if path.is_empty() || path == "/" {
+    // Use client-facing path for hrefs so responses match the request URL.
+    let base_href = if client_path.is_empty() || client_path == "/" {
         "/webdav/".to_string()
     } else {
-        format!("/webdav/{}/", encode_uri_path(&path))
+        format!("/webdav/{}/", encode_uri_path(&client_path))
     };
 
     // ── 5. Determine target resource ─────────────────────────────
@@ -452,6 +461,8 @@ async fn handle_propfind(
             folder_service,
             file_retrieval_service,
             user.id,
+            state.webdav_dead_props.clone(),
+            path.clone(),
         )
         .await;
     }
@@ -470,20 +481,26 @@ async fn handle_propfind(
                     folder_service,
                     file_retrieval_service,
                     user.id,
+                    state.webdav_dead_props.clone(),
+                    path.clone(),
                 )
                 .await;
             }
             Ok(ResolvedResource::File(file)) => {
+                let dead_props = state.webdav_dead_props.get_all(&path, user.id).await
+                    .unwrap_or_default();
+                let file_href = webdav_href(&client_path);
                 let mut buf = Vec::with_capacity(1024);
                 {
                     let mut xml_writer = Writer::new(&mut buf);
                     WebDavAdapter::write_multistatus_start(&mut xml_writer)
                         .map_err(|e| AppError::internal_error(format!("XML write error: {}", e)))?;
-                    WebDavAdapter::write_file_entry(
+                    WebDavAdapter::write_file_entry_with_dead_props(
                         &mut xml_writer,
                         &file,
                         &propfind_request,
-                        &base_href,
+                        &file_href,
+                        &dead_props,
                     )
                     .map_err(|e| AppError::internal_error(format!("XML write error: {}", e)))?;
                     WebDavAdapter::write_multistatus_end(&mut xml_writer)
@@ -514,6 +531,8 @@ async fn handle_propfind(
                 folder_service,
                 file_retrieval_service,
                 user.id,
+                state.webdav_dead_props.clone(),
+                path.clone(),
             )
             .await;
         }
@@ -522,16 +541,20 @@ async fn handle_propfind(
             .await
         {
             assert_owner(file.owner_id.as_deref(), &user.id.to_string(), &path)?;
+            let dead_props = state.webdav_dead_props.get_all(&path, user.id).await
+                .unwrap_or_default();
+            let file_href = webdav_href(&client_path);
             let mut buf = Vec::with_capacity(1024);
             {
                 let mut xml_writer = Writer::new(&mut buf);
                 WebDavAdapter::write_multistatus_start(&mut xml_writer)
                     .map_err(|e| AppError::internal_error(format!("XML write error: {}", e)))?;
-                WebDavAdapter::write_file_entry(
+                WebDavAdapter::write_file_entry_with_dead_props(
                     &mut xml_writer,
                     &file,
                     &propfind_request,
-                    &base_href,
+                    &file_href,
+                    &dead_props,
                 )
                 .map_err(|e| AppError::internal_error(format!("XML write error: {}", e)))?;
                 WebDavAdapter::write_multistatus_end(&mut xml_writer)
@@ -564,6 +587,10 @@ async fn build_streaming_propfind_response(
     folder_service: std::sync::Arc<FolderService>,
     file_retrieval_service: std::sync::Arc<FileRetrievalService>,
     user_id: Uuid,
+    dead_props_store: Arc<
+        crate::infrastructure::services::webdav_dead_property_store::DeadPropertyStore,
+    >,
+    folder_internal_path: String,
 ) -> Result<Response<Body>, AppError> {
     let depth = depth.to_string();
     let base_href = base_href.to_string();
@@ -574,9 +601,11 @@ async fn build_streaming_propfind_response(
         let mut buf = Vec::with_capacity(4096);
         {
             let mut w = Writer::new(&mut buf);
+            let folder_dead = dead_props_store.get_all(&folder_internal_path, user_id).await
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
             WebDavAdapter::write_multistatus_start(&mut w)
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
-            WebDavAdapter::write_folder_entry(&mut w, &folder, &propfind_request, &base_href)
+            WebDavAdapter::write_folder_entry_with_dead_props(&mut w, &folder, &propfind_request, &base_href, &folder_dead)
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
         }
         yield Bytes::from(buf);
@@ -610,7 +639,10 @@ async fn build_streaming_propfind_response(
                     let mut w = Writer::new(&mut chunk);
                     for subfolder in &result.items {
                         let href = format!("{}{}/", base_href, encode_path_segment(&subfolder.name));
-                        WebDavAdapter::write_folder_entry(&mut w, subfolder, &propfind_request, &href)
+                        let child_path = format!("{}/{}", folder_internal_path, subfolder.name);
+                        let child_dead = dead_props_store.get_all(&child_path, user_id).await
+                            .map_err(|e| std::io::Error::other(e.to_string()))?;
+                        WebDavAdapter::write_folder_entry_with_dead_props(&mut w, subfolder, &propfind_request, &href, &child_dead)
                             .map_err(|e| std::io::Error::other(e.to_string()))?;
                     }
                 }
@@ -641,7 +673,10 @@ async fn build_streaming_propfind_response(
                     let mut w = Writer::new(&mut chunk);
                     for file in &batch {
                         let href = format!("{}{}", base_href, encode_path_segment(&file.name));
-                        WebDavAdapter::write_file_entry(&mut w, file, &propfind_request, &href)
+                        let child_path = format!("{}/{}", folder_internal_path, file.name);
+                        let child_dead = dead_props_store.get_all(&child_path, user_id).await
+                            .map_err(|e| std::io::Error::other(e.to_string()))?;
+                        WebDavAdapter::write_file_entry_with_dead_props(&mut w, file, &propfind_request, &href, &child_dead)
                             .map_err(|e| std::io::Error::other(e.to_string()))?;
                     }
                 }
@@ -693,6 +728,8 @@ async fn handle_proppatch(
     path: String,
 ) -> Result<Response<Body>, AppError> {
     let user = extract_user(&req)?;
+    // Client-facing path for href construction (without home folder prefix).
+    let client_path = extract_webdav_path(req.uri());
 
     // Active-lock guard (RFC 4918 §9.10.4): PROPPATCH writes properties,
     // so a lock on the target must release them via `If:`. Captured
@@ -739,30 +776,32 @@ async fn handle_proppatch(
         .map_err(|e| {
             AppError::payload_too_large(format!("PROPPATCH body too large or unreadable: {}", e))
         })?;
-    let (props_to_set, props_to_remove) = WebDavAdapter::parse_proppatch(body_bytes.reader())
+    let ops = WebDavAdapter::parse_proppatch(body_bytes.reader())
         .map_err(|e| AppError::bad_request(format!("Failed to parse PROPPATCH request: {}", e)))?;
 
-    // For now, we don't actually persist custom properties, but we respond as if we did
-    // In a full implementation, we would store these properties in a database
-
-    // Generate response - we'll pretend all operations succeeded
-    let mut results = Vec::new();
-
-    // For each property to set, indicate success
-    for prop in &props_to_set {
-        results.push((&prop.name, true));
+    // Apply operations in document order (RFC 4918 §9.2).
+    let dead_props = &state.webdav_dead_props;
+    let mut results: Vec<(&QualifiedName, bool)> = Vec::new();
+    for op in &ops {
+        match op {
+            PropPatchOp::Set(pv) => {
+                dead_props.set(&path, user.id, pv.name.clone(), pv.value.clone()).await
+                    .map_err(|e| AppError::internal_error(format!("Failed to store dead property: {e}")))?;
+                results.push((&pv.name, true));
+            }
+            PropPatchOp::Remove(name) => {
+                dead_props.remove(&path, user.id, name).await
+                    .map_err(|e| AppError::internal_error(format!("Failed to remove dead property: {e}")))?;
+                results.push((name, true));
+            }
+        }
     }
 
-    // For each property to remove, indicate success
-    for prop in &props_to_remove {
-        results.push((prop, true));
-    }
-
-    // Generate response — collection vs file href chosen above.
+    // Generate response — use client-facing path so href matches the request URL.
     let href = if is_collection {
-        webdav_collection_href(&path)
+        webdav_collection_href(&client_path)
     } else {
-        webdav_href(&path)
+        webdav_href(&client_path)
     };
     let mut response_body = Vec::new();
     WebDavAdapter::generate_proppatch_response(&mut response_body, &href, &results).map_err(
@@ -1062,20 +1101,65 @@ fn enforce_native_lock(
     if_header: Option<&str>,
     path: &str,
 ) -> Option<Response<Body>> {
-    let entry = lock_store.get_by_path(path)?;
-    if let Some(h) = if_header
-        && extract_if_header_tokens(h)
-            .iter()
-            .any(|t| t == &entry.info.token)
-    {
-        return None;
+    // Check the exact path, then walk up parent collections for depth-infinity
+    // locks (RFC 4918 §6.1: a lock on a collection with Depth: infinity also
+    // covers all descendant members).
+    let entry = lock_store.get_by_path(path).or_else(|| {
+        let mut p = path;
+        loop {
+            let idx = p.rfind('/')?;
+            p = &p[..idx];
+            if p.is_empty() {
+                return None;
+            }
+            if let Some(e) = lock_store.get_by_path(p) && e.info.depth.eq_ignore_ascii_case("infinity") {
+                return Some(e);
+            }
+        }
+    });
+
+    if let Some(entry) = entry {
+        // Resource is locked: caller must supply the matching token in If:.
+        if let Some(h) = if_header
+            && extract_if_header_tokens(h)
+                .iter()
+                .any(|t| t == &entry.info.token)
+        {
+            return None;
+        }
+        return Some(
+            Response::builder()
+                .status(StatusCode::LOCKED)
+                .body(Body::empty())
+                .unwrap(),
+        );
     }
-    Some(
-        Response::builder()
-            .status(StatusCode::LOCKED)
-            .body(Body::empty())
-            .unwrap(),
-    )
+
+    // Resource is not locked. If the If: header references lock tokens (not
+    // resource-tag URLs), every such token must be active somewhere in the
+    // store. A stale or fabricated token (e.g. DAV:no-lock) never matches,
+    // so the If: condition fails → 412 Precondition Failed (RFC 4918 §10.4).
+    if let Some(h) = if_header {
+        let tokens = extract_if_header_tokens(h);
+        let lock_refs: Vec<_> = tokens
+            .iter()
+            .filter(|t| !t.starts_with("http://") && !t.starts_with("https://"))
+            .collect();
+        if !lock_refs.is_empty()
+            && !lock_refs
+                .iter()
+                .any(|t| lock_store.get_by_token(t).is_some())
+        {
+            return Some(
+                Response::builder()
+                    .status(StatusCode::PRECONDITION_FAILED)
+                    .body(Body::empty())
+                    .unwrap(),
+            );
+        }
+    }
+
+    None
 }
 
 /**
@@ -1101,79 +1185,119 @@ async fn handle_put(
 
     let user = extract_user(&req)?;
 
-    // Get file service from state
     let file_upload_service = &state.applications.file_upload_service;
 
-    // Check if path is empty (root folder)
     if path.is_empty() || path == "/" {
         return Err(AppError::bad_request("Cannot PUT to root folder"));
     }
 
-    // ── Active-lock guard (RFC 4918 §9.10.4) ──────────────────────────
-    // Reject a write that targets a locked resource unless the request
-    // carries the lock token in `If:`. Captured before we consume the
-    // body into the CDC ingester — a 423 mustn't waste any bandwidth.
+    // RFC 4918 §9.7.1: a server MUST NOT partially CREATE or UPDATE a resource
+    // based on a PUT request containing a Content-Range header.
+    if req.headers().contains_key(header::CONTENT_RANGE) {
+        return Err(AppError::bad_request(
+            "PUT with Content-Range is not allowed (RFC 4918 §9.7.1)",
+        ));
+    }
+
+    // Extract all headers before consuming `req` into the body stream.
     let if_header_owned = req
         .headers()
         .get("If")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
-    if let Some(resp) =
-        enforce_native_lock(&state.webdav_lock_store, if_header_owned.as_deref(), &path)
-    {
-        return Ok(resp);
-    }
-
-    // ── Ownership guard ────────────────────────────────────────
-    // Verify that the user owns the target file (update) or the
-    // parent folder (create). Without this check a user could
-    // overwrite another user's file via a crafted PUT path.
-    if let Some(resolver) = &state.path_resolver {
-        match resolver.resolve_path_for_user(&path, user.id).await {
-            Ok(ResolvedResource::File(_)) => { /* existing file owned by user — OK */ }
-            Ok(ResolvedResource::Folder(_)) => {
-                return Err(AppError::bad_request("Cannot PUT to a directory"));
-            }
-            Err(_) => {
-                // File doesn't exist yet — verify parent folder ownership
-                let parent_path = if let Some(idx) = path.rfind('/') {
-                    &path[..idx]
-                } else {
-                    ""
-                };
-                if !parent_path.is_empty() {
-                    resolver
-                        .resolve_path_for_user(parent_path, user.id)
-                        .await
-                        .map_err(|_| {
-                            AppError::not_found(format!("Parent folder not found: {}", parent_path))
-                        })?;
-                }
-                // root-level PUT is allowed (parent_path empty)
-            }
-        }
-    }
-    // (legacy path without resolver: update_file_streaming will create
-    //  under the folder with the resolved path, which may belong to
-    //  another user — acceptable risk since PathResolver should always
-    //  be enabled in production)
-
-    // Direct PUT cap — see `nextcloud/webdav_handler::handle_put` for
-    // the reasoning. Files above `direct_put_max_bytes` must go through
-    // the chunked-upload protocol (`/api/uploads/…`) which is resumable.
-    let max_upload = state.core.config.storage.direct_put_max_bytes;
-
-    // Extract content type before consuming the request
+    let if_none_match = req
+        .headers()
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string());
+    let if_match = req
+        .headers()
+        .get(header::IF_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string());
     let content_type = req
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/octet-stream")
         .to_string();
+    let max_upload = state.core.config.storage.direct_put_max_bytes;
 
-    // ── Streaming ingest: body → CDC chunk store ──────────────
-    // Shared with the NextCloud-compat PUT handler; chunking + hashing +
-    // dedup checks run while the body arrives — no spool file, no re-read.
+    // ── Active-lock guard (RFC 4918 §9.10.4) ──────────────────────────
+    if let Some(resp) =
+        enforce_native_lock(&state.webdav_lock_store, if_header_owned.as_deref(), &path)
+    {
+        return Ok(resp);
+    }
+
+    // ── Ownership / existence check ───────────────────────────────────
+    // Resolves to: File(existing), Folder(wrong), or Err(new file).
+    // Sets `file_existed` for 201 vs 204 and `current_etag` for If-Match.
+    let mut file_existed = false;
+    let mut current_etag: Option<String> = None;
+    if let Some(resolver) = &state.path_resolver {
+        match resolver.resolve_path_for_user(&path, user.id).await {
+            Ok(ResolvedResource::File(f)) => {
+                file_existed = true;
+                current_etag = Some(f.etag.clone());
+            }
+            Ok(ResolvedResource::Folder(_)) => {
+                return Err(AppError::bad_request("Cannot PUT to a directory"));
+            }
+            Err(_) => {
+                // File doesn't exist — verify parent. RFC 4918 §9.7.1: missing
+                // parent MUST produce 409 Conflict, not 404.
+                let parent_path = path.rfind('/').map(|i| &path[..i]).unwrap_or("");
+                if !parent_path.is_empty() {
+                    resolver
+                        .resolve_path_for_user(parent_path, user.id)
+                        .await
+                        .map_err(|_| {
+                            AppError::conflict(format!("Parent folder not found: {}", parent_path))
+                        })?;
+                }
+            }
+        }
+    }
+
+    // ── RFC 7232 conditional preconditions ────────────────────────────
+    // Evaluated before ingesting the body to save bandwidth on doomed requests.
+    if let Some(ref inm) = if_none_match {
+        // If-None-Match: * → fail if resource exists (prevent overwrite)
+        if inm == "*" && file_existed {
+            return Err(AppError::precondition_failed(
+                "If-None-Match: * — resource already exists",
+            ));
+        }
+    }
+    if let Some(ref im) = if_match {
+        if im == "*" {
+            // If-Match: * → fail if resource does not exist
+            if !file_existed {
+                return Err(AppError::precondition_failed(
+                    "If-Match: * — resource does not exist",
+                ));
+            }
+        } else {
+            // If-Match: <etag> → strong comparison against current ETag
+            match &current_etag {
+                None => {
+                    return Err(AppError::precondition_failed(
+                        "If-Match — resource does not exist",
+                    ));
+                }
+                Some(etag) => {
+                    let client_tag = im.trim_matches('"');
+                    let server_tag = etag.trim_matches('"');
+                    if client_tag != server_tag {
+                        return Err(AppError::precondition_failed("If-Match — ETag mismatch"));
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Streaming ingest ──────────────────────────────────────────────
     let filename = crate::common::mime_detect::filename_from_path(&path).to_string();
     let ingested = upload_ingest::ingest_body_to_cas(
         req.into_body(),
@@ -1184,7 +1308,7 @@ async fn handle_put(
     )
     .await?;
 
-    // ── Quota enforcement ────────────────────────────────────
+    // ── Quota enforcement ─────────────────────────────────────────────
     if let Some(storage_svc) = state.storage_usage_service.as_ref()
         && let Err(err) = storage_svc
             .check_storage_quota(user.id, ingested.size)
@@ -1204,7 +1328,7 @@ async fn handle_put(
         ));
     }
 
-    // ── Atomic store: swap the file row onto the ingested blob ──
+    // ── Atomic store ──────────────────────────────────────────────────
     let content_type = ingested.content_type.clone();
     let drive_id = resolve_drive_id_for_native_webdav(&state, user.id).await?;
     let result = file_upload_service
@@ -1219,10 +1343,21 @@ async fn handle_put(
         .await;
 
     match result {
-        Ok(_file_dto) => Ok(Response::builder()
-            .status(StatusCode::NO_CONTENT)
-            .body(Body::empty())
-            .unwrap()),
+        Ok(file_dto) => {
+            // RFC 4918 §9.7.1: 201 Created for new resources, 204 No Content
+            // for overwrites. Always include ETag so clients can use it for
+            // subsequent conditional requests without a round-trip HEAD.
+            let status = if file_existed {
+                StatusCode::NO_CONTENT
+            } else {
+                StatusCode::CREATED
+            };
+            Ok(Response::builder()
+                .status(status)
+                .header(header::ETAG, &file_dto.etag)
+                .body(Body::empty())
+                .unwrap())
+        }
         Err(e) => Err(AppError::internal_error(format!(
             "Failed to put file: {}",
             e
@@ -1252,7 +1387,17 @@ async fn handle_mkcol(
         return Err(AppError::conflict("Root folder already exists"));
     }
 
-    // Read request body - must be empty for MKCOL (RFC 4918 §9.3)
+    // Extract content-type before consuming the body.
+    let req_content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // RFC 4918 §9.3.1: MKCOL body MUST be empty. A non-empty body with a
+    // recognised XML content-type is 400 Bad Request (malformed MKCOL body);
+    // a non-empty body with an unrecognised content-type is 415 Unsupported
+    // Media Type. We read up to MAX_MKCOL_BODY bytes to distinguish the two.
     let body_bytes = {
         let body = req.into_body();
         body::to_bytes(body, MAX_MKCOL_BODY)
@@ -1261,50 +1406,107 @@ async fn handle_mkcol(
     };
 
     if !body_bytes.is_empty() {
+        // A body whose content-type looks like XML → 400 (client sent a MKCOL
+        // extended request we don't support); anything else → 415.
+        let ct = req_content_type.as_deref().unwrap_or("");
+        if ct.contains("xml") {
+            return Err(AppError::bad_request(
+                "MKCOL with XML body is not supported",
+            ));
+        }
         return Err(AppError::unsupported_media_type(
             "MKCOL request body must be empty",
         ));
     }
 
-    // Path is already translated by dispatch (e.g. "My Folder - jared/03/01").
-    // Walk each segment: the first is the home folder (already exists),
-    // subsequent segments are created as needed with proper parent_id.
-    // `drive_id` scopes each per-segment path probe to the caller's default
-    // drive (post-D0 invariant: `storage.folders.path` repeats across drives).
+    // RFC 4918 §9.3.1: MKCOL on an existing URL MUST return 405.
+    // RFC 4918 §9.3.1: MKCOL without an existing parent MUST return 409.
+    // This handler only creates a single collection (the last path segment).
+    // It does NOT auto-create intermediate ancestors ("mkdir -p" semantics
+    // violate the RFC and were causing the test failures).
     let drive_id = resolve_drive_id_for_native_webdav(&state, user.id).await?;
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    let mut parent_id: Option<String> = None;
-    let mut accumulated_path = String::new();
 
-    for segment in &segments {
-        if !accumulated_path.is_empty() {
-            accumulated_path.push('/');
-        }
-        accumulated_path.push_str(segment);
-
-        match folder_service
-            .get_folder_by_path(&accumulated_path, drive_id)
-            .await
-        {
-            Ok(existing) => {
-                parent_id = Some(existing.id);
-            }
-            Err(_) => {
-                let create_dto = crate::application::dtos::folder_dto::CreateFolderDto {
-                    name: segment.to_string(),
-                    parent_id: parent_id.clone(),
-                };
-                // Propagate DomainError -> AppError so NotFound/Conflict map to
-                // their proper HTTP status codes (was: blanket 500 swallowed
-                // ownership-rejection NotFound from verify_owner).
-                let created = folder_service
-                    .create_folder_with_perms(create_dto, user.id)
-                    .await
-                    .map_err(AppError::from)?;
-                parent_id = Some(created.id);
-            }
-        }
+    if segments.is_empty() {
+        return Err(AppError::conflict("Root folder already exists"));
     }
+
+    // Check whether the target itself already exists (file or folder → 405).
+    if let Some(resolver) = &state.path_resolver {
+        if resolver
+            .exists_for_user(&path, user.id)
+            .await
+            .unwrap_or(false)
+        {
+            return Err(AppError::new(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "Collection already exists",
+                "AlreadyExists",
+            ));
+        }
+    } else if folder_service
+        .get_folder_by_path(&path, drive_id)
+        .await
+        .is_ok()
+    {
+        return Err(AppError::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "Collection already exists",
+            "AlreadyExists",
+        ));
+    }
+
+    // Resolve the parent path. RFC 4918 §9.3.1: if the parent does not
+    // exist, return 409 Conflict. If the parent exists but is a file, also
+    // return 409 (cannot create a collection inside a file).
+    let new_segment = *segments.last().unwrap();
+    let parent_segments = &segments[..segments.len() - 1];
+
+    let parent_id = if parent_segments.is_empty() {
+        // Top-level creation — no parent required; the root folder acts as parent.
+        None
+    } else {
+        let parent_path = parent_segments.join("/");
+        // Parent must be a folder, not a file.
+        if let Some(resolver) = &state.path_resolver {
+            match resolver.resolve_path_for_user(&parent_path, user.id).await {
+                Ok(ResolvedResource::Folder(f)) => Some(f.id),
+                Ok(ResolvedResource::File(_)) => {
+                    return Err(AppError::conflict(
+                        "Parent path is a file, not a collection",
+                    ));
+                }
+                Err(_) => {
+                    return Err(AppError::conflict(format!(
+                        "Parent folder not found: {}",
+                        parent_path
+                    )));
+                }
+            }
+        } else {
+            match folder_service
+                .get_folder_by_path(&parent_path, drive_id)
+                .await
+            {
+                Ok(f) => Some(f.id),
+                Err(_) => {
+                    return Err(AppError::conflict(format!(
+                        "Parent folder not found: {}",
+                        parent_path
+                    )));
+                }
+            }
+        }
+    };
+
+    let create_dto = crate::application::dtos::folder_dto::CreateFolderDto {
+        name: new_segment.to_string(),
+        parent_id,
+    };
+    folder_service
+        .create_folder_with_perms(create_dto, user.id)
+        .await
+        .map_err(AppError::from)?;
 
     Ok(Response::builder()
         .status(StatusCode::CREATED)
@@ -1453,6 +1655,11 @@ async fn handle_move(
         .await
         .unwrap_or(destination_path);
 
+    // RFC 4918 §9.9.3: MOVE to self MUST return 403 Forbidden.
+    if destination_path == source_path {
+        return Err(AppError::forbidden("Cannot MOVE a resource to itself"));
+    }
+
     // Destination lock guard: MOVE also creates/replaces a resource at
     // the destination. If that path is locked, the same If: header must
     // satisfy it.
@@ -1464,45 +1671,66 @@ async fn handle_move(
         return Ok(resp);
     }
 
-    // Get services from state
     let file_retrieval_service = &state.applications.file_retrieval_service;
     let file_management_service = &state.applications.file_management_service;
     let folder_service = &state.applications.folder_service;
 
-    // `drive_id` scopes every path-based lookup below to the caller's
-    // default drive (post-D0 invariant: `storage.{files,folders}.path`
-    // repeats across drives).
     let drive_id = resolve_drive_id_for_native_webdav(&state, user.id).await?;
 
-    // Check if destination already exists (for Overwrite header compliance)
-    if !overwrite {
-        let dest_exists = if let Some(resolver) = &state.path_resolver {
-            resolver
-                .exists_for_user(&destination_path, user.id)
-                .await
-                .unwrap_or(false)
-        } else {
-            folder_service
-                .get_folder_by_path(&destination_path, drive_id)
+    // Probe destination existence for Overwrite semantics and 201 vs 204.
+    let dest_existed = if let Some(resolver) = &state.path_resolver {
+        resolver
+            .exists_for_user(&destination_path, user.id)
+            .await
+            .unwrap_or(false)
+    } else {
+        folder_service
+            .get_folder_by_path(&destination_path, drive_id)
+            .await
+            .is_ok()
+            || file_retrieval_service
+                .get_file_by_path(&destination_path, drive_id)
                 .await
                 .is_ok()
-                || file_retrieval_service
-                    .get_file_by_path(&destination_path, drive_id)
-                    .await
-                    .is_ok()
-        };
-        if dest_exists {
+    };
+
+    if dest_existed {
+        if !overwrite {
             return Err(AppError::precondition_failed(
                 "Destination already exists and Overwrite is F",
             ));
         }
+        // RFC 4918 §9.9.3: when Overwrite: T, perform a DELETE on the
+        // destination before moving. Without this the rename/move fails
+        // on a unique-index conflict (same name in same parent).
+        match resolve_or_legacy(&state, &destination_path, user.id).await {
+            Some(ResolvedResource::Folder(f)) => {
+                folder_service
+                    .delete_folder_with_perms(&f.id, user.id)
+                    .await
+                    .map_err(|e| {
+                        AppError::internal_error(format!(
+                            "Failed to delete existing destination: {}",
+                            e
+                        ))
+                    })?;
+            }
+            Some(ResolvedResource::File(f)) => {
+                file_management_service
+                    .delete_file_with_perms(&f.id, user.id)
+                    .await
+                    .map_err(|e| {
+                        AppError::internal_error(format!(
+                            "Failed to delete existing destination: {}",
+                            e
+                        ))
+                    })?;
+            }
+            None => {}
+        }
     }
 
-    // Resolve source via optimized resolver with legacy fallback (see
-    // `resolve_or_legacy` for the rationale). Single match collapses the
-    // two near-identical branches that the resolver-only + legacy-only
-    // versions used to keep.
-    let _ = file_retrieval_service; // referenced via resolve_or_legacy
+    let _ = file_retrieval_service;
     let resolved = resolve_or_legacy(&state, &source_path, user.id)
         .await
         .ok_or_else(|| AppError::not_found(format!("Resource not found: {}", source_path)))?;
@@ -1522,22 +1750,33 @@ async fn handle_move(
 
     match resolved {
         ResolvedResource::Folder(folder) => {
-            let move_dto = crate::application::dtos::folder_dto::MoveFolderDto {
-                parent_id: if dest_parent_path.is_empty() {
-                    None
-                } else if let Ok(parent) = folder_service
+            // RFC 4918 §9.9.5: missing destination parent → 409 Conflict.
+            let target_parent_id = if dest_parent_path.is_empty() {
+                None
+            } else {
+                match folder_service
                     .get_folder_by_path(dest_parent_path, drive_id)
                     .await
                 {
-                    assert_owner(
-                        parent.owner_id.as_deref(),
-                        &user.id.to_string(),
-                        dest_parent_path,
-                    )?;
-                    Some(parent.id)
-                } else {
-                    None
-                },
+                    Ok(parent) => {
+                        assert_owner(
+                            parent.owner_id.as_deref(),
+                            &user.id.to_string(),
+                            dest_parent_path,
+                        )?;
+                        Some(parent.id)
+                    }
+                    Err(_) => {
+                        return Err(AppError::conflict(format!(
+                            "Destination parent not found: {}",
+                            dest_parent_path
+                        )));
+                    }
+                }
+            };
+
+            let move_dto = crate::application::dtos::folder_dto::MoveFolderDto {
+                parent_id: target_parent_id,
             };
 
             folder_service
@@ -1557,12 +1796,7 @@ async fn handle_move(
         }
         ResolvedResource::File(file) => {
             if source_parent_path != dest_parent_path {
-                // Resolve the destination's parent PATH into a folder ID
-                // before handing it to move_file_with_perms (which takes
-                // an Option<folder_id String>, not a path). Previously
-                // the path was passed straight through and the move
-                // would silently fail because no row matches a folder
-                // whose id literally equals the path text.
+                // RFC 4918 §9.9.5: missing destination parent → 409 Conflict.
                 let target_parent_id = if dest_parent_path.is_empty() {
                     None
                 } else {
@@ -1570,7 +1804,7 @@ async fn handle_move(
                         .get_folder_by_path(dest_parent_path, drive_id)
                         .await
                         .map_err(|_| {
-                            AppError::not_found(format!(
+                            AppError::conflict(format!(
                                 "Destination parent not found: {}",
                                 dest_parent_path
                             ))
@@ -1596,8 +1830,21 @@ async fn handle_move(
         }
     }
 
+    // Migrate dead properties to the new path (RFC 4918 §9.9 — MOVE preserves properties).
+    state
+        .webdav_dead_props
+        .rename_resource(&source_path, user.id, &destination_path)
+        .await
+        .map_err(|e| AppError::internal_error(format!("Failed to migrate dead properties: {e}")))?;
+
+    // RFC 4918 §9.9.5: 201 Created when destination is new, 204 when overwritten.
+    let status = if dest_existed {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::CREATED
+    };
     Ok(Response::builder()
-        .status(StatusCode::CREATED)
+        .status(status)
         .body(Body::empty())
         .unwrap())
 }
@@ -1665,6 +1912,11 @@ async fn handle_copy(
         .await
         .unwrap_or(destination_path);
 
+    // RFC 4918 §9.8.5: COPY to self MUST return 403 Forbidden.
+    if destination_path == source_path {
+        return Err(AppError::forbidden("Cannot COPY a resource to itself"));
+    }
+
     // Active-lock guard on the destination (RFC 4918 §9.10.4).
     if let Some(resp) = enforce_native_lock(
         &state.webdav_lock_store,
@@ -1684,40 +1936,64 @@ async fn handle_copy(
     // Get services from state
     let file_retrieval_service = &state.applications.file_retrieval_service;
     let folder_service = &state.applications.folder_service;
+    let file_management_service = &state.applications.file_management_service;
 
-    // `drive_id` scopes every path-based lookup below to the caller's
-    // default drive (post-D0 invariant: `storage.{files,folders}.path`
-    // repeats across drives).
     let drive_id = resolve_drive_id_for_native_webdav(&state, user.id).await?;
 
-    // Check if destination already exists (for Overwrite header compliance)
-    if !overwrite {
-        let dest_exists = if let Some(resolver) = &state.path_resolver {
-            resolver
-                .exists_for_user(&destination_path, user.id)
-                .await
-                .unwrap_or(false)
-        } else {
-            folder_service
-                .get_folder_by_path(&destination_path, drive_id)
+    // Probe destination existence for Overwrite semantics and 201 vs 204.
+    let dest_existed = if let Some(resolver) = &state.path_resolver {
+        resolver
+            .exists_for_user(&destination_path, user.id)
+            .await
+            .unwrap_or(false)
+    } else {
+        folder_service
+            .get_folder_by_path(&destination_path, drive_id)
+            .await
+            .is_ok()
+            || file_retrieval_service
+                .get_file_by_path(&destination_path, drive_id)
                 .await
                 .is_ok()
-                || file_retrieval_service
-                    .get_file_by_path(&destination_path, drive_id)
-                    .await
-                    .is_ok()
-        };
-        if dest_exists {
+    };
+
+    if dest_existed {
+        if !overwrite {
             return Err(AppError::precondition_failed(
                 "Destination already exists and Overwrite is F",
             ));
         }
+        // RFC 4918 §9.8.4: when Overwrite: T, the server MUST perform a
+        // DELETE on the destination before the copy. Without this the copy
+        // service returns a unique-index conflict (500).
+        match resolve_or_legacy(&state, &destination_path, user.id).await {
+            Some(ResolvedResource::Folder(f)) => {
+                folder_service
+                    .delete_folder_with_perms(&f.id, user.id)
+                    .await
+                    .map_err(|e| {
+                        AppError::internal_error(format!(
+                            "Failed to delete existing destination: {}",
+                            e
+                        ))
+                    })?;
+            }
+            Some(ResolvedResource::File(f)) => {
+                file_management_service
+                    .delete_file_with_perms(&f.id, user.id)
+                    .await
+                    .map_err(|e| {
+                        AppError::internal_error(format!(
+                            "Failed to delete existing destination: {}",
+                            e
+                        ))
+                    })?;
+            }
+            None => {}
+        }
     }
 
-    // Resolve source via optimized resolver with legacy fallback; collapses
-    // the two near-identical branches the resolver-only + legacy-only
-    // versions used to keep.
-    let _ = file_retrieval_service; // referenced via resolve_or_legacy
+    let _ = file_retrieval_service;
     let resolved = resolve_or_legacy(&state, &source_path, user.id)
         .await
         .ok_or_else(|| AppError::not_found(format!("Resource not found: {}", source_path)))?;
@@ -1731,27 +2007,35 @@ async fn handle_copy(
         .map(|i| &destination_path[..i])
         .unwrap_or("");
 
+    // RFC 4918 §9.8.5: if the destination parent does not exist, return 409.
     let target_parent_id = if dest_parent_path.is_empty() {
         None
-    } else if let Ok(parent) = folder_service
-        .get_folder_by_path(dest_parent_path, drive_id)
-        .await
-    {
-        assert_owner(
-            parent.owner_id.as_deref(),
-            &user.id.to_string(),
-            dest_parent_path,
-        )?;
-        Some(parent.id)
     } else {
-        None
+        match folder_service
+            .get_folder_by_path(dest_parent_path, drive_id)
+            .await
+        {
+            Ok(parent) => {
+                assert_owner(
+                    parent.owner_id.as_deref(),
+                    &user.id.to_string(),
+                    dest_parent_path,
+                )?;
+                Some(parent.id)
+            }
+            Err(_) => {
+                return Err(AppError::conflict(format!(
+                    "Destination parent not found: {}",
+                    dest_parent_path
+                )));
+            }
+        }
     };
 
     match resolved {
         ResolvedResource::Folder(folder) => {
             let recursive = depth != "0";
             if recursive {
-                let file_management_service = &state.applications.file_management_service;
                 file_management_service
                     .copy_folder_tree_with_perms(
                         &folder.id,
@@ -1780,15 +2064,6 @@ async fn handle_copy(
             }
         }
         ResolvedResource::File(file) => {
-            // M8b fix: copy_file_with_perms now accepts an optional new
-            // filename — without it, a copy to the same folder with a
-            // different name collided with the source on the
-            // (folder, name, user) unique index. Pass dest_name when it
-            // differs from the source so the INSERT lands with the
-            // intended name in a single round-trip; pass None for the
-            // "same name in a different folder" case to keep the existing
-            // semantics.
-            let file_management_service = &state.applications.file_management_service;
             let copy_name = (file.name != dest_name).then(|| dest_name.to_string());
             file_management_service
                 .copy_file_with_perms(&file.id, user.id, target_parent_id, copy_name)
@@ -1797,8 +2072,14 @@ async fn handle_copy(
         }
     }
 
+    // RFC 4918 §9.8.5: 201 Created when destination is new, 204 when overwritten.
+    let status = if dest_existed {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::CREATED
+    };
     Ok(Response::builder()
-        .status(StatusCode::NO_CONTENT)
+        .status(status)
         .body(Body::empty())
         .unwrap())
 }
