@@ -14,15 +14,29 @@
 # server is broken; OxiCloud sees nothing wrong in its logs).
 #
 # Coverage:
-#   1. Setup admin, capture JWT, PUT a probe file.
-#   2. PROPPATCH set → 207
-#   3. PROPFIND get → value round-trips verbatim
-#   4. PROPPATCH upsert (set same name → new value) → 207
-#   5. PROPFIND get → new value (upsert worked)
-#   6. PROPPATCH remove → 207
-#   7. PROPFIND get → property absent
-#   8. MOVE file → properties follow the path (rename_resource)
-#   9. DELETE file → properties cleaned up (no orphan rows)
+#   1.  Setup admin, capture JWT, PUT a probe file.
+#   2.  PROPPATCH set → 207
+#   3.  PROPFIND get → value round-trips verbatim
+#   4.  PROPPATCH upsert (set same name → new value) → 207
+#   5.  PROPFIND get → new value (upsert worked)
+#   6.  PROPPATCH remove → 207
+#   7.  PROPFIND get → property absent
+#   8.  MOVE file → properties follow the resource id automatically
+#       (no rename_resource() call; the row's file_id is stable
+#       across MOVE so dead-props travel with the resource).
+#   9.  PROPFIND on moved path returns the property.
+#   10. DELETE via WebDAV → FK CASCADE reaps dead-prop rows.
+#   11. PROPPATCH + REST DELETE `/api/files/{id}` → FK CASCADE
+#       reaps via the REST-side delete path too. This is the
+#       new coverage unlocked by migration 20260830000001 — the
+#       old path-keyed store had no way to clean up here, so
+#       the SvelteKit web UI (which deletes via REST) was
+#       silently leaking tombstones every time a user deleted
+#       a file that had ever carried dead properties.
+#   12. Folder MOVE preserves dead properties (id-stable
+#       guarantee under rename). The Hurl suite had no folder-
+#       side coverage of this until 20260830000001; only the
+#       file MOVE case (step 9) was guarded.
 #
 # XPath assertions deliberately use `local-name()` so the test
 # is robust against the server's choice of namespace prefix —
@@ -208,12 +222,15 @@ xpath "count(//*[local-name()='testlabel'])" == 0
 
 
 # ─────────────────────────────────────────────────────────────
-# Step 9 — Re-set a property, then MOVE the file. The
-#          rename_resource path in DeadPropertyStore must
-#          re-key the row to the new path so the property
-#          follows the file (a regression that leaves the row
-#          at the old path would silently break every client
-#          that does a MOVE then a PROPFIND).
+# Step 9 — Re-set a property, then MOVE the file. Post-rekey
+#          (migration 20260830000001) the dead-property row
+#          keys on `file_id`, which never changes across MOVE
+#          or RENAME — so properties follow the resource by a
+#          database invariant, without any store-side call.
+#          A regression that broke this would be a regression
+#          on the id-stability guarantee in the move SQL itself
+#          (i.e. it would surface elsewhere too); this assertion
+#          locks it in for sync clients that do MOVE → PROPFIND.
 # ─────────────────────────────────────────────────────────────
 PROPPATCH {{base_url}}/webdav/dead-props-probe.txt
 Authorization: Bearer {{token}}
@@ -260,12 +277,14 @@ xpath "string(//*[local-name()='testlabel'])" == "survives-move"
 
 
 # ─────────────────────────────────────────────────────────────
-# Step 10 — DELETE the file; remove_resource() must reap the
-#           dead-property rows so they don't accumulate as
-#           tombstones the next time a file is created at the
-#           same path. We verify by recreating the same path
-#           and PROPFIND'ing — a leak would resurface the old
-#           "survives-move" value.
+# Step 10 — DELETE the file via WebDAV; the FK
+#           `webdav_dead_properties.file_id → storage.files.id
+#           ON DELETE CASCADE` (migration 20260830000001) must
+#           reap the dead-property rows automatically, so they
+#           don't accumulate as tombstones the next time a file
+#           is created at the same path. We verify by recreating
+#           the same path and PROPFIND'ing — a leak would
+#           resurface the old "survives-move" value.
 # ─────────────────────────────────────────────────────────────
 DELETE {{base_url}}/webdav/dead-props-moved.txt
 Authorization: Bearer {{token}}
@@ -303,9 +322,210 @@ xpath "count(//*[local-name()='testlabel'])" == 0
 
 
 # ─────────────────────────────────────────────────────────────
+# Step 11 — Same FK-cascade property test but via the REST API
+#           delete path. The path-based store would have leaked
+#           here forever (REST DELETE receives a file_id, not a
+#           path; the old store had no efficient way to clean
+#           up). The id-keyed schema reaps the dead-property
+#           row through the same FK CASCADE on `storage.files`,
+#           so this proves the new coverage end-to-end.
+#
+#           Sequence:
+#             a. PROPPATCH a marker dead property on the file.
+#             b. PROPFIND — confirm it's stored.
+#             c. Resolve the file's id via REST listing of the
+#                home folder.
+#             d. DELETE via `/api/files/{id}` — pure REST,
+#                never touches the WebDAV surface.
+#             e. PUT a fresh file at the same WebDAV path.
+#             f. PROPFIND — must not see the marker.
+# ─────────────────────────────────────────────────────────────
+
+# Step 11a — set a new marker dead property on the just-PUT file
+PROPPATCH {{base_url}}/webdav/dead-props-moved.txt
+Authorization: Bearer {{token}}
+Content-Type: application/xml; charset=utf-8
+```
+<?xml version="1.0" encoding="utf-8"?>
+<D:propertyupdate xmlns:D="DAV:">
+  <D:set>
+    <D:prop>
+      <X:restmarker xmlns:X="oxi:test">rest-delete-coverage</X:restmarker>
+    </D:prop>
+  </D:set>
+</D:propertyupdate>
+```
+
+HTTP 207
+
+
+# Step 11b — confirm the marker is stored
+PROPFIND {{base_url}}/webdav/dead-props-moved.txt
+Authorization: Bearer {{token}}
+Depth: 0
+Content-Type: application/xml; charset=utf-8
+```
+<?xml version="1.0" encoding="utf-8"?>
+<D:propfind xmlns:D="DAV:">
+  <D:allprop/>
+</D:propfind>
+```
+
+HTTP 207
+[Asserts]
+xpath "string(//*[local-name()='restmarker'])" == "rest-delete-coverage"
+
+
+# Step 11c — resolve the file id from the home folder listing.
+# The home folder is whatever `GET /api/folders` returns as the
+# first root-level entry for the admin user (Personal drive root,
+# post drive-no-wrapper).
+GET {{base_url}}/api/folders
+Authorization: Bearer {{token}}
+
+HTTP 200
+[Captures]
+home_folder_id: jsonpath "$[0].id"
+
+
+GET {{base_url}}/api/files?folder_id={{home_folder_id}}
+Authorization: Bearer {{token}}
+
+HTTP 200
+[Captures]
+rest_file_id: jsonpath "$[?(@.name=='dead-props-moved.txt')].id" nth 0
+
+
+# Step 11d — REST DELETE. No webdav, no dead-prop API call —
+# the cleanup must happen via the FK CASCADE on storage.files.
+DELETE {{base_url}}/api/files/{{rest_file_id}}
+Authorization: Bearer {{token}}
+
+# The REST delete handler returns 204 No Content on success.
+HTTP 204
+
+
+# Step 11e — recreate the file at the same WebDAV path
+PUT {{base_url}}/webdav/dead-props-moved.txt
+Authorization: Bearer {{token}}
+Content-Type: text/plain
+```
+fresh file post REST DELETE
+```
+
+HTTP 201
+
+
+# Step 11f — PROPFIND must not surface the old marker
+PROPFIND {{base_url}}/webdav/dead-props-moved.txt
+Authorization: Bearer {{token}}
+Depth: 0
+Content-Type: application/xml; charset=utf-8
+```
+<?xml version="1.0" encoding="utf-8"?>
+<D:propfind xmlns:D="DAV:">
+  <D:allprop/>
+</D:propfind>
+```
+
+HTTP 207
+[Asserts]
+# If REST DELETE failed to cascade, the marker would still be
+# attached to the (recreated) path under the old `(path, user_id)`
+# key — but the new schema keys by file_id, and the REST DELETE
+# took the storage.files row with it. Asserting absence proves
+# the cascade fired.
+xpath "count(//*[local-name()='restmarker'])" == 0
+
+
+# ─────────────────────────────────────────────────────────────
 # Cleanup
 # ─────────────────────────────────────────────────────────────
 DELETE {{base_url}}/webdav/dead-props-moved.txt
+Authorization: Bearer {{token}}
+
+HTTP 204
+
+
+# ─────────────────────────────────────────────────────────────
+# Step 12 — Folder MOVE dead-property preservation.
+#           Same invariant as step 9 (id-stability under MOVE)
+#           but for folders. The Hurl suite had no folder-side
+#           coverage of this until now, so a regression that
+#           broke folder dead-property preservation could
+#           silently land — calendar / contacts / NextCloud
+#           clients that PROPPATCH per-folder sync state would
+#           lose it on every rename.
+#
+#           Sequence:
+#             a. MKCOL a fresh test folder.
+#             b. PROPPATCH a dead property on it.
+#             c. MOVE / rename the folder.
+#             d. PROPFIND the new collection path; assert
+#                the property survived.
+#             e. Cleanup: DELETE the renamed folder.
+# ─────────────────────────────────────────────────────────────
+
+# Step 12a — fresh collection (no prior state at this path)
+MKCOL {{base_url}}/webdav/dead-props-folder/
+Authorization: Bearer {{token}}
+
+HTTP 201
+
+
+# Step 12b — attach a marker dead property to the FOLDER row
+PROPPATCH {{base_url}}/webdav/dead-props-folder/
+Authorization: Bearer {{token}}
+Content-Type: application/xml; charset=utf-8
+```
+<?xml version="1.0" encoding="utf-8"?>
+<D:propertyupdate xmlns:D="DAV:">
+  <D:set>
+    <D:prop>
+      <X:foldermark xmlns:X="oxi:test">folder-keeps-this</X:foldermark>
+    </D:prop>
+  </D:set>
+</D:propertyupdate>
+```
+
+HTTP 207
+
+
+# Step 12c — rename the folder via MOVE. Same-parent rename
+# (intra-collection name change) — the most common shape clients
+# issue and the one that previously needed `rename_resource()`
+# to keep dead properties attached.
+MOVE {{base_url}}/webdav/dead-props-folder/
+Authorization: Bearer {{token}}
+Destination: {{base_url}}/webdav/dead-props-folder-renamed/
+
+HTTP 201
+
+
+# Step 12d — PROPFIND the new collection path; the dead property
+# must still be attached. If the folder row's id had changed
+# under MOVE (it doesn't), or if anything had reaped the
+# webdav_dead_properties row, the property would be gone.
+PROPFIND {{base_url}}/webdav/dead-props-folder-renamed/
+Authorization: Bearer {{token}}
+Depth: 0
+Content-Type: application/xml; charset=utf-8
+```
+<?xml version="1.0" encoding="utf-8"?>
+<D:propfind xmlns:D="DAV:">
+  <D:allprop/>
+</D:propfind>
+```
+
+HTTP 207
+[Asserts]
+xpath "string(//*[local-name()='foldermark'])" == "folder-keeps-this"
+
+
+# Step 12e — cleanup. The DELETE cascades the foldermark row
+# away via FK ON DELETE CASCADE, leaving the schema clean for
+# any subsequent test that touches this path.
+DELETE {{base_url}}/webdav/dead-props-folder-renamed/
 Authorization: Bearer {{token}}
 
 HTTP 204
