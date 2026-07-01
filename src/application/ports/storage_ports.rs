@@ -31,39 +31,8 @@ pub trait FileReadPort: Send + Sync + 'static {
 
     async fn get_file_or_trashed(&self, id: &str) -> Result<File, DomainError>;
 
-    /// Gets a file by its ID, scoped to a specific owner.
-    ///
-    /// Returns `NotFound` if the file does not exist **or** belongs to a
-    /// different user.  This is the primary IDOR-safe accessor — handlers
-    /// serving end-user requests should always prefer this over `get_file`.
-    async fn get_file_for_owner(&self, id: &str, owner_id: Uuid) -> Result<File, DomainError>;
-
-    /// Verifies that the file identified by `id` belongs to `owner_id`.
-    ///
-    /// Returns `Ok(())` on success or `NotFound` when the file does not
-    /// exist or belongs to another user.
-    async fn verify_file_owner(&self, id: &str, owner_id: Uuid) -> Result<(), DomainError> {
-        self.get_file_for_owner(id, owner_id).await.map(|_| ())
-    }
-
     /// Lists files in a folder.
     async fn list_files(&self, folder_id: Option<&str>) -> Result<Vec<File>, DomainError>;
-
-    /// Lists files in a folder scoped to a specific owner (SQL-level).
-    ///
-    /// Default falls back to `list_files` + in-memory filter.
-    /// Repositories should override with a direct `AND user_id = $N` query.
-    async fn list_files_for_owner(
-        &self,
-        folder_id: Option<&str>,
-        owner_id: Uuid,
-    ) -> Result<Vec<File>, DomainError> {
-        let all = self.list_files(folder_id).await?;
-        Ok(all
-            .into_iter()
-            .filter(|f| f.owner_id() == Some(owner_id))
-            .collect())
-    }
 
     /// Gets content as a stream (ideal for large files).
     async fn get_file_stream(
@@ -153,25 +122,6 @@ pub trait FileReadPort: Send + Sync + 'static {
         let start = (offset as usize).min(all.len());
         let end = (start + limit as usize).min(all.len());
         Ok(all.into_iter().skip(start).take(end - start).collect())
-    }
-
-    /// Like [`list_files_batch`], but only returns files owned by `owner_id`.
-    ///
-    /// Used by streaming WebDAV PROPFIND to list files scoped to the
-    /// authenticated user, preventing cross-user data leakage.
-    async fn list_files_batch_for_owner(
-        &self,
-        folder_id: Option<&str>,
-        owner_id: Uuid,
-        offset: i64,
-        limit: i64,
-    ) -> Result<Vec<File>, DomainError> {
-        // Default: filter in-memory (repos should override with SQL)
-        let all = self.list_files_batch(folder_id, offset, limit).await?;
-        Ok(all
-            .into_iter()
-            .filter(|f| f.owner_id() == Some(owner_id))
-            .collect())
     }
 
     /// Streams every file in the subtree rooted at `folder_id`.

@@ -928,14 +928,6 @@ mod tests {
         > {
             Ok(Box::pin(futures::stream::empty()))
         }
-
-        async fn get_file_for_owner(
-            &self,
-            id: &str,
-            _owner_id: Uuid,
-        ) -> Result<crate::domain::entities::file::File, DomainError> {
-            self.get_file(id).await
-        }
     }
 
     impl FolderRepository for MockFolderRepository {

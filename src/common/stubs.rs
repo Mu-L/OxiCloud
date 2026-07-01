@@ -145,10 +145,6 @@ impl FileReadPort for StubFileReadPort {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<File, DomainError>> + Send>>, DomainError> {
         Ok(Box::pin(futures::stream::empty()))
     }
-
-    async fn get_file_for_owner(&self, _id: &str, _owner_id: Uuid) -> Result<File, DomainError> {
-        Ok(File::default())
-    }
 }
 
 // ---------------------------------------------------------------------------

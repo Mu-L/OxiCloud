@@ -106,9 +106,12 @@ impl FolderHandler {
         Self::list_folders_scoped(service, None, &auth_user).await
     }
 
-    /// Internal helper: lists folders scoped to the authenticated user.
-    /// Uses `list_folders_for_owner` — the DB query filters by `user_id`,
-    /// so no data from other users ever leaves the database.
+    /// Internal helper: lists folders the authenticated caller can Read.
+    /// Post-PR-B, `list_root_folders_for_caller` scopes via
+    /// drive-membership grants (`role_grants` + group cascade via
+    /// `storage.caller_group_ids`) instead of the legacy `folders.user_id`
+    /// filter, so folders in shared drives the caller belongs to
+    /// surface here too.
     async fn list_folders_scoped(
         service: AppState,
         parent_id: Option<&str>,

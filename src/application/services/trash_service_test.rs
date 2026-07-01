@@ -554,15 +554,6 @@ impl FileReadPort for MockFileRepository {
     > {
         Ok(Box::pin(futures::stream::empty()))
     }
-
-    async fn get_file_for_owner(
-        &self,
-        id: &str,
-        _owner_id: Uuid,
-    ) -> std::result::Result<File, DomainError> {
-        // In this mock, ignore ownership — trash tests don't focus on ownership
-        self.get_file(id).await
-    }
 }
 
 impl FileWritePort for MockFileRepository {
