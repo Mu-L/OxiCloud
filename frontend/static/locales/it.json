@@ -821,6 +821,10 @@
       "forbid_cross_drive_move_help": "Blocca lo spostamento di file o cartelle verso un altro Drive. Non impedisce download + nuovo upload.",
       "forbid_owner_role_change": "Blocca elenco proprietari",
       "forbid_owner_role_change_help": "Solo l'amministratore può aggiungere, rimuovere o retrocedere i proprietari del Drive mentre questa regola è attiva.",
+      "include_in_photo_index": "Includi in Foto",
+      "include_in_photo_index_help": "Mostra i file di immagine e video di questo Drive nella timeline Foto e sulla mappa Luoghi. I Drive personali predefiniti sono inclusi automaticamente; attiva questa opzione per i Drive condivisi che contengono davvero foto (ad es. «Foto famiglia»).",
+      "include_in_music_index": "Includi in Musica",
+      "include_in_music_index_help": "Includi i file audio di questo Drive nella libreria Musica. I Drive personali predefiniti sono inclusi automaticamente; attiva questa opzione per i Drive condivisi che contengono davvero una raccolta musicale (ad es. «Musica famiglia», «Collaborazione band»).",
       "implied_by_forbid_sharing": "Già imposto da «Vieta condivisione per risorsa»."
     }
   },

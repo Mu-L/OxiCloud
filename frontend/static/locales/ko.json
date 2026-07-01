@@ -821,6 +821,10 @@
       "forbid_cross_drive_move_help": "파일이나 폴더를 다른 드라이브로 이동하는 것을 차단합니다. 다운로드 + 재업로드는 막지 않습니다.",
       "forbid_owner_role_change": "소유자 명단 잠금",
       "forbid_owner_role_change_help": "이 설정이 켜져 있는 동안 관리자만 드라이브 소유자를 추가, 제거, 강등할 수 있습니다.",
+      "include_in_photo_index": "사진에 포함",
+      "include_in_photo_index_help": "이 Drive의 이미지 및 동영상 파일을 사진 타임라인과 장소 지도에 표시합니다. 기본 개인 Drive는 자동으로 포함됩니다. 실제로 사진이 있는 공유 Drive에서 켜세요 (예: 「가족 사진」).",
+      "include_in_music_index": "음악에 포함",
+      "include_in_music_index_help": "이 Drive의 오디오 파일을 음악 라이브러리에 포함합니다. 기본 개인 Drive는 자동으로 포함됩니다. 실제로 음악 컬렉션이 있는 공유 Drive에서 켜세요 (예: 「가족 음악」, 「밴드 협업」).",
       "implied_by_forbid_sharing": "이미 「리소스별 공유 금지」에 의해 적용됨."
     }
   },

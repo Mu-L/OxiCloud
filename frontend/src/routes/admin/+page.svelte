@@ -69,8 +69,10 @@
 	import Icon from '$lib/icons/Icon.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import OwnerAvatarStack from '$lib/components/OwnerAvatarStack.svelte';
+	import PolicyList from '$lib/components/PolicyList.svelte';
 	import UserVignette from '$lib/components/UserVignette.svelte';
 	import { t } from '$lib/i18n/index.svelte';
+	import { readPolicyBool } from '$lib/utils/drivePolicies';
 	import { session } from '$lib/stores/session.svelte';
 	import { drives as drivesStore } from '$lib/stores/drives.svelte';
 	import { ui } from '$lib/stores/ui.svelte';
@@ -1091,14 +1093,6 @@
 	let managePoliciesError = $state<string | null>(null);
 	let managePoliciesBusy = $state(false);
 
-	function readPolicyBool(p: Record<string, unknown>, key: string): boolean {
-		// JSONB returns unknown keys verbatim; default missing/non-bool to
-		// `false` so a freshly-created drive (empty `{}` bag) shows every
-		// toggle off without ad-hoc nullish handling per row.
-		const v = p[key];
-		return typeof v === 'boolean' ? v : false;
-	}
-
 	function openManagePolicies(d: Drive) {
 		managePoliciesDrive = d;
 		managePoliciesError = null;
@@ -1142,105 +1136,10 @@
 		}
 	}
 
-	// Policy keys + labels for the toggle list. Mirrors the entity field
-	// order in `src/domain/entities/drive.rs` so a future 6th policy lands
-	// here as one literal-array push.
-	//
-	// `impliedBy` captures the semantic dependency between policies: when
-	// the named parent policy is on, this subordinate gate is moot
-	// (its enforcement is already covered by the broader rule). The UI
-	// disables the toggle and shows a hint so the admin understands the
-	// hierarchy without our having to actually mutate the stored value —
-	// their preference is preserved for the moment they relax the parent.
-	const policyDefs: Array<{
-		key: keyof Required<DrivePoliciesPartial>;
-		label: () => string;
-		help: () => string;
-		impliedBy?: keyof Required<DrivePoliciesPartial>;
-		impliedHint?: () => string;
-	}> = [
-		{
-			key: 'forbid_sharing',
-			label: () => t('admin.drive_policy.forbid_sharing', 'Forbid per-resource sharing'),
-			help: () =>
-				t(
-					'admin.drive_policy.forbid_sharing_help',
-					'Block per-file / per-folder grants (covers public links and external sharing as well). Drive-level membership still works.'
-				)
-		},
-		{
-			key: 'forbid_public_links',
-			label: () => t('admin.drive_policy.forbid_public_links', 'Forbid public links'),
-			help: () =>
-				t(
-					'admin.drive_policy.forbid_public_links_help',
-					'Block anonymous share links on resources in this drive.'
-				),
-			impliedBy: 'forbid_sharing',
-			impliedHint: () =>
-				t(
-					'admin.drive_policy.implied_by_forbid_sharing',
-					'Already enforced by Forbid per-resource sharing.'
-				)
-		},
-		{
-			key: 'forbid_external_sharing',
-			label: () => t('admin.drive_policy.forbid_external_sharing', 'Forbid external sharing'),
-			help: () =>
-				t(
-					'admin.drive_policy.forbid_external_sharing_help',
-					'Block grants to external users (email invitations and pre-existing external accounts).'
-				),
-			impliedBy: 'forbid_sharing',
-			impliedHint: () =>
-				t(
-					'admin.drive_policy.implied_by_forbid_sharing',
-					'Already enforced by Forbid per-resource sharing.'
-				)
-		},
-		{
-			key: 'forbid_cross_drive_move',
-			label: () => t('admin.drive_policy.forbid_cross_drive_move', 'Forbid cross-drive move'),
-			help: () =>
-				t(
-					'admin.drive_policy.forbid_cross_drive_move_help',
-					'Block moving files or folders out to another drive. Does not stop download + re-upload.'
-				)
-		},
-		{
-			key: 'forbid_owner_role_change',
-			label: () => t('admin.drive_policy.forbid_owner_role_change', 'Lock Owner roster'),
-			help: () =>
-				t(
-					'admin.drive_policy.forbid_owner_role_change_help',
-					'Only admin can add, remove, or demote drive Owners while this is on.'
-				)
-		},
-		{
-			key: 'include_in_photo_index',
-			label: () => t('admin.drive_policy.include_in_photo_index', 'Include in Photos'),
-			help: () =>
-				t(
-					'admin.drive_policy.include_in_photo_index_help',
-					'Show image and video files from this drive in the Photos timeline and on the Places map. Default personal drives are opted in automatically; turn on for shared drives that genuinely hold photos (e.g. "Family Photos").'
-				)
-		},
-		{
-			key: 'include_in_music_index',
-			label: () => t('admin.drive_policy.include_in_music_index', 'Include in Music'),
-			help: () =>
-				t(
-					'admin.drive_policy.include_in_music_index_help',
-					'Include audio files from this drive in the Music library. Default personal drives are opted in automatically; turn on for shared drives that genuinely hold a music collection (e.g. "Family Music", "Band Collaboration").'
-				)
-		}
-	];
-
-	// Reactive helper for the template: is this policy currently
-	// disabled because its parent policy implies it?
-	function isPolicyImplied(def: (typeof policyDefs)[number]): boolean {
-		return def.impliedBy !== undefined && managePoliciesDraft[def.impliedBy];
-	}
+	// Policy definitions live in `$lib/utils/drivePolicies` so the same
+	// list drives the admin "Manage policies" modal AND the read-only
+	// summary on `/config/drive/{uuid}`. Adding a policy is one literal-
+	// array push there + one field in `DrivePolicies` in `types.ts`.
 
 	// Admin-driven delete-drive flow (D3b). Guarded by the confirm modal
 	// because the action is destructive and irreversible. The backend
@@ -2869,30 +2768,14 @@
 					'Policies are admin-only — drive owners cannot mutate them. Each toggle controls one enforcement gate.'
 				)}
 			</p>
-			<ul class="policy-list">
-				{#each policyDefs as def (def.key)}
-					{@const implied = isPolicyImplied(def)}
-					<li class="policy-row" class:policy-row--implied={implied}>
-						<label class="policy-row__label">
-							<span class="policy-row__head">
-								<input
-									type="checkbox"
-									data-testid={`admin-policy-${def.key}`}
-									bind:checked={managePoliciesDraft[def.key]}
-									disabled={managePoliciesBusy || implied}
-								/>
-								<span class="policy-row__title">{def.label()}</span>
-							</span>
-							<span class="policy-row__help muted">
-								{def.help()}
-								{#if implied && def.impliedHint}
-									<span class="policy-row__implied">{def.impliedHint()}</span>
-								{/if}
-							</span>
-						</label>
-					</li>
-				{/each}
-			</ul>
+			<PolicyList
+				values={managePoliciesDraft}
+				busy={managePoliciesBusy}
+				testIdPrefix="admin-policy"
+				onchange={(key, next) => {
+					managePoliciesDraft[key] = next;
+				}}
+			/>
 			{#if managePoliciesError}
 				<p class="status--error">{managePoliciesError}</p>
 			{/if}
@@ -3904,76 +3787,10 @@
 		white-space: nowrap;
 	}
 
-	/* D5 policy editor (admin-only). Same row shape as `.owners-list__row`
-	   so the modal feels consistent; the label inside is a flex row so the
-	   checkbox sits beside the text instead of stacking vertically. */
-	.policy-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-2);
-	}
-
-	.policy-row {
-		padding: var(--space-2);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-	}
-
-	.policy-row__label {
-		/* Column layout: head (checkbox + title inline) on top, help
-		   text underneath. The checkbox + title share a row via
-		   `.policy-row__head` so the title sits beside the checkbox
-		   instead of wrapping to its own line. */
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-1);
-		cursor: pointer;
-		margin: 0;
-	}
-
-	.policy-row__head {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		min-width: 0;
-	}
-
-	.policy-row__head input[type='checkbox'] {
-		margin: 0;
-		flex-shrink: 0;
-	}
-
-	.policy-row__title {
-		font-weight: 600;
-	}
-
-	.policy-row__help {
-		/* Indent the help text under the title so the relationship is
-		   visually obvious. Width = checkbox width + the head's gap. */
-		padding-left: calc(1rem + var(--space-2));
-	}
-
-	/* Implied state — the row's gate is already covered by a broader
-	   policy (e.g. forbid_public_links when forbid_sharing is on).
-	   Visually dimmed so the admin understands they don't need to
-	   toggle it; the stored value is preserved for the moment they
-	   relax the parent policy. */
-	.policy-row--implied {
-		opacity: 0.55;
-	}
-
-	.policy-row--implied .policy-row__label {
-		cursor: not-allowed;
-	}
-
-	.policy-row__implied {
-		display: block;
-		margin-top: var(--space-1);
-		font-style: italic;
-	}
+	/* Policy list styles moved to `PolicyList.svelte`. The modal now
+	   embeds `<PolicyList bind:values={managePoliciesDraft} … />` and the
+	   read-only summary on `/config/drive/{uuid}` reuses the same
+	   component. */
 
 	/* Drives table action cell — same shape as `.actions` plus a fixed
 	   3-column grid so the [users] [policies] [delete] icons line up
