@@ -22,6 +22,7 @@ use crate::application::adapters::webdav_adapter::{
 };
 use crate::application::dtos::file_dto::FileDto;
 use crate::application::dtos::folder_dto::FolderDto;
+use crate::application::ports::authorization_ports::AuthorizationEngine;
 use crate::application::ports::file_ports::FileRetrievalUseCase;
 use crate::application::ports::file_ports::{FileManagementUseCase, FileUploadUseCase};
 use crate::application::ports::folder_ports::FolderUseCase;
@@ -29,7 +30,6 @@ use crate::application::ports::storage_ports::StorageUsagePort;
 use crate::application::services::file_retrieval_service::FileRetrievalService;
 use crate::application::services::folder_service::FolderService;
 use crate::common::di::AppState;
-use crate::application::ports::authorization_ports::AuthorizationEngine;
 use crate::domain::repositories::drive_repository::DriveRepository;
 use crate::domain::services::authorization::{Permission, Resource, Subject};
 use crate::infrastructure::services::path_resolver_service::ResolvedResource;
@@ -154,7 +154,6 @@ fn extract_user(req: &Request<Body>) -> Result<AuthUser, AppError> {
         .map(AuthUser)
         .ok_or_else(|| AppError::unauthorized("Authentication required"))
 }
-
 
 /**
  * Creates and returns the WebDAV router with all required endpoints.

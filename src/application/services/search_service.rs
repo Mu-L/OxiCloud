@@ -328,7 +328,11 @@ impl SearchService {
                 }
             };
             match authz
-                .check(Subject::User(user_id), Permission::Read, Resource::File(file_uuid))
+                .check(
+                    Subject::User(user_id),
+                    Permission::Read,
+                    Resource::File(file_uuid),
+                )
                 .await
             {
                 Ok(true) => verified.push(hit),

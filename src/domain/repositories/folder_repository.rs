@@ -179,31 +179,35 @@ pub trait FolderRepository: Send + Sync + 'static {
         Ok(Vec::new())
     }
 
-    /// Lists all descendant folders in a subtree (ltree-based).
+    /// Lists all descendant folders in a subtree (ltree-based), scoped
+    /// to drives the caller can read.
     ///
-    /// Returns all folders whose lpath is a descendant of the given folder's
-    /// lpath. Used for recursive search — O(1) SQL via GiST index instead
-    /// of O(N) recursive traversal.
+    /// Returns all folders whose lpath is a descendant of the given
+    /// folder's lpath. Used for recursive search — O(1) SQL via GiST
+    /// index instead of O(N) recursive traversal. Drive-membership
+    /// filtering (including group cascade via `caller_group_ids`) is
+    /// applied inline in the SQL.
     ///
     /// The default implementation returns an empty vec (stubs / mocks).
     async fn list_descendant_folders(
         &self,
         folder_id: &str,
         name_contains: Option<&str>,
-        user_id: Uuid,
+        caller_id: Uuid,
     ) -> Result<Vec<Folder>, DomainError> {
-        let _ = (folder_id, name_contains, user_id);
+        let _ = (folder_id, name_contains, caller_id);
         Ok(Vec::new())
     }
 
-    /// Search folders with SQL-level filtering by name, user, and scope.
+    /// Search folders with SQL-level filtering by name and scope,
+    /// restricted to drives the caller can read.
     ///
     /// - **Non-recursive** (`recursive = false`): searches direct children of
     ///   `parent_id` (or root folders when `None`).
     /// - **Recursive with `parent_id`**: delegates to `list_descendant_folders`
     ///   (ltree GiST-indexed scan).
-    /// - **Recursive without `parent_id`**: searches ALL folders owned by
-    ///   `user_id` with optional name filter in SQL.
+    /// - **Recursive without `parent_id`**: searches ALL folders in drives
+    ///   the caller can read, with optional name filter in SQL.
     ///
     /// The default implementation falls back to `list_folders` + in-memory
     /// filter so that stubs and mocks compile without changes.
@@ -211,13 +215,13 @@ pub trait FolderRepository: Send + Sync + 'static {
         &self,
         parent_id: Option<&str>,
         name_contains: Option<&str>,
-        user_id: Uuid,
+        caller_id: Uuid,
         recursive: bool,
     ) -> Result<Vec<Folder>, DomainError> {
         // Recursive with folder_id → use optimised ltree scan
         if recursive && let Some(fid) = parent_id {
             return self
-                .list_descendant_folders(fid, name_contains, user_id)
+                .list_descendant_folders(fid, name_contains, caller_id)
                 .await;
         }
         // Fallback: load + filter in memory (stubs / mocks)

@@ -43,6 +43,37 @@ use crate::domain::services::path_service::StoragePath;
 use crate::infrastructure::services::dedup_service::DedupService;
 use uuid::Uuid;
 
+/// SQL `EXISTS (…)` predicate — true when the caller (bound to `$1`) has
+/// any active `role_grants` on the drive owning `fi` (the aliased file
+/// row). Group memberships (direct + transitive) are expanded inline via
+/// `storage.caller_group_ids($1)` (recursive; see migration
+/// `20260901000002_caller_group_ids_function.sql`).
+///
+/// Used by every drive-scoped file search query in this repo:
+/// - `search_files_paginated`
+/// - `search_files_in_subtree`
+///
+/// **Alias contract**: queries splicing this in MUST alias
+/// `storage.files` as `fi`. `$1` is reserved for `caller_id`; other bind
+/// params start at `$2`.
+///
+/// This mirrors — but is intentionally not shared with — the folder
+/// variant in `folder_db_repository.rs` (aliased `fo.drive_id`) and the
+/// drive-listing shapes in `drive_pg_repository`/`list_media_files`.
+/// When the grant model changes, update all sites in parallel.
+const CALLER_CAN_READ_DRIVE: &str = "EXISTS (\
+        SELECT 1 \
+          FROM storage.role_grants g \
+         WHERE g.resource_type = 'drive' \
+           AND g.resource_id   = fi.drive_id \
+           AND (g.expires_at IS NULL OR g.expires_at > NOW()) \
+           AND ( \
+                 (g.subject_type = 'user'  AND g.subject_id = $1) \
+              OR (g.subject_type = 'group' AND g.subject_id IN \
+                      (SELECT storage.caller_group_ids($1))) \
+               ) \
+    )";
+
 /// Type alias for file metadata rows from SQL queries.
 /// Fields: id, name, folder_id, folder_path, size, mime_type,
 /// created_at, updated_at, blob_hash, user_id, created_by, updated_by.
@@ -200,7 +231,7 @@ impl FileBlobReadRepository {
         &self,
         ids: &[String],
         criteria: &SearchCriteriaDto,
-        user_id: Uuid,
+        caller_id: Uuid,
     ) -> Result<Vec<File>, DomainError> {
         // Index hits are externally produced strings — parse defensively.
         let uuid_ids: Vec<Uuid> = ids.iter().filter_map(|id| id.parse().ok()).collect();
@@ -208,9 +239,15 @@ impl FileBlobReadRepository {
             return Ok(Vec::new());
         }
 
+        // Post-PR-B: drive-membership scoping via
+        // [`CALLER_CAN_READ_DRIVE`] (bound to `$1`) replaces the legacy
+        // `fi.user_id = $caller` predicate. Group grants are honoured
+        // inline through `storage.caller_group_ids`.
+        //
+        // Bind order: $1 = caller_id, $2 = ids array, $3.. = criteria.
         let mut conditions: Vec<String> = vec![
-            "fi.id = ANY($1)".to_string(),
-            "fi.user_id = $2".to_string(),
+            CALLER_CAN_READ_DRIVE.to_string(),
+            "fi.id = ANY($2)".to_string(),
             "fi.is_trashed = false".to_string(),
         ];
         let mut bind_idx = 2u32;
@@ -242,8 +279,8 @@ impl FileBlobReadRepository {
         );
 
         let mut query = sqlx::query_as::<_, FileRow>(&sql)
-            .bind(uuid_ids)
-            .bind(user_id);
+            .bind(caller_id)
+            .bind(uuid_ids);
         if let Some(folder_id) = criteria.folder_id.as_deref() {
             query = query.bind(folder_id);
         }
@@ -1263,11 +1300,15 @@ impl FileReadPort for FileBlobReadRepository {
     /// Uses `COUNT(*) OVER()` window function to return the total matching
     /// count alongside the paginated rows in a **single query** — no separate
     /// COUNT round-trip.
+    ///
+    /// Post-PR-B: scoped by drive-membership (via [`CALLER_CAN_READ_DRIVE`])
+    /// rather than the legacy `fi.user_id = $caller` predicate. Group
+    /// grants are honoured inline through `storage.caller_group_ids`.
     async fn search_files_paginated(
         &self,
         folder_id: Option<&str>,
         criteria: &SearchCriteriaDto,
-        user_id: Uuid,
+        caller_id: Uuid,
     ) -> Result<(Vec<File>, usize), DomainError> {
         let offset = criteria.offset as i64;
         let limit = criteria.limit as i64;
@@ -1285,10 +1326,10 @@ impl FileReadPort for FileBlobReadRepository {
 
         // ── Build dynamic WHERE + bind indices ───────────────────────────
         let mut conditions: Vec<String> = vec![
-            "fi.user_id = $1".to_string(),
+            CALLER_CAN_READ_DRIVE.to_string(),
             "fi.is_trashed = false".to_string(),
         ];
-        let mut bind_idx = 1u32; // $1 = user_id
+        let mut bind_idx = 1u32; // $1 = caller_id
 
         if folder_id.is_some() {
             bind_idx += 1;
@@ -1341,7 +1382,7 @@ impl FileReadPort for FileBlobReadRepository {
                 i64,
             ),
         >(&sql)
-        .bind(user_id);
+        .bind(caller_id);
 
         if let Some(fid) = folder_id {
             query = query.bind(fid);
@@ -1386,16 +1427,20 @@ impl FileReadPort for FileBlobReadRepository {
     ///
     /// Uses `COUNT(*) OVER()` to return the total count alongside the
     /// paginated rows — no separate COUNT round-trip.
+    ///
+    /// Post-PR-B: scoped by drive-membership (via [`CALLER_CAN_READ_DRIVE`])
+    /// rather than the legacy `fi.user_id = $caller` predicate — same
+    /// group-cascade semantics as `search_files_paginated`.
     async fn search_files_in_subtree(
         &self,
         root_folder_id: Option<&str>,
         criteria: &SearchCriteriaDto,
-        user_id: Uuid,
+        caller_id: Uuid,
     ) -> Result<(Vec<File>, usize), DomainError> {
         // When no root folder specified, delegate to existing paginated search
         let root_id = match root_folder_id {
             None => {
-                return self.search_files_paginated(None, criteria, user_id).await;
+                return self.search_files_paginated(None, criteria, caller_id).await;
             }
             Some(id) => id,
         };
@@ -1416,10 +1461,10 @@ impl FileReadPort for FileBlobReadRepository {
 
         // ── Build dynamic WHERE clauses ──
         let mut conditions = Vec::new();
-        let mut bind_idx = 2u32; // $1 = user_id, $2 = root_folder_id
+        let mut bind_idx = 2u32; // $1 = caller_id, $2 = root_folder_id
 
         conditions.push("fi.is_trashed = false".to_string());
-        conditions.push("fi.user_id = $1".to_string());
+        conditions.push(CALLER_CAN_READ_DRIVE.to_string());
         conditions.push(
             "fo.lpath <@ (SELECT lpath FROM storage.folders WHERE id = $2::uuid)".to_string(),
         );
@@ -1472,7 +1517,7 @@ impl FileReadPort for FileBlobReadRepository {
                 i64,
             ),
         >(&sql)
-        .bind(user_id)
+        .bind(caller_id)
         .bind(root_id);
 
         if let Some(name) = &criteria.name_contains
@@ -1513,10 +1558,10 @@ impl FileReadPort for FileBlobReadRepository {
         &self,
         folder_id: Option<&str>,
         criteria: &SearchCriteriaDto,
-        user_id: Uuid,
+        caller_id: Uuid,
     ) -> Result<usize, DomainError> {
         let (_, count) = self
-            .search_files_paginated(folder_id, criteria, user_id)
+            .search_files_paginated(folder_id, criteria, caller_id)
             .await?;
         Ok(count)
     }

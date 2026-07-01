@@ -195,7 +195,10 @@ pub trait FileReadPort: Send + Sync + 'static {
     /// # Arguments
     /// * `folder_id` - Optional folder ID to scope the search (for recursive search, pass None)
     /// * `criteria` - Search criteria including name_contains, file_types, date ranges, size ranges
-    /// * `user_id` - User ID for ownership filtering
+    /// * `caller_id` - Caller user id — scoped by drive-membership grants
+    ///   (`role_grants` on `resource_type='drive'`) rather than the legacy
+    ///   `files.user_id` column. Group memberships (direct + transitive)
+    ///   are expanded inline via `storage.caller_group_ids($caller)`.
     ///
     /// # Returns
     /// A tuple of (files, total_count) where files are paginated and filtered
@@ -203,36 +206,39 @@ pub trait FileReadPort: Send + Sync + 'static {
         &self,
         folder_id: Option<&str>,
         criteria: &SearchCriteriaDto,
-        user_id: Uuid,
+        caller_id: Uuid,
     ) -> Result<(Vec<File>, usize), DomainError>;
 
     /// Search files recursively in a folder subtree using ltree.
     ///
     /// When `root_folder_id` is Some, uses ltree descendant queries to find
-    /// all files within the subtree rooted at that folder. When None, searches
-    /// all files for the user. This replaces the O(N) recursive spawn-per-folder
-    /// approach with O(1) SQL queries.
+    /// all files within the subtree rooted at that folder. When None,
+    /// delegates to `search_files_paginated`.
+    ///
+    /// Post-PR-B: scoped by drive-membership grants (same semantics as
+    /// `search_files_paginated`), not by `files.user_id`.
     ///
     /// Returns a tuple of (matching files, total count for pagination).
     async fn search_files_in_subtree(
         &self,
         root_folder_id: Option<&str>,
         criteria: &SearchCriteriaDto,
-        user_id: Uuid,
+        caller_id: Uuid,
     ) -> Result<(Vec<File>, usize), DomainError> {
         // Default: delegate to paginated search (non-recursive fallback)
-        self.search_files_paginated(root_folder_id, criteria, user_id)
+        self.search_files_paginated(root_folder_id, criteria, caller_id)
             .await
     }
 
     /// Count files matching the search criteria (without loading them).
     ///
     /// Used for pagination metadata without fetching the actual files.
+    /// Same drive-membership scoping as `search_files_paginated`.
     async fn count_files(
         &self,
         folder_id: Option<&str>,
         criteria: &SearchCriteriaDto,
-        user_id: Uuid,
+        caller_id: Uuid,
     ) -> Result<usize, DomainError>;
 
     /// Return up to `limit` files whose name contains `query` (case-insensitive).

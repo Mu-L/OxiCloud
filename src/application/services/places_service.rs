@@ -9,9 +9,10 @@ use crate::infrastructure::repositories::pg::FileBlobReadRepository;
 /// "Places" use case: the caller's geotagged photos aggregated into map
 /// clusters.
 ///
-/// Post-§15 the surface follows the Photos scope: default personal drive
-/// + drives where `policies.include_in_photo_index = true` AND caller
-/// has Read. Group-membership expansion is handled inline by
+/// Post-§15 the surface follows the Photos scope: drives where the
+/// caller has Read AND `policies.include_in_photo_index = true`
+/// (default personal drives materialise the flag at creation).
+/// Group-membership expansion is handled inline by
 /// `storage.caller_group_ids(caller)` inside the repo's SQL, so this
 /// service is a thin coordinate-math wrapper — no engine dependency.
 pub struct PlacesService {

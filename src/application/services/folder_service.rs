@@ -431,23 +431,23 @@ impl FolderUseCase for FolderService {
             return self.list_folders_paginated(parent_id, &pagination).await;
         } else {
             let (folders, total_items) = self
-            .folder_storage
-            .list_root_folders_for_caller_paginated(
-                owner_id,
-                pagination.offset(),
-                pagination.limit(),
-                true,
-            )
-            .await
-            .map_err(|e| {
-                DomainError::internal_error(
-                    "FolderStorage",
-                    format!(
-                        "Failed to list root folders for caller '{}' with pagination: {}",
-                        owner_id, e
-                    ),
+                .folder_storage
+                .list_root_folders_for_caller_paginated(
+                    owner_id,
+                    pagination.offset(),
+                    pagination.limit(),
+                    true,
                 )
-            })?;
+                .await
+                .map_err(|e| {
+                    DomainError::internal_error(
+                        "FolderStorage",
+                        format!(
+                            "Failed to list root folders for caller '{}' with pagination: {}",
+                            owner_id, e
+                        ),
+                    )
+                })?;
 
             let total = total_items.unwrap_or(folders.len());
 
