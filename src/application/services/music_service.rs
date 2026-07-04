@@ -5,17 +5,31 @@ use crate::application::dtos::playlist_dto::{
     AddTracksDto, AudioMetadataDto, CreatePlaylistDto, PlaylistDto, PlaylistItemDto,
     PlaylistQueryDto, PlaylistShareInfoDto, ReorderTracksDto, SharePlaylistDto, UpdatePlaylistDto,
 };
+use crate::application::ports::authorization_ports::AuthorizationEngine;
 use crate::application::ports::music_ports::{MusicStoragePort, MusicUseCase};
 use crate::common::errors::{DomainError, ErrorKind};
+use crate::domain::services::authorization::{Permission, Resource, Subject};
 use crate::infrastructure::adapters::music_storage_adapter::MusicStorageAdapter;
+use crate::infrastructure::services::pg_acl_engine::PgAclEngine;
 
 pub struct MusicService {
     storage: Arc<MusicStorageAdapter>,
+    /// ReBAC engine — Round 1 fix from `docs/plan/authz_audit/`.
+    /// Currently used ONLY by `get_audio_metadata` to close the
+    /// cross-tenant IDOR (`_user_id: Uuid` was deliberately unused).
+    /// The full engine rewrite (Round 3 — `Resource::Playlist` +
+    /// authz.require on every playlist verb) is a separate PR;
+    /// don't extend the bespoke `user_has_access` / `user_can_write`
+    /// pattern to new methods, use `require` here instead.
+    authorization: Arc<PgAclEngine>,
 }
 
 impl MusicService {
-    pub fn new(storage: Arc<MusicStorageAdapter>) -> Self {
-        Self { storage }
+    pub fn new(storage: Arc<MusicStorageAdapter>, authorization: Arc<PgAclEngine>) -> Self {
+        Self {
+            storage,
+            authorization,
+        }
     }
 }
 
@@ -375,10 +389,24 @@ impl MusicUseCase for MusicService {
     async fn get_audio_metadata(
         &self,
         file_id: &str,
-        _user_id: Uuid,
+        caller_id: Uuid,
     ) -> Result<Option<AudioMetadataDto>, DomainError> {
         let file_uuid = Uuid::parse_str(file_id)
             .map_err(|_| DomainError::new(ErrorKind::InvalidInput, "Music", "Invalid file ID"))?;
+        // AuthZ pre-read: caller must have `Read` on the underlying
+        // audio file. Before this check the endpoint returned
+        // metadata for any known file id (cross-tenant IDOR — the
+        // `_user_id` parameter was deliberately unused). `require`
+        // returns 404 on denial to match the anti-enum shape used
+        // everywhere else. Post-Drive AuthZ audit fix (Round 1
+        // BLOCKER — `docs/plan/authz_audit/rest_storage.md`).
+        self.authorization
+            .require(
+                Subject::User(caller_id),
+                Permission::Read,
+                Resource::File(file_uuid),
+            )
+            .await?;
         self.storage.get_audio_metadata(&file_uuid).await
     }
 }

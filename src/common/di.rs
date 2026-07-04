@@ -1865,7 +1865,7 @@ impl AppServiceFactory {
                     audio_metadata_repo,
                 ),
             );
-            let music_svc = Arc::new(MusicService::new(music_storage));
+            let music_svc = Arc::new(MusicService::new(music_storage, authorization.clone()));
             app_state.music_service = Some(music_svc);
             tracing::info!("Music service initialized");
         }
