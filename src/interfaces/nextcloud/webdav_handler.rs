@@ -80,6 +80,78 @@ pub fn nc_to_internal_path(chroot: &FolderDto, subpath: &str) -> Result<String, 
     Ok(format!("{}/{}", chroot.path, subpath))
 }
 
+/// Strip the caller's chroot prefix from an internal
+/// `storage.folders.path` so the DAV subpath surfaced to the NC
+/// client is chroot-relative. Handles multi-segment chroots
+/// correctly (e.g. a future `"Personal/folderA/subfolder"` chroot
+/// against an item at `"Personal/folderA/subfolder/file.txt"`
+/// returns `"file.txt"`, not `"folderA/subfolder/file.txt"`).
+///
+/// Returns `None` when the path is NOT inside the chroot. Callers
+/// should skip such items from the response (they belong to a
+/// different drive or the caller's read scope has drifted) — do NOT
+/// fall back to a naive segment strip, which would surface a
+/// misleading display path.
+///
+/// **Defensive but not an AuthZ boundary.** Every current caller
+/// reaches items through a `_with_perms` method upstream that
+/// already gates Read; this helper is the display-string layer
+/// that also serves as a "does this item belong under the chroot"
+/// sanity check.
+pub fn strip_chroot_prefix<'a>(chroot: &FolderDto, internal_path: &'a str) -> Option<&'a str> {
+    // Normalize both sides: `FolderDto.path` comes from
+    // `StoragePath::to_string()` which prepends a leading `/`
+    // (e.g. `"/Personal"`), but DB-side paths coming from
+    // `storage.folders.path` (composed by the `compute_folder_path`
+    // trigger) never have a leading slash. Trim both so `"/Personal"`
+    // vs `"Personal/g9-tree"` matches the intended prefix.
+    let root = chroot.path.trim_matches('/');
+    if root.is_empty() {
+        // Guard against a mis-set chroot with an empty root path —
+        // stripping "" from anything would return the whole path.
+        return None;
+    }
+    let path = internal_path.trim_start_matches('/');
+    let rest = path.strip_prefix(root)?;
+    // Reject a partial prefix match — a chroot of "Personal" must
+    // not match an item at "PersonalSecrets/…".
+    match rest.strip_prefix('/') {
+        Some(subpath) => Some(subpath),
+        // Item path equals the chroot exactly — the chroot itself
+        // (i.e. a folder) is not a legitimate response item, so
+        // treat as an empty subpath.
+        None if rest.is_empty() => Some(""),
+        None => None,
+    }
+}
+
+/// Naive fallback: strip the first path segment from an internal
+/// `storage.folders.path`. Post-D0 every path starts with its drive's
+/// root folder name (single segment), so for the current schema this
+/// gives the drive-relative subpath.
+///
+/// Use this ONLY when the caller doesn't have a chroot in scope
+/// (e.g. OCS unified search, whose results legitimately span every
+/// drive the caller has Read on — no single chroot covers them all).
+/// Every path-scoped NC handler that DOES have `session` in scope
+/// should prefer [`strip_chroot_prefix`] — it validates the item
+/// belongs under the chroot instead of trusting the schema
+/// invariant, and it survives a future composed chroot like
+/// `"Personal/folderA/subfolder"`.
+///
+/// **Not an AuthZ boundary.** Same caveat as `strip_chroot_prefix`
+/// — AuthZ is enforced upstream via `_with_perms` methods; this
+/// helper only formats display strings.
+///
+/// Returns `""` when the path is a single segment (i.e. the drive
+/// root itself, which is never a legitimate item target).
+pub fn strip_drive_root_segment(internal_path: &str) -> &str {
+    match internal_path.split_once('/') {
+        Some((_root, rest)) => rest,
+        None => "",
+    }
+}
+
 /// Build the Nextcloud DAV href for a **collection** (folder). Always
 /// terminates with `/` — RFC 4918 §5.2 requires collection URLs to end
 /// in a slash, and the Nextcloud desktop client strictly enforces this
@@ -871,7 +943,7 @@ async fn handle_put(
     // Single streaming path — handles both update and create internally,
     // swapping the file row onto the already-ingested blob.
     let stored = upload_service
-        .update_file_streaming(
+        .update_file_streaming_with_perms(
             &internal_path,
             chroot.drive_id,
             ingested.stored(),
@@ -1871,6 +1943,92 @@ mod tests {
             nc_to_internal_path(&chroot, "report.pdf").unwrap(),
             "My Folder - alice/ext/report.pdf"
         );
+    }
+
+    // ── strip_chroot_prefix ──
+    //
+    // Regression guard for the "chroot.path has a leading slash from
+    // StoragePath::to_string() but DB-side original_path doesn't" trap
+    // that broke the NC trashbin PROPFIND after Round 2 rolled out.
+    // Also pins the composed-chroot behaviour Ed asked about.
+
+    #[test]
+    fn strip_chroot_prefix_default_drive_root() {
+        // FolderDto.path carries a leading slash (StoragePath Display);
+        // DB paths do not. Both must normalise to the same prefix.
+        let chroot = stub_folder("/Personal");
+        assert_eq!(
+            strip_chroot_prefix(&chroot, "Personal/g9-tree"),
+            Some("g9-tree")
+        );
+    }
+
+    #[test]
+    fn strip_chroot_prefix_deep_path() {
+        let chroot = stub_folder("/Personal");
+        assert_eq!(
+            strip_chroot_prefix(&chroot, "Personal/inner/deep.txt"),
+            Some("inner/deep.txt")
+        );
+    }
+
+    #[test]
+    fn strip_chroot_prefix_out_of_chroot_returns_none() {
+        // Items on a different drive (whose root isn't "Personal")
+        // must NOT be surfaced under the caller's chroot.
+        let chroot = stub_folder("/Personal");
+        assert_eq!(strip_chroot_prefix(&chroot, "team-drive/report.pdf"), None);
+    }
+
+    #[test]
+    fn strip_chroot_prefix_rejects_partial_prefix_match() {
+        // "Personal" is a prefix substring of "PersonalSecrets" but
+        // NOT a path-segment prefix — must reject.
+        let chroot = stub_folder("/Personal");
+        assert_eq!(
+            strip_chroot_prefix(&chroot, "PersonalSecrets/foo.txt"),
+            None
+        );
+    }
+
+    #[test]
+    fn strip_chroot_prefix_composed_chroot() {
+        // The future composed-chroot case Ed raised: chroot points at
+        // a subfolder inside a drive. The strip must remove the ENTIRE
+        // composed prefix, not just the first segment.
+        let chroot = stub_folder("/Personal/folderA/subfolder");
+        assert_eq!(
+            strip_chroot_prefix(&chroot, "Personal/folderA/subfolder/foo.txt"),
+            Some("foo.txt")
+        );
+    }
+
+    #[test]
+    fn strip_chroot_prefix_composed_chroot_sibling_leaks_blocked() {
+        // Same composed chroot, but the item lives in a sibling
+        // subfolder — must be rejected, not naively strip 1 segment.
+        let chroot = stub_folder("/Personal/folderA/subfolder");
+        assert_eq!(
+            strip_chroot_prefix(&chroot, "Personal/folderA/other/foo.txt"),
+            None
+        );
+    }
+
+    #[test]
+    fn strip_chroot_prefix_chroot_root_itself() {
+        // Item path equals chroot exactly — legitimate for a PROPFIND
+        // Depth:0 on the chroot itself. Subpath is empty.
+        let chroot = stub_folder("/Personal");
+        assert_eq!(strip_chroot_prefix(&chroot, "Personal"), Some(""));
+    }
+
+    #[test]
+    fn strip_chroot_prefix_empty_chroot_returns_none() {
+        // Defensive: a mis-set chroot with an empty path must not
+        // strip anything (stripping "" from any path would return
+        // the whole path — a silent leak).
+        let chroot = stub_folder("/");
+        assert_eq!(strip_chroot_prefix(&chroot, "Personal/foo.txt"), None);
     }
 
     // ── nc_href ──

@@ -118,6 +118,34 @@ impl Resource {
             _ => None,
         }
     }
+
+    /// Parse `(item_type, item_id)` from an API-facing pair of strings
+    /// (favorites, recent, batch endpoints all take this shape).
+    /// Combines UUID parse + type mapping so callers stay one-line and
+    /// error shapes are identical across surfaces. Returns
+    /// `DomainError::new(InvalidInput, …)` on malformed input; callers
+    /// that need the anti-enum 404 shape do that separately by feeding
+    /// the parsed `Resource` into `authz.require(...)`.
+    pub fn parse(
+        item_type: &str,
+        item_id: &str,
+    ) -> Result<Self, crate::common::errors::DomainError> {
+        use crate::common::errors::{DomainError, ErrorKind};
+        let uuid = Uuid::parse_str(item_id).map_err(|_| {
+            DomainError::new(
+                ErrorKind::InvalidInput,
+                "Resource",
+                format!("Invalid item UUID '{item_id}'"),
+            )
+        })?;
+        Self::from_parts(item_type, uuid).ok_or_else(|| {
+            DomainError::new(
+                ErrorKind::InvalidInput,
+                "Resource",
+                format!("Unsupported item type '{item_type}'"),
+            )
+        })
+    }
 }
 
 impl fmt::Display for Resource {

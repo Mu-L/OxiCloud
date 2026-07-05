@@ -889,23 +889,37 @@ impl AppServiceFactory {
         Some(service)
     }
 
-    /// Creates the favorites service (requires database)
-    pub fn create_favorites_service(&self, db_pool: &Arc<PgPool>) -> Arc<FavoritesService> {
+    /// Creates the favorites service (requires database + authz engine
+    /// for the Read gate on `add_to_favorites` — see the post-Drive
+    /// AuthZ audit).
+    pub fn create_favorites_service(
+        &self,
+        db_pool: &Arc<PgPool>,
+        authorization: &Arc<PgAclEngine>,
+    ) -> Arc<FavoritesService> {
         let repo = Arc::new(
             crate::infrastructure::repositories::pg::FavoritesPgRepository::new(db_pool.clone()),
         );
-        let service = Arc::new(FavoritesService::new(repo));
+        let service = Arc::new(FavoritesService::new(repo, authorization.clone()));
         tracing::info!("Favorites service initialized");
         service
     }
 
-    /// Creates the recent items service (requires database)
-    pub fn create_recent_service(&self, db_pool: &Arc<PgPool>) -> Arc<RecentService> {
+    /// Creates the recent items service (requires database + authz
+    /// engine for the Read gate on `record_item_access` — see the
+    /// post-Drive AuthZ audit).
+    pub fn create_recent_service(
+        &self,
+        db_pool: &Arc<PgPool>,
+        authorization: &Arc<PgAclEngine>,
+    ) -> Arc<RecentService> {
         let repo = Arc::new(
             crate::infrastructure::repositories::pg::RecentItemsPgRepository::new(db_pool.clone()),
         );
         let service = Arc::new(RecentService::new(
-            repo, 50, // Maximum recent items per user
+            repo,
+            authorization.clone(),
+            50, // Maximum recent items per user
         ));
         tracing::info!("Recent items service initialized");
         service
@@ -1161,31 +1175,6 @@ impl AppServiceFactory {
         let pool = Arc::new(pools.primary);
         let maintenance_pool = Arc::new(pools.maintenance);
 
-        // Recent service + recording hook are built up-front so the
-        // hook can be threaded into `create_application_services` below.
-        // The file services hold the hook directly so every authorised
-        // `_with_perms` read/write fires into `auth.user_recent_files`
-        // without per-handler wiring. Reordering vs the legacy in-block
-        // creation (further down) is safe: `create_recent_service` only
-        // needs `pool`, which is already in scope.
-        //
-        // The back-edge `recent_service_eager.set_resource_access_hook`
-        // closes the loop so the clear/remove handlers can drop the
-        // hook's in-memory throttle entries — without it a freshly
-        // cleared Recent list refuses to re-record the same file for a
-        // full TTL window, surfacing as "I cleared, opened the file,
-        // and Recent is still empty" (caught by tests/api/recent.hurl
-        // step 8).
-        let recent_service_eager = self.create_recent_service(&pool);
-        let resource_access_hook: Arc<
-            dyn crate::application::ports::resource_access_hook::ResourceAccessHook,
-        > = Arc::new(
-            crate::infrastructure::services::recent_recording_hook::RecentRecordingHook::new(
-                recent_service_eager.clone(),
-            ),
-        );
-        recent_service_eager.set_resource_access_hook(resource_access_hook.clone());
-
         // 1. Core services (PgPool needed for DedupService index)
         let core = self.create_core_services(&pool, &maintenance_pool).await?;
 
@@ -1196,6 +1185,10 @@ impl AppServiceFactory {
         // because services hold an Arc<PgAclEngine> for ReBAC checks.
         // SubjectGroupPgRepository is constructed here too so the engine can
         // expand a user's transitive group set on cache misses.
+        //
+        // Moved above the eager recent-service build so `create_recent_service`
+        // can receive an `Arc<PgAclEngine>` — the Read gate on
+        // `record_item_access` (post-Drive AuthZ audit fix) needs it.
         let subject_group_repo = Arc::new(
             crate::infrastructure::repositories::pg::SubjectGroupPgRepository::new(pool.clone()),
         );
@@ -1205,6 +1198,29 @@ impl AppServiceFactory {
             repos.file_read_repository.clone(),
             subject_group_repo.clone(),
         );
+
+        // Recent service + recording hook are built up-front so the
+        // hook can be threaded into `create_application_services` below.
+        // The file services hold the hook directly so every authorised
+        // `_with_perms` read/write fires into `auth.user_recent_files`
+        // without per-handler wiring.
+        //
+        // The back-edge `recent_service_eager.set_resource_access_hook`
+        // closes the loop so the clear/remove handlers can drop the
+        // hook's in-memory throttle entries — without it a freshly
+        // cleared Recent list refuses to re-record the same file for a
+        // full TTL window, surfacing as "I cleared, opened the file,
+        // and Recent is still empty" (caught by tests/api/recent.hurl
+        // step 8).
+        let recent_service_eager = self.create_recent_service(&pool, &authorization);
+        let resource_access_hook: Arc<
+            dyn crate::application::ports::resource_access_hook::ResourceAccessHook,
+        > = Arc::new(
+            crate::infrastructure::services::recent_recording_hook::RecentRecordingHook::new(
+                recent_service_eager.clone(),
+            ),
+        );
+        recent_service_eager.set_resource_access_hook(resource_access_hook.clone());
 
         // Drive repository — needed both by the lifecycle hook (when auth
         // is enabled) and by `GET /api/drives` on the final `AppState`,
@@ -1279,7 +1295,7 @@ impl AppServiceFactory {
         > = None;
 
         {
-            let favs = self.create_favorites_service(&pool);
+            let favs = self.create_favorites_service(&pool, &authorization);
             favorites_service = Some(favs.clone());
             apps.favorites_service = Some(favs);
 
@@ -1849,7 +1865,7 @@ impl AppServiceFactory {
                     audio_metadata_repo,
                 ),
             );
-            let music_svc = Arc::new(MusicService::new(music_storage));
+            let music_svc = Arc::new(MusicService::new(music_storage, authorization.clone()));
             app_state.music_service = Some(music_svc);
             tracing::info!("Music service initialized");
         }
