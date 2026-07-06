@@ -348,8 +348,9 @@ HTTP 507
 # 11b — COPY same file into tight drive. Same refusal shape as MOVE
 #       — COPY creates a NEW file row that counts against
 #       `drives.used_bytes` even when blob dedup means no new bytes
-#       hit the store.
-POST {{base_url}}/api/files/copy
+#       hit the store. Batch endpoint lives under `/api/batch/…`,
+#       not `/api/files/…`.
+POST {{base_url}}/api/batch/files/copy
 Authorization: Bearer {{owner_token}}
 Content-Type: application/json
 {
@@ -357,13 +358,15 @@ Content-Type: application/json
   "target_folder_id": "{{tight_root_id}}"
 }
 
-# Batch endpoint returns 206 Partial when at least one item fails
-# with a per-item error. Per-item quota rejection is the wire
-# shape here — assert the 507 landed in the per-item results,
-# not on the envelope.
-HTTP 206
+# Batch envelope: 200 all-ok, 206 partial, 400 all-failed. Our
+# single-item batch has one quota-refused item → 400 with the
+# failure in the `.failed[]` array (per `BatchOperationResponse`).
+HTTP 400
 [Asserts]
-jsonpath "$.results[?(@.file_id=='{{big_file_id}}')].error" exists
+jsonpath "$.stats.failed"      == 1
+jsonpath "$.stats.successful"  == 0
+jsonpath "$.failed[0].id"      == "{{big_file_id}}"
+jsonpath "$.failed[0].error"   exists
 
 
 # 11c — Sanity: the file MOVE isn't universally broken. Targeting

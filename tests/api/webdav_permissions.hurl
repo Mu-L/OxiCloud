@@ -91,6 +91,7 @@ Content-Type: application/json
 HTTP 201
 [Captures]
 shared_drive_id: jsonpath "$.id"
+shared_root_id:  jsonpath "$.root_folder_id"
 
 
 # ─────────────────────────────────────────────────────────────

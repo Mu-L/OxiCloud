@@ -380,6 +380,20 @@ impl FileManagementUseCase for FileManagementService {
 
         let dto = self.move_file(file_id, folder_id, caller_id).await?;
 
+        // Cross-drive move invalidates the file's `owner_cache` entry
+        // in the authz engine — the cache assumed drive_id stability
+        // that no longer holds. Without this call the drive-role
+        // precheck at `check_inner` steers to the (stale) source
+        // drive and legitimate Delete/Update by a destination-drive
+        // role-holder returns 404 for up to the cache TTL.
+        if cross_drive.is_some()
+            && let Ok(file_uuid) = Uuid::parse_str(file_id)
+        {
+            self.authz
+                .invalidate_owner_cache_for_resource(Resource::File(file_uuid))
+                .await;
+        }
+
         // D6 §11 audit: emit only when the move actually crossed a
         // drive boundary. Same-drive moves are too noisy to audit at
         // info — operators care about the cross-drive case for

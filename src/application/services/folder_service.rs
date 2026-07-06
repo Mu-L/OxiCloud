@@ -641,6 +641,17 @@ impl FolderUseCase for FolderService {
                 )
             })?;
 
+        // Cross-drive move flushes the authz engine's `owner_cache`
+        // — every descendant's cached `Resource → drive_id` mapping
+        // just got stale via the cascade trigger, and we don't (yet)
+        // walk the subtree to invalidate individually. Small perf
+        // cost (single JOIN per resource touched over the next
+        // minute) versus a stale-authz bug where destination-drive
+        // Owner cascades don't apply to moved content.
+        if cross_drive.is_some() {
+            self.authz.invalidate_owner_cache_all().await;
+        }
+
         // D6 audit: only emit when the move crossed a drive boundary.
         // The cascade trigger has already propagated drive_id to the
         // subtree at this point (see migration
