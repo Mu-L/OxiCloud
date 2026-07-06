@@ -31,6 +31,11 @@ pub struct FolderService {
     /// that case the cross-drive move check is skipped (the policy is
     /// silently off). Production DI wires it via `with_drive_repo`.
     drive_repo: Option<Arc<dyn crate::domain::repositories::drive_repository::DriveRepository>>,
+    /// Storage-usage service — used to pre-check the destination
+    /// drive's `used_bytes + subtree_bytes ≤ quota_bytes` invariant
+    /// on cross-drive MOVE. Silently skipped when unwired (stubs).
+    storage_usage:
+        Option<Arc<crate::application::services::storage_usage_service::StorageUsageService>>,
 }
 
 impl FolderService {
@@ -45,6 +50,7 @@ impl FolderService {
             authz,
             file_lifecycle,
             drive_repo: None,
+            storage_usage: None,
         }
     }
 
@@ -57,6 +63,19 @@ impl FolderService {
         drive_repo: Arc<dyn crate::domain::repositories::drive_repository::DriveRepository>,
     ) -> Self {
         self.drive_repo = Some(drive_repo);
+        self
+    }
+
+    /// Wires the storage-usage service so `move_folder_with_perms`
+    /// can pre-check the destination drive's quota on cross-drive
+    /// folder moves.
+    pub fn with_storage_usage(
+        mut self,
+        storage_usage: Arc<
+            crate::application::services::storage_usage_service::StorageUsageService,
+        >,
+    ) -> Self {
+        self.storage_usage = Some(storage_usage);
         self
     }
 
@@ -593,6 +612,19 @@ impl FolderUseCase for FolderService {
                         dst_drive_id,
                     },
                 )?;
+                // Destination drive quota: sum the moved subtree's
+                // non-trashed files and refuse if the destination
+                // couldn't hold them. Same 507 shape as the file
+                // path + upload path — DomainError::QuotaExceeded
+                // maps at the AppError boundary.
+                if let Some(storage_usage) = &self.storage_usage {
+                    let subtree_bytes = storage_usage.folder_subtree_bytes(src_folder_uuid).await?;
+                    if let Ok(subtree_u64) = u64::try_from(subtree_bytes) {
+                        storage_usage
+                            .check_drive_quota(dst_drive_id, subtree_u64)
+                            .await?;
+                    }
+                }
                 cross_drive = Some((src_drive_id, dst_drive_id));
             }
         }
@@ -608,6 +640,17 @@ impl FolderUseCase for FolderService {
                     format!("Failed to move folder with ID: {}: {}", id, e),
                 )
             })?;
+
+        // Cross-drive move flushes the authz engine's `owner_cache`
+        // — every descendant's cached `Resource → drive_id` mapping
+        // just got stale via the cascade trigger, and we don't (yet)
+        // walk the subtree to invalidate individually. Small perf
+        // cost (single JOIN per resource touched over the next
+        // minute) versus a stale-authz bug where destination-drive
+        // Owner cascades don't apply to moved content.
+        if cross_drive.is_some() {
+            self.authz.invalidate_owner_cache_all().await;
+        }
 
         // D6 audit: only emit when the move crossed a drive boundary.
         // The cascade trigger has already propagated drive_id to the

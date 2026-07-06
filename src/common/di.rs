@@ -536,7 +536,12 @@ impl AppServiceFactory {
             // drive repo every other policy uses. Wired here so
             // `move_folder_with_perms` can enforce
             // `forbid_cross_drive_move` without a separate construction path.
-            .with_drive_repo(drive_repo.clone()),
+            .with_drive_repo(drive_repo.clone())
+            // Destination-drive quota pre-check on cross-drive folder
+            // MOVE. Reuses the `check_drive_quota` the upload path
+            // already runs. Without this, a Move that would push the
+            // destination past its cap succeeds silently.
+            .with_storage_usage(storage_usage.clone()),
         );
 
         // Built before the upload/management services so the plugin lifecycle
@@ -618,7 +623,10 @@ impl AppServiceFactory {
             // drive repo every other policy uses. Wired here so
             // `move_file_with_perms` can enforce `forbid_cross_drive_move`
             // without a separate construction path.
-            .with_drive_repo(drive_repo.clone());
+            .with_drive_repo(drive_repo.clone())
+            // Destination-drive quota pre-check on cross-drive file
+            // MOVE. Same rationale as the folder side above.
+            .with_storage_usage(storage_usage.clone());
             if let Some(hook) = resource_access_hook.clone() {
                 svc = svc.with_resource_access_hook(hook);
             }
