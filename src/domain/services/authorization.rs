@@ -90,9 +90,12 @@ pub enum Resource {
     /// replaces `carddav.address_book_shares` and the
     /// `check_address_book_access` bespoke helper.
     AddressBook(Uuid),
-    // Reserved for future use — same shape but tracked separately
-    // (music-service rewrite is its own PR):
-    // Playlist(Uuid),
+    /// A music playlist. Same shape as `Calendar`/`AddressBook` —
+    /// `storage.role_grants` with `resource_type='playlist'` replaces
+    /// the pre-Round-3 dedicated `music.playlist_shares` table and the
+    /// bespoke `user_has_access` / `user_can_write` helpers on
+    /// `MusicStorageAdapter`.
+    Playlist(Uuid),
 }
 
 impl Resource {
@@ -103,7 +106,7 @@ impl Resource {
             Resource::Drive(_) => "drive",
             Resource::Calendar(_) => "calendar",
             Resource::AddressBook(_) => "address_book",
-            //Resource::Playlist(_) => "playlist",
+            Resource::Playlist(_) => "playlist",
         }
     }
 
@@ -113,8 +116,8 @@ impl Resource {
             | Resource::File(id)
             | Resource::Drive(id)
             | Resource::Calendar(id)
-            | Resource::AddressBook(id) => *id,
-            //| Resource::Playlist(id)
+            | Resource::AddressBook(id)
+            | Resource::Playlist(id) => *id,
         }
     }
 
@@ -125,7 +128,7 @@ impl Resource {
             "drive" => Some(Resource::Drive(id)),
             "calendar" => Some(Resource::Calendar(id)),
             "address_book" => Some(Resource::AddressBook(id)),
-            //"playlist" => Some(Resource::Playlist(id)),
+            "playlist" => Some(Resource::Playlist(id)),
             _ => None,
         }
     }
@@ -552,12 +555,11 @@ mod tests {
             Resource::File(id),
             Resource::Calendar(id),
             Resource::AddressBook(id),
+            Resource::Playlist(id),
         ] {
             let back = Resource::from_parts(r.type_str(), r.id()).unwrap();
             assert_eq!(r, back);
         }
-        // `playlist` is still pending the Music AuthZ migration.
-        assert!(Resource::from_parts("playlist", id).is_none());
     }
 
     #[test]

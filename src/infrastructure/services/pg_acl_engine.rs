@@ -480,17 +480,22 @@ impl PgAclEngine {
     /// drive — this returns `NotFound` for `Resource::Drive` and the caller
     /// must not invoke it on Drive resources.
     ///
-    /// `Resource::Calendar` and `Resource::AddressBook` are top-level per
-    /// user with no drive ancestor; they also return `NotFound` and the
-    /// engine short-circuits to a direct `role_grants` lookup (no drive
+    /// `Resource::Calendar`, `Resource::AddressBook` and
+    /// `Resource::Playlist` are top-level per user with no drive
+    /// ancestor; they also return `NotFound` and the engine
+    /// short-circuits to a direct `role_grants` lookup (no drive
     /// precheck applies).
     async fn drive_of(&self, resource: Resource) -> Result<Uuid, DomainError> {
         match resource {
             Resource::Folder(id) => self.folder_repo.get_folder_drive_id(&id.to_string()).await,
             Resource::File(id) => self.file_repo.get_file_drive_id(&id.to_string()).await,
-            Resource::Drive(_) | Resource::Calendar(_) | Resource::AddressBook(_) => Err(
-                DomainError::not_found(resource.type_str(), resource.id().to_string()),
-            ),
+            Resource::Drive(_)
+            | Resource::Calendar(_)
+            | Resource::AddressBook(_)
+            | Resource::Playlist(_) => Err(DomainError::not_found(
+                resource.type_str(),
+                resource.id().to_string(),
+            )),
         }
     }
 
@@ -897,6 +902,19 @@ impl PgAclEngine {
                     &subject_ids,
                     permission,
                     "address_book",
+                    id,
+                    counters,
+                )
+                .await
+            }
+            Resource::Playlist(id) => {
+                let (subject_types, subject_ids) =
+                    self.subject_match_set(subject, counters).await?;
+                self.direct_grant_exists(
+                    &subject_types,
+                    &subject_ids,
+                    permission,
+                    "playlist",
                     id,
                     counters,
                 )

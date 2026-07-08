@@ -113,12 +113,12 @@ pub async fn create_grant(
             .get_by_id(id)
             .await
             .map(|d| d.drive.typed_policies()),
-        // Calendars and address books live outside the drive
-        // hierarchy (top-level per user), so no drive-level policy
-        // gates apply. If per-calendar / per-address-book policies
-        // ever ship, they'll live on the resource itself, not on a
+        // Calendars, address books and playlists live outside the
+        // drive hierarchy (top-level per user), so no drive-level
+        // policy gates apply. If per-resource policies ever ship for
+        // these kinds, they'll live on the resource itself, not on a
         // drive; the default-empty bag is the right no-op here.
-        Resource::Calendar(_) | Resource::AddressBook(_) => {
+        Resource::Calendar(_) | Resource::AddressBook(_) | Resource::Playlist(_) => {
             Ok(crate::domain::entities::drive::DrivePolicies::default())
         }
     };

@@ -62,6 +62,7 @@ pub enum ResourceTypeDto {
     Drive,
     Calendar,
     AddressBook,
+    Playlist,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -79,6 +80,7 @@ impl From<ResourceDto> for Resource {
             ResourceTypeDto::Drive => Resource::Drive(dto.id),
             ResourceTypeDto::Calendar => Resource::Calendar(dto.id),
             ResourceTypeDto::AddressBook => Resource::AddressBook(dto.id),
+            ResourceTypeDto::Playlist => Resource::Playlist(dto.id),
         }
     }
 }
@@ -91,6 +93,7 @@ impl From<Resource> for ResourceDto {
             Resource::Drive(id) => (ResourceTypeDto::Drive, id),
             Resource::Calendar(id) => (ResourceTypeDto::Calendar, id),
             Resource::AddressBook(id) => (ResourceTypeDto::AddressBook, id),
+            Resource::Playlist(id) => (ResourceTypeDto::Playlist, id),
         };
         ResourceDto { kind, id }
     }

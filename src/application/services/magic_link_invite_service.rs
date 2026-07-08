@@ -307,17 +307,22 @@ impl MagicLinkInviteService {
         let (kind, resource_id) = match resource {
             Resource::Folder(id) => (MagicLinkResourceKind::Folder, id),
             Resource::File(id) => (MagicLinkResourceKind::File, id),
-            // Drive / Calendar / AddressBook sharing is out-of-band for
-            // the magic-link flow. Drive shares land through
-            // `/api/drives/{id}/members`; Calendar / AddressBook shares
-            // through the Round-3 `/api/(calendars|address-books)/{id}/shares`
-            // endpoints. The DTOs accept every `Resource` variant on
-            // the wire (see `ResourceTypeDto`) but only file/folder
-            // grants trigger an invitation email. Treating the other
-            // arms as audit-logged suppressed no-ops keeps the grant
-            // in place while matching the ineligible-recipient branch
+            // Drive / Calendar / AddressBook / Playlist sharing is
+            // out-of-band for the magic-link flow. Drive shares land
+            // through `/api/drives/{id}/members`; Calendar /
+            // AddressBook shares through the Round-3
+            // `/api/(calendars|address-books)/{id}/shares` endpoints;
+            // Playlist shares through `/api/playlists/{id}/share`.
+            // The DTOs accept every `Resource` variant on the wire
+            // (see `ResourceTypeDto`) but only file/folder grants
+            // trigger an invitation email. Treating the other arms
+            // as audit-logged suppressed no-ops keeps the grant in
+            // place while matching the ineligible-recipient branch
             // above.
-            Resource::Drive(_) | Resource::Calendar(_) | Resource::AddressBook(_) => {
+            Resource::Drive(_)
+            | Resource::Calendar(_)
+            | Resource::AddressBook(_)
+            | Resource::Playlist(_) => {
                 tracing::info!(
                     target: "audit",
                     event = "magic_link.invitation_suppressed",
@@ -352,12 +357,13 @@ impl MagicLinkInviteService {
             Resource::Folder(_) => "server.magic_link.email.kind_folder",
             Resource::File(_) => "server.magic_link.email.kind_file",
             // Unreachable — the early-return above exits before we get
-            // here for Drive / Calendar / AddressBook resources. The
-            // arms exist only to satisfy exhaustiveness; if you find
-            // any firing, the early-return was bypassed.
-            Resource::Drive(_) | Resource::Calendar(_) | Resource::AddressBook(_) => {
-                "server.magic_link.email.kind_folder"
-            }
+            // here for Drive / Calendar / AddressBook / Playlist
+            // resources. The arms exist only to satisfy exhaustiveness;
+            // if you find any firing, the early-return was bypassed.
+            Resource::Drive(_)
+            | Resource::Calendar(_)
+            | Resource::AddressBook(_)
+            | Resource::Playlist(_) => "server.magic_link.email.kind_folder",
         };
         // PR C: render in the recipient's preferred locale (set by UI
         // switcher, OIDC JIT claim, or inviter inheritance at row
