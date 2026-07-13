@@ -1559,6 +1559,7 @@
 	class:dropzone-active={dragOver}
 	role="region"
 	aria-label={t('nav.files', 'Files')}
+	data-testid="files-dropzone"
 	ondragover={(e) => {
 		e.preventDefault();
 		dragOver = true;
