@@ -615,6 +615,123 @@ impl MagicLinkInviteService {
         Ok(())
     }
 
+    /// Mint + email a magic-link for **email verification**, called
+    /// only after another authentication factor has already proven the
+    /// caller's identity (currently: the login handler after a
+    /// successful password check).
+    ///
+    /// Contract: the caller MUST have validated the user's identity via
+    /// an independent factor before invoking this. The method does NOT
+    /// re-verify credentials — it exists specifically to bypass the
+    /// `has_password` eligibility gate, which would otherwise deadlock
+    /// the `OXICLOUD_REQUIRE_VERIFIED_EMAIL` flow (login rejected as
+    /// unverified → user asks for a verification link → refused
+    /// because they have a password).
+    ///
+    /// Rejected: OIDC-linked users, deactivated users. Everything else
+    /// gets a token — including the "has password" case that
+    /// `send_login_link` refuses.
+    pub async fn send_verification_link_authenticated(
+        &self,
+        user: &User,
+        request_challenge: &str,
+    ) -> Result<(), DomainError> {
+        // OIDC boundary is unconditional even here — the IdP owns the
+        // identity contract and we must not mint a session-primitive
+        // for a user it manages.
+        if user.is_oidc_user() {
+            tracing::info!(
+                target: "audit",
+                event = "auth.magic_link_send",
+                reason = "oidc_user",
+                user_id = %user.id(),
+                username = %user.display_for_audit(),
+                "🔗 verify-link suppressed: OIDC user",
+            );
+            return Ok(());
+        }
+        if !user.is_active() {
+            tracing::info!(
+                target: "audit",
+                event = "auth.magic_link_send",
+                reason = "account_deactivated",
+                user_id = %user.id(),
+                username = %user.display_for_audit(),
+                "🔗 verify-link suppressed: account deactivated",
+            );
+            return Ok(());
+        }
+
+        let token = MagicLinkToken::new(
+            user.id(),
+            chrono::Duration::minutes(self.magic_link_cfg.login_ttl_minutes as i64),
+            None,
+            Some(request_challenge.to_string()),
+        );
+        self.magic_link_repo.create(&token).await?;
+
+        let link = format!(
+            "{}/magic/v1/{}",
+            self.public_base_url.trim_end_matches('/'),
+            token.token(),
+        );
+        // Reuses the login email template for now — same call to
+        // action (click the link), same TTL, same challenge binding.
+        // A dedicated "verify your email" template can land later
+        // without wire changes.
+        let locale = self.locale_for(user);
+        let ttl_minutes = self.magic_link_cfg.login_ttl_minutes.to_string();
+        let login_args: Vec<(&str, &str)> = vec![("link", &link), ("ttl_minutes", &ttl_minutes)];
+
+        let subject = self
+            .i18n_or(
+                "server.magic_link.email.login.subject",
+                &locale,
+                &login_args,
+            )
+            .await;
+        let text_body = self
+            .render_bilingual("server.magic_link.email.login.body", &locale, &login_args)
+            .await;
+
+        let message = EmailMessage {
+            to: user.email().to_string(),
+            subject,
+            text_body,
+            html_body: None,
+        };
+
+        match self.email_sender.send(message).await {
+            Ok(outcome) => {
+                tracing::info!(
+                    target: "audit",
+                    event = "auth.magic_link_send",
+                    reason = "sent_verification",
+                    user_id = %user.id(),
+                    username = %user.display_for_audit(),
+                    email = %user.email(),
+                    smtp_code = outcome.code,
+                    smtp_message = %outcome.message,
+                    "🔗 verify-link sent to '{}'",
+                    user.email(),
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "audit",
+                    event = "auth.magic_link_send_failed",
+                    user_id = %user.id(),
+                    email = %user.email(),
+                    error = %e.message,
+                    "🔗 verify-link SMTP send failed for '{}'",
+                    user.email(),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     /// Resolve a translation, falling back to the literal key on any
     /// lookup error. Identical to the handler-side helper — kept inline
     /// here because the service layer can't pull in a UI util module

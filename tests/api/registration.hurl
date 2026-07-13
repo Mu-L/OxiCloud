@@ -5,8 +5,8 @@
 # `POST /api/auth/register`. Email-only signup:
 #   - returns a uniform 200 message (no JWT, no UserDto)
 #   - mints a welcome magic-link mailed to `email`
-#   - redemption lands the new internal user on `/#/files`
-#     (not `/#/sharedwithme`, which is for externals)
+#   - redemption lands the new internal user on `/files`
+#     (not `/shared-with-me`, which is for externals)
 #
 # Requires `OXICLOUD_SMTP_MOCK=true` (set in tests/common/server.env).
 # =============================================================
@@ -111,14 +111,19 @@ body contains "different browser"
 # Step 5b — Same link, this time with the matching cookie.
 #           PR 22 binds the magic-link to the requesting browser;
 #           a matching cookie redeems instantly. Internal user
-#           with no resource target → lands on `/#/files`.
+#           with no resource target → lands on `/files`.
 # ─────────────────────────────────────────────────────────────
 GET {{pr18_magic_url}}
 Cookie: oxicloud_magic_request={{pr18_magic_cookie}}
 
 HTTP 302
 [Asserts]
-header "Location" == "/#/files"
+# SPA route (SvelteKit path-based). Historical value pre-migration was
+# `/#/files` (legacy vanilla frontend hash-routing). Changed alongside
+# the migration off the legacy shell — landing on the hash route now
+# serves the legacy `static/index.html` with its meta-CSP inline
+# scripts, which the SPA CSP blocks.
+header "Location" == "/files"
 [Captures]
 pr18_access_token: cookie "oxicloud_access"
 

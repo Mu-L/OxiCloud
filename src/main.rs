@@ -285,6 +285,33 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration from environment variables
     let config = common::config::AppConfig::from_env();
 
+    // SECURITY: fail-closed on incoherent auth-method configuration. A
+    // magic-link-only policy without a working SMTP sender locks every
+    // user out — nothing can mint tokens, so nobody can log in. Refuse
+    // to start rather than boot into a bricked auth surface.
+    //
+    // The SMTP-mock (`OXICLOUD_SMTP_MOCK=true` in `tests/common/server.env`)
+    // sets `OXICLOUD_SMTP_HOST=localhost`, so `is_enabled()` returns
+    // true and the Hurl test harness satisfies this gate without a real
+    // mail server.
+    if config
+        .auth
+        .allowed_auth_methods
+        .contains(&common::config::AuthMethod::MagicLink)
+        && !config
+            .auth
+            .allowed_auth_methods
+            .contains(&common::config::AuthMethod::Password)
+        && !config.smtp.is_enabled()
+    {
+        panic!(
+            "FATAL: OXICLOUD_AUTH_METHODS enables `magic_link` as the ONLY \
+             self-service auth method, but no SMTP transport is configured. \
+             Set OXICLOUD_SMTP_HOST (and matching OXICLOUD_SMTP_* settings) \
+             or add `password` to OXICLOUD_AUTH_METHODS. Refusing to start."
+        );
+    }
+
     // Surface the upload-size limits at startup. Operators (and the
     // CI runner) need to see what's actually in effect — a silent
     // fallback to the 100 MB default when `OXICLOUD_CHUNK_MAX_BYTES`
