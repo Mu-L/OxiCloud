@@ -72,27 +72,22 @@ export type Section =
 	| 'photos'
 	| 'music';
 
-const VIEW_KEY = 'oxi-view-mode';
-
-function readViewMode(): ViewMode {
-	if (typeof localStorage === 'undefined') return 'grid';
-	return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid';
-}
+// `viewMode` used to live here (localStorage `oxi-view-mode`), but
+// moved to the server-side `ui_preferences` bag so the choice
+// follows the user across devices. Read via
+// `preferences.viewMode` and mutate via `preferences.setViewMode`
+// (`lib/stores/preferences.svelte.ts`). Kept `ViewMode` as an
+// exported type because template code still needs it for prop
+// annotations without pulling in the whole preferences module.
 
 class FilesStore {
 	currentFolder = $state<string | null>(null);
 	currentFolderInfo = $state<FolderItem | null>(null);
 	breadcrumbPath = $state<Array<{ id: string; name: string }>>([]);
-	viewMode = $state<ViewMode>(readViewMode());
 	section = $state<Section>('files');
 	isSearchMode = $state(false);
 	// Reactive set: in-place mutations below drive template/$derived reads.
 	selection = new SvelteSet<string>();
-
-	setViewMode(mode: ViewMode): void {
-		this.viewMode = mode;
-		if (typeof localStorage !== 'undefined') localStorage.setItem(VIEW_KEY, mode);
-	}
 
 	clearSelection(): void {
 		this.selection.clear();

@@ -58,7 +58,7 @@
 	import UserVignette from '$lib/components/UserVignette.svelte';
 	import VirtualList from '$lib/components/VirtualList.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { files as filesStore } from '$lib/stores/files.svelte';
+	import { preferences } from '$lib/stores/preferences.svelte';
 	import { formatBytes } from '$lib/utils/format';
 	import { formatDate, iconNameFromClass, fileIconKindClass } from '$lib/utils/display';
 	import { gridColumns } from '$lib/utils/grid';
@@ -99,6 +99,11 @@
 		showOwner?: boolean;
 		/** Allow grid/list toggle (shares the app-wide view mode). */
 		showViewToggle?: boolean;
+		/** Show the dotfile-visibility eye toggle in the toolbar.
+		 * Opt-in per host page — surfaces that never filter dotfiles
+		 * (favorites, trash) leave this false so the button doesn't
+		 * appear to do nothing. Forwarded to ListToolbar. */
+		showDotfileToggle?: boolean;
 		/** Multi-select checkboxes + selection model. */
 		selectable?: boolean;
 		/** Right-click / overflow context-menu actions. */
@@ -142,6 +147,7 @@
 		bucketAction,
 		showOwner = false,
 		showViewToggle = true,
+		showDotfileToggle = false,
 		selectable = false,
 		contextActions,
 		groupBys,
@@ -158,7 +164,7 @@
 
 	const isEmpty = $derived(items.length === 0);
 	const viewClass = $derived(
-		filesStore.viewMode === 'grid' ? 'files-grid-view' : 'files-list-view'
+		preferences.viewMode === 'grid' ? 'files-grid-view' : 'files-list-view'
 	);
 	/** Content width, for computing the grid's column count to match auto-fill. */
 	let gridWidth = $state(0);
@@ -398,6 +404,7 @@
 		ongroup={selectGroup}
 		ondirection={toggleDirection}
 		{showViewToggle}
+		{showDotfileToggle}
 	>
 		{#snippet start()}
 			<div class="action-buttons">{@render toolbar?.()}</div>
@@ -451,7 +458,7 @@
 							</span>
 						{/if}
 					</div>
-					{#if filesStore.viewMode === 'list'}
+					{#if preferences.viewMode === 'list'}
 						<!-- Window each section's rows so a large grouped list (e.g. a big
 						     trash, grouped by remaining days) doesn't mount every row. The
 						     grid-grouped branch stays un-windowed: `files-grid-view` is itself
@@ -464,7 +471,7 @@
 					{/if}
 				{/each}
 			</div>
-		{:else if filesStore.viewMode === 'list'}
+		{:else if preferences.viewMode === 'list'}
 			<!-- Flat list view: only the visible rows are mounted. The spacer keeps the
 			     full scroll height so the end-of-list sentinel still fires. -->
 			<div class="files-list-view" style="--files-list-columns: {columns}">

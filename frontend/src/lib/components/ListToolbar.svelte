@@ -12,7 +12,7 @@
 	import type { Snippet } from 'svelte';
 	import Icon from '$lib/icons/Icon.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { files as filesStore } from '$lib/stores/files.svelte';
+	import { preferences } from '$lib/stores/preferences.svelte';
 
 	interface Props {
 		/** Group-by dimensions; omit/empty to hide the group-by control. */
@@ -29,6 +29,19 @@
 		showViewToggle?: boolean;
 		/** Left-hand actions (upload/new-folder/empty-trash/batch bar, …). */
 		start?: Snippet;
+		/** Right-hand extras rendered inside `.view-toggle`, immediately
+		 * before the group-by button. Use for page-local dropdown
+		 * controls (e.g. Shares' kind filter) that should sit as siblings
+		 * of the group-by dropdown and reuse `.toggle-btn`/`.group-by-*`
+		 * classes for a consistent look. */
+		beforeGroupBy?: Snippet;
+		/** Show the dotfile-visibility eye toggle. Opt-in per page so
+		 * surfaces that don't filter dotfiles (favorites, trash) don't
+		 * get a control that appears to do nothing. When enabled the
+		 * button lands at the RIGHT end of `.view-toggle` — same row as
+		 * grid/list — and its aria-pressed state mirrors
+		 * `preferences.hideDotfiles`. */
+		showDotfileToggle?: boolean;
 	}
 
 	let {
@@ -38,7 +51,9 @@
 		ongroup,
 		ondirection,
 		showViewToggle = true,
-		start
+		start,
+		beforeGroupBy,
+		showDotfileToggle = false
 	}: Props = $props();
 
 	// The group-by button always reflects the active dimension (default = first).
@@ -64,8 +79,9 @@
 <div class="actions-bar">
 	{#if start}{@render start()}{:else}<div class="action-buttons"></div>{/if}
 
-	{#if groups?.length || showViewToggle}
+	{#if groups?.length || showViewToggle || beforeGroupBy || showDotfileToggle}
 		<div class="view-toggle" role="group" aria-label={t('view.label', 'View options')}>
+			{#if beforeGroupBy}{@render beforeGroupBy()}{/if}
 			{#if groups?.length}
 				<div class="group-by-selector" data-testid="list-toolbar-groupby-menu">
 					<button
@@ -110,19 +126,41 @@
 			{#if showViewToggle}
 				<button
 					class="toggle-btn"
-					class:active={filesStore.viewMode === 'grid'}
+					class:active={preferences.viewMode === 'grid'}
 					title={t('view.grid', 'Grid view')}
-					aria-pressed={filesStore.viewMode === 'grid'}
+					aria-pressed={preferences.viewMode === 'grid'}
 					data-testid="list-toolbar-view-grid-btn"
-					onclick={() => filesStore.setViewMode('grid')}><Icon name="th" /></button
+					onclick={() => preferences.setViewMode('grid')}><Icon name="th" /></button
 				>
 				<button
 					class="toggle-btn"
-					class:active={filesStore.viewMode === 'list'}
+					class:active={preferences.viewMode === 'list'}
 					title={t('view.list', 'List view')}
-					aria-pressed={filesStore.viewMode === 'list'}
+					aria-pressed={preferences.viewMode === 'list'}
 					data-testid="list-toolbar-view-list-btn"
-					onclick={() => filesStore.setViewMode('list')}><Icon name="list" /></button
+					onclick={() => preferences.setViewMode('list')}><Icon name="list" /></button
+				>
+			{/if}
+			{#if showDotfileToggle}
+				<!--
+					Right-most utility toggle: flip dotfile visibility for
+					the current view without opening the profile page.
+					`aria-pressed` reflects the persisted state (across
+					sessions), matching how `preferences.hideDotfiles`
+					participates in ARIA-toggle-button semantics. The
+					title flips between "hide" / "show" so screen-reader
+					users get an action label, not a state label.
+				-->
+				<button
+					class="toggle-btn"
+					class:active={preferences.hideDotfiles}
+					title={preferences.hideDotfiles
+						? t('view.show_dotfiles', 'Show hidden files')
+						: t('view.hide_dotfiles', 'Hide hidden files')}
+					aria-pressed={preferences.hideDotfiles}
+					data-testid="list-toolbar-dotfile-toggle-btn"
+					onclick={() => preferences.toggleHideDotfiles()}
+					><Icon name={preferences.hideDotfiles ? 'eye-slash' : 'eye'} /></button
 				>
 			{/if}
 		</div>
