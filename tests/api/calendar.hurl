@@ -60,9 +60,14 @@ HTTP 201
 # ─────────────────────────────────────────────────────────────
 # Step 3 – Alice PROPFIND at Depth 1 lists her calendars.
 # The response is a `<D:multistatus>` — each calendar surfaces
-# as `<D:href>/caldav/<uuid>/</D:href>`. Regex-capture the
-# UUID (first `/caldav/<uuid>/` in the body — the root href
-# is `/caldav/` alone, no UUID, so it can't match).
+# as `<D:href>/caldav/<uuid>/</D:href>`. Since
+# `DefaultCalendarLifecycleHook` provisions a "Personal" default
+# on first login, Alice has TWO calendars here: her default
+# "Personal" (first) and the round3-cal created in Step 2
+# (second, later `created_at`). Anchor the regex with `(?s).*`
+# so it matches the LAST `/caldav/<uuid>/` in the body — that's
+# round3-cal, which is what the rest of the test grants/shares
+# against.
 # ─────────────────────────────────────────────────────────────
 PROPFIND {{base_url}}/caldav/
 Authorization: Bearer {{alice_token}}
@@ -80,7 +85,11 @@ Content-Type: application/xml
 
 HTTP 207
 [Captures]
-calendar_id: body regex "/caldav/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/"
+calendar_id: body regex "(?s).*/caldav/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/"
+[Asserts]
+# Sanity: both calendars visible in the same response.
+body contains "Personal"
+body contains "round3-cal"
 
 
 # ─────────────────────────────────────────────────────────────

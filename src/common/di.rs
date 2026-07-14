@@ -1402,6 +1402,50 @@ impl AppServiceFactory {
                     pool.clone(),
                 ),
             );
+
+            // CalDAV / CardDAV storage — constructed here (rather than in
+            // block #10 below) so the two default-provisioning lifecycle
+            // hooks can be wired into `user_lifecycle_builder` with the
+            // rest of the chain. The Arcs are cloned into both the hooks
+            // and, later, into their respective services — cheap and
+            // matches the pattern used for `drive_repo` above.
+            let calendar_repo_for_hook: Arc<
+                crate::infrastructure::repositories::pg::CalendarPgRepository,
+            > = Arc::new(
+                crate::infrastructure::repositories::pg::CalendarPgRepository::new(pool.clone()),
+            );
+            let event_repo_for_hook: Arc<
+                crate::infrastructure::repositories::pg::CalendarEventPgRepository,
+            > = Arc::new(
+                crate::infrastructure::repositories::pg::CalendarEventPgRepository::new(
+                    pool.clone(),
+                ),
+            );
+            let calendar_storage_for_hook = Arc::new(
+                crate::infrastructure::adapters::calendar_storage_adapter::CalendarStorageAdapter::new(
+                    calendar_repo_for_hook.clone(),
+                    event_repo_for_hook.clone(),
+                )
+            );
+            let address_book_repo_for_hook: Arc<AddressBookPgRepository> = Arc::new(
+                crate::infrastructure::repositories::pg::AddressBookPgRepository::new(pool.clone()),
+            );
+            let contact_repo_for_hook: Arc<ContactPgRepository> = Arc::new(
+                crate::infrastructure::repositories::pg::ContactPgRepository::new(pool.clone()),
+            );
+            let group_repo_for_hook: Arc<ContactGroupPgRepository> = Arc::new(
+                crate::infrastructure::repositories::pg::ContactGroupPgRepository::new(
+                    pool.clone(),
+                ),
+            );
+            let contact_storage_for_hook = Arc::new(
+                crate::infrastructure::adapters::contact_storage_adapter::ContactStorageAdapter::new(
+                    address_book_repo_for_hook.clone(),
+                    contact_repo_for_hook.clone(),
+                    group_repo_for_hook.clone(),
+                ),
+            );
+
             let mut user_lifecycle_builder =
                 crate::application::services::user_lifecycle_service::UserLifecycleService::new()
                     .with_hook(Arc::new(
@@ -1410,6 +1454,19 @@ impl AppServiceFactory {
                     .with_hook(Arc::new(
                         crate::application::services::folder_service::PersonalDriveLifecycleHook::new(
                             drive_repo.clone(),
+                            authorization.clone(),
+                        ),
+                    ))
+                    .with_hook(Arc::new(
+                        crate::application::services::calendar_service::DefaultCalendarLifecycleHook::new(
+                            calendar_storage_for_hook.clone(),
+                            authorization.clone(),
+                        ),
+                    ))
+                    .with_hook(Arc::new(
+                        crate::application::services::contact_service::DefaultAddressBookLifecycleHook::new(
+                            address_book_repo_for_hook.clone(),
+                            contact_storage_for_hook.clone(),
                             authorization.clone(),
                         ),
                     ))
@@ -1835,7 +1892,13 @@ impl AppServiceFactory {
             tracing::info!("PathResolver service initialized");
         }
 
-        // 10. Wire CalDAV/CardDAV services
+        // 10. Wire CalDAV/CardDAV services. Note: the `*_for_hook`
+        //     adapters constructed inside the enable-auth block above
+        //     are out of scope here (that block ends before AppState
+        //     assembly). Re-constructing local adapters over the same
+        //     `pool` is cheap — the pool itself is shared via Arc, and
+        //     adapters are stateless delegators. Both instances end up
+        //     talking to the same rows.
         {
             // CalDAV
             let calendar_repo: Arc<CalendarPgRepository> = Arc::new(
@@ -1872,12 +1935,6 @@ impl AppServiceFactory {
                     pool.clone(),
                 ),
             );
-            // Post-Round-3: symmetric with CalendarService/CalendarStorageAdapter.
-            //   * ContactStorageAdapter → pure ContactStoragePort impl
-            //     (raw PG storage, no ACL, no sharing).
-            //   * ContactService → gates every call through the
-            //     AuthorizationEngine, then delegates through the port.
-            //     Owns both AddressBookUseCase + ContactUseCase impls.
             let contact_storage = Arc::new(
                 crate::infrastructure::adapters::contact_storage_adapter::ContactStorageAdapter::new(
                     address_book_repo,

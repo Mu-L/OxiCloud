@@ -363,3 +363,172 @@ impl CalendarUseCase for CalendarService {
             .await
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DefaultCalendarLifecycleHook
+//
+// Ensures every internal user has at least one owned calendar so CalDAV
+// clients (Thunderbird, Apple Calendar, DAVx⁵, Gnome Calendar) succeed at
+// their PROPFIND-based calendar discovery on first connect. Without this,
+// a fresh user's calendar home collection is empty and every mainstream
+// client returns "no calendars found" rather than offering to create one
+// (see AtalayaLabs/OxiCloud#545).
+//
+// Idempotency: keyed on "user owns at least one calendar" via
+// `list_calendars_by_owner`. If the user has any owned calendar — whether
+// auto-provisioned by an earlier run, manually created by the user, or
+// migrated in from another source — the hook skips. A user who deletes
+// their only calendar gets a fresh default on next login (Nextcloud-style
+// safety-net), matching `PersonalDriveLifecycleHook`. If they don't want
+// a default, they're free to leave one they never open — it's an entry
+// in a list, not a bill.
+//
+// Skips `is_external = true`. External users don't own resources; they
+// only receive shares. When an external is later upgraded to internal via
+// `POST /api/auth/upgrade-to-internal`, `on_upgraded_to_internal` fires
+// and provisions the default at that point.
+// ─────────────────────────────────────────────────────────────────────────────
+
+use crate::application::ports::user_lifecycle::{DeletionMode, LogoutReason, UserLifecycleHook};
+use crate::domain::entities::user::User;
+use async_trait::async_trait;
+
+pub struct DefaultCalendarLifecycleHook {
+    calendar_storage: Arc<CalendarStorageAdapter>,
+    /// Concrete engine — same reasoning as `PersonalDriveLifecycleHook`:
+    /// `AuthorizationEngine` isn't dyn-compatible (native async-fn-in-
+    /// trait), so we hold the concrete `PgAclEngine`.
+    authorization: Arc<PgAclEngine>,
+    /// Display name for the default calendar. Matches the Nextcloud
+    /// convention so switching users don't notice the difference.
+    /// Not user-visible-only — CalDAV clients render this string.
+    default_name: String,
+}
+
+impl DefaultCalendarLifecycleHook {
+    pub fn new(
+        calendar_storage: Arc<CalendarStorageAdapter>,
+        authorization: Arc<PgAclEngine>,
+    ) -> Self {
+        Self {
+            calendar_storage,
+            authorization,
+            // "Personal" mirrors the Nextcloud default. Kept as a
+            // struct field so a future `OXICLOUD_DEFAULT_CALENDAR_NAME`
+            // env var can override without touching the hook body.
+            default_name: "Personal".to_string(),
+        }
+    }
+
+    /// Idempotent provisioning. Shared by `on_user_created`,
+    /// `on_user_login` (safety-net for pre-existing users), and
+    /// `on_upgraded_to_internal` (external → internal promotion).
+    async fn provision_if_needed(&self, user: &User) -> Result<(), DomainError> {
+        if user.is_external() {
+            return Ok(());
+        }
+
+        // Ownership-based idempotency check (see hook docstring for
+        // the design rationale). Whether the existing calendar was
+        // auto-provisioned by a prior run, manually created by the
+        // user, or migrated in, we respect it and skip.
+        let existing = self
+            .calendar_storage
+            .list_calendars_by_owner(user.id())
+            .await
+            .map_err(|e| {
+                DomainError::internal_error(
+                    "DefaultCalendarHook",
+                    format!("list_calendars_by_owner: {e}"),
+                )
+            })?;
+        if !existing.is_empty() {
+            return Ok(());
+        }
+
+        // Provision. Two writes: calendar row + Owner role_grant. The
+        // Owner grant makes the CalDAV engine's grant lookup on first
+        // read a cache hit, matching the pattern in
+        // `CalendarService::create_calendar`.
+        let dto = CreateCalendarDto {
+            name: self.default_name.clone(),
+            description: None,
+            color: None,
+            is_public: Some(false),
+        };
+        let created = self
+            .calendar_storage
+            .create_calendar(dto, user.id())
+            .await
+            .map_err(|e| {
+                DomainError::internal_error("DefaultCalendarHook", format!("create_calendar: {e}"))
+            })?;
+        let calendar_uuid = Uuid::parse_str(&created.id).map_err(|_| {
+            DomainError::internal_error(
+                "DefaultCalendarHook",
+                "storage returned invalid calendar id",
+            )
+        })?;
+        self.authorization
+            .set_role(
+                user.id(),
+                Subject::User(user.id()),
+                Role::Owner,
+                Resource::Calendar(calendar_uuid),
+                None,
+            )
+            .await?;
+
+        tracing::info!(
+            target: "user_lifecycle",
+            hook = "default_calendar",
+            user_id = %user.id(),
+            calendar_id = %calendar_uuid,
+            "Default calendar provisioned"
+        );
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl UserLifecycleHook for DefaultCalendarLifecycleHook {
+    fn name(&self) -> &'static str {
+        "default_calendar"
+    }
+
+    async fn on_user_created(&self, user: &User) -> Result<(), DomainError> {
+        self.provision_if_needed(user).await
+    }
+
+    /// Safety-net: fires on every login, provisions if the user has no
+    /// owned calendar. This is what fixes pre-existing users after the
+    /// hook ships — no data migration needed, they get their default on
+    /// their next login. Same pattern as `PersonalDriveLifecycleHook`.
+    async fn on_user_login(&self, user: &User) -> Result<(), DomainError> {
+        self.provision_if_needed(user).await
+    }
+
+    /// External → internal upgrade. At creation the user was external
+    /// (guarded off in `provision_if_needed`); now they're internal
+    /// and eligible for a default calendar.
+    async fn on_upgraded_to_internal(&self, user: &User) -> Result<(), DomainError> {
+        self.provision_if_needed(user).await
+    }
+
+    async fn on_user_logout(&self, _user: &User, _reason: LogoutReason) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn on_user_deleted(
+        &self,
+        _user: &User,
+        _mode: DeletionMode,
+        _tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<(), DomainError> {
+        // `caldav.calendars.owner_id` has ON DELETE CASCADE on
+        // `auth.users(id)`, and calendar_events cascade off calendar.
+        // The trigger on `role_grants` reaps the token grants. No
+        // hook-side cleanup needed.
+        Ok(())
+    }
+}

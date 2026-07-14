@@ -1070,3 +1070,157 @@ impl ContactUseCase for ContactService {
         Ok(vcards)
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DefaultAddressBookLifecycleHook
+//
+// Ensures every internal user has at least one owned address book so
+// CardDAV clients (Thunderbird, Apple Contacts, DAVx⁵) succeed at their
+// PROPFIND-based address-book discovery on first connect. Without this,
+// a fresh user's carddav home collection is empty and every mainstream
+// client returns "no address books found" rather than offering to create
+// one (see AtalayaLabs/OxiCloud#545 — same class of bug as CalDAV).
+//
+// Symmetric with `DefaultCalendarLifecycleHook`. See the calendar hook
+// docstring for the design rationale (ownership-based idempotency, safety-
+// net on login, external → internal upgrade, deletion behaviour).
+// ─────────────────────────────────────────────────────────────────────────────
+
+use crate::application::ports::user_lifecycle::{DeletionMode, LogoutReason, UserLifecycleHook};
+use crate::domain::entities::user::User;
+use crate::domain::repositories::address_book_repository::AddressBookRepository;
+use crate::infrastructure::repositories::pg::AddressBookPgRepository;
+use async_trait::async_trait;
+
+pub struct DefaultAddressBookLifecycleHook {
+    /// Owner-listing goes through the concrete repository (bypasses the
+    /// storage port which doesn't expose owner-only enumeration —
+    /// matching the pattern `PersonalDriveLifecycleHook` uses for
+    /// `find_default_for_user`).
+    address_book_repo: Arc<AddressBookPgRepository>,
+    contact_storage: Arc<ContactStorageAdapter>,
+    /// Concrete engine — `AuthorizationEngine` isn't dyn-compatible
+    /// (native async-fn-in-trait), so we hold the concrete
+    /// `PgAclEngine` matching the other lifecycle hooks.
+    authorization: Arc<PgAclEngine>,
+    /// Display name for the default address book. "Contacts" mirrors
+    /// the Nextcloud convention CardDAV clients already recognise.
+    default_name: String,
+}
+
+impl DefaultAddressBookLifecycleHook {
+    pub fn new(
+        address_book_repo: Arc<AddressBookPgRepository>,
+        contact_storage: Arc<ContactStorageAdapter>,
+        authorization: Arc<PgAclEngine>,
+    ) -> Self {
+        Self {
+            address_book_repo,
+            contact_storage,
+            authorization,
+            default_name: "Contacts".to_string(),
+        }
+    }
+
+    /// Idempotent provisioning. Shared by `on_user_created`,
+    /// `on_user_login` (safety-net for pre-existing users), and
+    /// `on_upgraded_to_internal` (external → internal promotion).
+    async fn provision_if_needed(&self, user: &User) -> Result<(), DomainError> {
+        if user.is_external() {
+            return Ok(());
+        }
+
+        // Ownership-based idempotency check — same rationale as the
+        // calendar hook. Any existing owned address book (auto-
+        // provisioned earlier, user-created, migrated) is respected.
+        let existing = self
+            .address_book_repo
+            .get_address_books_by_owner(user.id())
+            .await
+            .map_err(|e| {
+                DomainError::internal_error(
+                    "DefaultAddressBookHook",
+                    format!("get_address_books_by_owner: {e}"),
+                )
+            })?;
+        if !existing.is_empty() {
+            return Ok(());
+        }
+
+        // Provision. The address-book service constructs the entity
+        // directly (no dedicated storage-adapter method), so we do the
+        // same here: build the `AddressBook` domain type, persist via
+        // the storage port, then seed the Owner role_grant.
+        let address_book = AddressBook::new(
+            self.default_name.clone(),
+            user.id().to_string(),
+            None,
+            None,
+            false,
+        );
+        let created = self
+            .contact_storage
+            .create_address_book(address_book)
+            .await
+            .map_err(|e| {
+                DomainError::internal_error(
+                    "DefaultAddressBookHook",
+                    format!("create_address_book: {e}"),
+                )
+            })?;
+        self.authorization
+            .set_role(
+                user.id(),
+                Subject::User(user.id()),
+                Role::Owner,
+                Resource::AddressBook(*created.id()),
+                None,
+            )
+            .await?;
+
+        tracing::info!(
+            target: "user_lifecycle",
+            hook = "default_address_book",
+            user_id = %user.id(),
+            address_book_id = %created.id(),
+            "Default address book provisioned"
+        );
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl UserLifecycleHook for DefaultAddressBookLifecycleHook {
+    fn name(&self) -> &'static str {
+        "default_address_book"
+    }
+
+    async fn on_user_created(&self, user: &User) -> Result<(), DomainError> {
+        self.provision_if_needed(user).await
+    }
+
+    async fn on_user_login(&self, user: &User) -> Result<(), DomainError> {
+        self.provision_if_needed(user).await
+    }
+
+    async fn on_upgraded_to_internal(&self, user: &User) -> Result<(), DomainError> {
+        self.provision_if_needed(user).await
+    }
+
+    async fn on_user_logout(&self, _user: &User, _reason: LogoutReason) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn on_user_deleted(
+        &self,
+        _user: &User,
+        _mode: DeletionMode,
+        _tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<(), DomainError> {
+        // `carddav.address_books.owner_id` has ON DELETE CASCADE on
+        // `auth.users(id)`, and contacts cascade off address_book. The
+        // trigger on `role_grants` reaps the token grants. No hook-side
+        // cleanup needed.
+        Ok(())
+    }
+}

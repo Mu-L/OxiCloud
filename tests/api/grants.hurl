@@ -301,15 +301,22 @@ Authorization: Bearer {{dave_token}}
 
 HTTP 200
 [Asserts]
-# Post-D0 every user carries an incoming Owner grant on their own
-# personal drive (provisioned by the lifecycle hook). The pre-D0
-# assertion was "no grants at all" (count == 0); the post-D0
-# equivalent is "exactly the self-drive grant remains" (count == 1).
-# Hurl's JSONPath filter returns "no value" — not an empty array —
-# when nothing matches, so a `count == 0` over a negative filter
-# fails to evaluate; the positive-count form sidesteps that quirk.
-jsonpath "$" count == 1
-jsonpath "$[0].resource.type" == "drive"
+# Every user carries three self-owned Owner grants provisioned by
+# the lifecycle hooks:
+#   * personal drive         (PersonalDriveLifecycleHook, D0)
+#   * default calendar       (DefaultCalendarLifecycleHook, #545)
+#   * default address book   (DefaultAddressBookLifecycleHook, #545)
+# The pre-lifecycle-hook assertion here was "no grants at all"
+# (count == 0). D0 shifted it to "exactly the drive Owner grant"
+# (count == 1). Adding the CalDAV/CardDAV defaults shifts it again
+# to count == 3. Body-contains checks for each resource type are
+# ordering-agnostic (the incoming feed doesn't guarantee stable
+# ordering across resource types) and mirror the pattern used by
+# default_caldav_carddav.hurl.
+jsonpath "$" count == 3
+body contains "\"type\":\"drive\""
+body contains "\"type\":\"calendar\""
+body contains "\"type\":\"address_book\""
 
 
 # ─────────────────────────────────────────────────────────────
@@ -320,15 +327,12 @@ Authorization: Bearer {{eve_token}}
 
 HTTP 200
 [Asserts]
-# Post-D0 every user carries an incoming Owner grant on their own
-# personal drive (provisioned by the lifecycle hook). The pre-D0
-# assertion was "no grants at all" (count == 0); the post-D0
-# equivalent is "exactly the self-drive grant remains" (count == 1).
-# Hurl's JSONPath filter returns "no value" — not an empty array —
-# when nothing matches, so a `count == 0` over a negative filter
-# fails to evaluate; the positive-count form sidesteps that quirk.
-jsonpath "$" count == 1
-jsonpath "$[0].resource.type" == "drive"
+# See Step 18 for the invariant rationale (three self-owned Owner
+# grants per user from the lifecycle hooks).
+jsonpath "$" count == 3
+body contains "\"type\":\"drive\""
+body contains "\"type\":\"calendar\""
+body contains "\"type\":\"address_book\""
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -855,21 +859,23 @@ Authorization: Bearer {{alice_token}}
 
 HTTP 200
 
-# Adam's incoming list is empty.
+# Adam's incoming list holds only his three self-owned Owner grants
+# (drive + calendar + address_book — provisioned by the lifecycle
+# hooks). No inbound grants from other users.
 GET {{base_url}}/api/grants/incoming
 Authorization: Bearer {{adam_token}}
 
 HTTP 200
 [Asserts]
-# Post-D0 every user carries an incoming Owner grant on their own
-# personal drive (provisioned by the lifecycle hook). The pre-D0
-# assertion was "no grants at all" (count == 0); the post-D0
-# equivalent is "exactly the self-drive grant remains" (count == 1).
-# Hurl's JSONPath filter returns "no value" — not an empty array —
-# when nothing matches, so a `count == 0` over a negative filter
-# fails to evaluate; the positive-count form sidesteps that quirk.
-jsonpath "$" count == 1
-jsonpath "$[0].resource.type" == "drive"
+# See Step 18 above for the full invariant rationale — three
+# self-owned Owner grants per user (drive + calendar +
+# address_book). Body-contains rather than positional check
+# because the incoming feed doesn't guarantee stable ordering
+# across resource types.
+jsonpath "$" count == 3
+body contains "\"type\":\"drive\""
+body contains "\"type\":\"calendar\""
+body contains "\"type\":\"address_book\""
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1293,12 +1299,12 @@ Authorization: Bearer {{frank_token}}
 
 HTTP 200
 [Asserts]
-# Post-D0 every user carries an incoming Owner grant on their own
-# personal drive (provisioned by the lifecycle hook). The pre-D0
-# assertion was "no grants at all" (count == 0); the post-D0
-# equivalent is "exactly the self-drive grant remains" (count == 1).
-# Hurl's JSONPath filter returns "no value" — not an empty array —
-# when nothing matches, so a `count == 0` over a negative filter
-# fails to evaluate; the positive-count form sidesteps that quirk.
-jsonpath "$" count == 1
-jsonpath "$[0].resource.type" == "drive"
+# See Step 18 above for the full invariant rationale — three
+# self-owned Owner grants per user (drive + calendar +
+# address_book) from the lifecycle hooks. Body-contains rather
+# than positional check because the incoming feed doesn't
+# guarantee stable ordering across resource types.
+jsonpath "$" count == 3
+body contains "\"type\":\"drive\""
+body contains "\"type\":\"calendar\""
+body contains "\"type\":\"address_book\""
