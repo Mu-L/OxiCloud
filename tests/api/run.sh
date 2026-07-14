@@ -168,6 +168,7 @@ hurl --variables-file "$API_DIR/test.env" --file-root "$REPO_ROOT/tests" --test 
   "$API_DIR/dav_error_mapping.hurl" \
   "$API_DIR/contacts.hurl" \
   "$API_DIR/calendar.hurl" \
+  "$API_DIR/caldav_recurring.hurl" \
   "$API_DIR/playlists.hurl" \
   "$API_DIR/public_shares.hurl" \
   "$API_DIR/permissions.hurl" \

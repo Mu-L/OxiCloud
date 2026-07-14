@@ -35,6 +35,7 @@ mod tests {
             all_day: false,
             rrule: None,
             ical_uid: "uid-evt-001@oxicloud".to_string(),
+            recurrence_id: None,
             created_at: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             updated_at: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
         }

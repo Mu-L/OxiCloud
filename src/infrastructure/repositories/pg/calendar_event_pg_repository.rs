@@ -389,6 +389,66 @@ impl CalendarEventRepository for CalendarEventPgRepository {
         }
     }
 
+    async fn find_event_by_ical_uid_and_recurrence_id(
+        &self,
+        calendar_id: &Uuid,
+        ical_uid: &str,
+        recurrence_id: &DateTime<Utc>,
+    ) -> CalendarEventRepositoryResult<Option<CalendarEvent>> {
+        // Uses idx_calendar_events_exception_unique — the partial
+        // unique index on (calendar_id, ical_uid, recurrence_id)
+        // WHERE recurrence_id IS NOT NULL — for the exact-match seek.
+        let row_opt = sqlx::query(
+            r#"
+            SELECT
+                id, calendar_id, summary, description, location,
+                start_time, end_time, all_day, rrule,
+                created_at, updated_at, ical_uid, ical_data, recurrence_id
+            FROM caldav.calendar_events
+            WHERE calendar_id = $1
+              AND ical_uid = $2
+              AND recurrence_id = $3
+            "#,
+        )
+        .bind(calendar_id)
+        .bind(ical_uid)
+        .bind(recurrence_id)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| {
+            DomainError::database_error(format!(
+                "Failed to get calendar event exception by UID+RECURRENCE-ID: {}",
+                e
+            ))
+        })?;
+
+        match row_opt {
+            Some(row) => {
+                let mut event = CalendarEvent::with_id(
+                    row.get("id"),
+                    row.get("calendar_id"),
+                    row.get("summary"),
+                    row.get::<Option<String>, _>("description"),
+                    row.get::<Option<String>, _>("location"),
+                    row.get("start_time"),
+                    row.get("end_time"),
+                    row.get("all_day"),
+                    row.get::<Option<String>, _>("rrule"),
+                    row.get("ical_uid"),
+                    row.get("ical_data"),
+                    row.get("created_at"),
+                    row.get("updated_at"),
+                )
+                .map_err(|e| {
+                    DomainError::database_error(format!("Error creating calendar event: {}", e))
+                })?;
+                event.set_recurrence_id(row.get::<Option<DateTime<Utc>>, _>("recurrence_id"));
+                Ok(Some(event))
+            }
+            None => Ok(None),
+        }
+    }
+
     async fn find_events_by_ical_uids(
         &self,
         calendar_id: &Uuid,

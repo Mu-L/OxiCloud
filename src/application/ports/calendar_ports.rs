@@ -6,6 +6,19 @@ use crate::common::errors::DomainError;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+/// Result of a multi-VEVENT PUT (`upsert_ical_events`). See #528.
+#[derive(Debug, Clone)]
+pub struct UpsertEventsResult {
+    /// Every event that was persisted for this PUT. Ordered as they
+    /// appeared in the body — the master (if present) is typically
+    /// first, followed by exception overrides.
+    pub events: Vec<CalendarEventDto>,
+    /// True if at least one row was newly created; false if every
+    /// event replaced an existing row. Drives the handler's choice
+    /// between 201 Created and 204 No Content.
+    pub any_inserted: bool,
+}
+
 /// Port for external calendar storage mechanisms
 pub trait CalendarStoragePort: Send + Sync + 'static {
     // Calendar operations
@@ -53,6 +66,23 @@ pub trait CalendarStoragePort: Send + Sync + 'static {
         &self,
         event: CreateEventICalDto,
     ) -> Result<CalendarEventDto, DomainError>;
+    /// Upsert every VEVENT in an iCalendar body — one master and zero
+    /// or more per-instance exception overrides (RFC 5545 §3.8.4.4).
+    ///
+    /// Routing: an event whose `RECURRENCE-ID` is unset targets the
+    /// master row `(calendar_id, ical_uid) WHERE recurrence_id IS NULL`;
+    /// an event whose `RECURRENCE-ID` is set targets its own exception
+    /// row `(calendar_id, ical_uid, recurrence_id)` and never touches
+    /// the master. Existing rows are replaced (delete-then-insert to
+    /// stay compatible with the DB-level partial unique indexes and to
+    /// keep the ETag surface identical to the pre-#528 single-event
+    /// path).
+    ///
+    /// See AtalayaLabs/OxiCloud#528.
+    async fn upsert_ical_events(
+        &self,
+        event: CreateEventICalDto,
+    ) -> Result<UpsertEventsResult, DomainError>;
     async fn update_event(
         &self,
         event_id: &str,
@@ -136,6 +166,15 @@ pub trait CalendarUseCase: Send + Sync + 'static {
         event: CreateEventICalDto,
         user_id: Uuid,
     ) -> Result<CalendarEventDto, DomainError>;
+    /// Route a PUT'd iCalendar body containing one or more VEVENTs to
+    /// their per-instance rows. See `CalendarStoragePort::upsert_ical_events`
+    /// for the routing rules; this method just adds the `Permission::Create`
+    /// gate for the caller.
+    async fn upsert_ical_events(
+        &self,
+        event: CreateEventICalDto,
+        user_id: Uuid,
+    ) -> Result<UpsertEventsResult, DomainError>;
     async fn update_event(
         &self,
         event_id: &str,

@@ -795,6 +795,86 @@ impl CalendarEvent {
         Some((value.trim().to_string(), params))
     }
 
+    /// Parse a VCALENDAR body containing one or more VEVENT components
+    /// (typically a master + one or more per-instance exception
+    /// overrides in the same PUT — RFC 5545 §3.6.1), returning one
+    /// `CalendarEvent` per VEVENT.
+    ///
+    /// Splitting is done on the raw text so each returned entity's
+    /// `ical_data` remains a valid standalone iCalendar body (the GET
+    /// path serves it verbatim). Line-folding (§3.1) is preserved
+    /// because we forward every line as-is inside the extracted block;
+    /// the ical-crate parser inside `from_ical` unfolds when reading.
+    ///
+    /// Nested VALARM / VTODO sub-components inside a VEVENT are
+    /// carried through unchanged — the scanner only splits on
+    /// `BEGIN:VEVENT` / `END:VEVENT` at the outer level.
+    ///
+    /// Returns `InvalidInput` if the body contains zero VEVENTs — a
+    /// PUT with no events isn't a state we accept on the CalDAV surface.
+    pub fn parse_all_events(calendar_id: Uuid, ical_data: &str) -> Result<Vec<Self>> {
+        let blocks = Self::split_vevents(ical_data);
+
+        if blocks.is_empty() {
+            return Err(DomainError::new(
+                ErrorKind::InvalidInput,
+                "CalendarEvent",
+                "No VEVENT components found in iCalendar body",
+            ));
+        }
+
+        let mut out = Vec::with_capacity(blocks.len());
+        for block in blocks {
+            // Wrap each VEVENT in a fresh VCALENDAR shell so the
+            // stored `ical_data` per row is self-describing (RFC 5545
+            // §3.4 mandates VERSION + PRODID on any exported body).
+            let wrapped = format!(
+                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//OxiCloud//NONSGML Calendar//EN\r\n{}END:VCALENDAR\r\n",
+                block,
+            );
+            out.push(Self::from_ical(calendar_id, wrapped)?);
+        }
+        Ok(out)
+    }
+
+    /// Extract each `BEGIN:VEVENT` … `END:VEVENT` block from the raw
+    /// body as its own String (CRLF-terminated). Component tags are
+    /// matched case-insensitively per RFC 5545 §3.1. Anything outside
+    /// a VEVENT (VTIMEZONE / VTODO / VJOURNAL / calendar-level
+    /// properties) is discarded — those aren't ours to persist.
+    fn split_vevents(ical_data: &str) -> Vec<String> {
+        let mut blocks = Vec::new();
+        let mut in_event = false;
+        let mut current = String::new();
+
+        for raw_line in ical_data.split('\n') {
+            let line = raw_line.trim_end_matches('\r');
+            // Match the tag ignoring case, allowing surrounding
+            // whitespace (some clients emit a leading space on folded
+            // continuations — the raw-line scan sees those but they
+            // won't start with BEGIN/END so they slot through as
+            // in-event content, which is correct).
+            let upper = line.trim_start().to_ascii_uppercase();
+
+            if upper.starts_with("BEGIN:VEVENT") {
+                in_event = true;
+                current.clear();
+            }
+
+            if in_event {
+                current.push_str(line);
+                current.push_str("\r\n");
+            }
+
+            if in_event && upper.starts_with("END:VEVENT") {
+                blocks.push(std::mem::take(&mut current));
+                in_event = false;
+            }
+        }
+
+        blocks
+    }
+
     /// Parse the raw iCalendar body and return the first VEVENT
     /// component's properties. Returns `None` on any parse failure or
     /// if the body carries zero events (e.g. a `VCALENDAR` with only
@@ -1210,7 +1290,7 @@ END:VCALENDAR\r
             ev.recurrence_id().is_none(),
             "master with RRULE should still have recurrence_id = None"
         );
-        assert_eq!(ev.rrule().as_deref(), Some("FREQ=DAILY;COUNT=10"));
+        assert_eq!(ev.rrule(), Some("FREQ=DAILY;COUNT=10"));
     }
 
     #[test]
@@ -1273,6 +1353,193 @@ END:VCALENDAR\r
             rid.to_rfc3339(),
             "2026-01-12T00:00:00+00:00",
             "all-day RECURRENCE-ID must normalise to 00:00:00 UTC of the target date"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Phase 3 — parse_all_events (multi-VEVENT splitter)
+    // ─────────────────────────────────────────────────────────────
+
+    /// Timed daily recurring master + one timed exception override,
+    /// both inside a single VCALENDAR wrapper — the shape a CalDAV
+    /// client PUTs when it modifies one occurrence.
+    const MASTER_PLUS_TIMED_EXCEPTION: &str = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//OxiCloud test//EN\r
+BEGIN:VEVENT\r
+UID:daily-1@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART:20260101T090000Z\r
+DTEND:20260101T093000Z\r
+SUMMARY:Daily standup\r
+RRULE:FREQ=DAILY;COUNT=10\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+UID:daily-1@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART:20260103T110000Z\r
+DTEND:20260103T120000Z\r
+SUMMARY:Daily standup — rescheduled\r
+RECURRENCE-ID:20260103T090000Z\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+
+    #[test]
+    fn parse_all_events_splits_master_and_exception() {
+        // Both VEVENTs must come back: master with recurrence_id=None,
+        // exception with recurrence_id=Some. UIDs match (that's what
+        // ties the exception to its master); it's the recurrence_id
+        // marker that distinguishes them.
+        let cal_id = Uuid::new_v4();
+        let events = CalendarEvent::parse_all_events(cal_id, MASTER_PLUS_TIMED_EXCEPTION)
+            .expect("both VEVENTs must parse");
+
+        assert_eq!(events.len(), 2, "expected master + exception");
+        assert_eq!(events[0].ical_uid(), "daily-1@oxicloud.test");
+        assert_eq!(events[1].ical_uid(), "daily-1@oxicloud.test");
+
+        assert!(
+            events[0].recurrence_id().is_none(),
+            "first row must be the master (recurrence_id None)"
+        );
+        let rid = events[1]
+            .recurrence_id()
+            .expect("second row must be the exception override");
+        assert_eq!(rid.to_rfc3339(), "2026-01-03T09:00:00+00:00");
+
+        assert_eq!(events[0].rrule(), Some("FREQ=DAILY;COUNT=10"));
+        assert!(
+            events[1].rrule().is_none(),
+            "exception overrides do NOT carry RRULE"
+        );
+
+        // Each event's stored ical_data must be a self-contained
+        // VCALENDAR body so the GET path can serve it verbatim.
+        for e in &events {
+            assert!(e.ical_data().starts_with("BEGIN:VCALENDAR"));
+            assert!(e.ical_data().trim_end().ends_with("END:VCALENDAR"));
+        }
+    }
+
+    #[test]
+    fn parse_all_events_lone_master_returns_single_event() {
+        // No RECURRENCE-ID exception in the body → one row, master.
+        let cal_id = Uuid::new_v4();
+        let events =
+            CalendarEvent::parse_all_events(cal_id, TIMED_EVENT).expect("plain event must parse");
+        assert_eq!(events.len(), 1);
+        assert!(events[0].recurrence_id().is_none());
+    }
+
+    #[test]
+    fn parse_all_events_all_day_master_plus_all_day_exception() {
+        // The #528 shape: DATE-form DTSTART on both, DATE-form
+        // RECURRENCE-ID on the exception. Pre-parser-rewrite this
+        // silently 500'd because the param-carrying property lines
+        // were invisible to the substring scanner.
+        let body = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//OxiCloud test//EN\r
+BEGIN:VEVENT\r
+UID:weekly-allday@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART;VALUE=DATE:20260105\r
+DTEND;VALUE=DATE:20260106\r
+SUMMARY:Weekly review\r
+RRULE:FREQ=WEEKLY;COUNT=4\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+UID:weekly-allday@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART;VALUE=DATE:20260113\r
+DTEND;VALUE=DATE:20260114\r
+SUMMARY:Weekly review — rescheduled\r
+RECURRENCE-ID;VALUE=DATE:20260112\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+        let cal_id = Uuid::new_v4();
+        let events = CalendarEvent::parse_all_events(cal_id, body).expect("both must parse");
+        assert_eq!(events.len(), 2);
+        assert!(events[0].all_day());
+        assert!(events[1].all_day());
+        assert!(events[0].recurrence_id().is_none());
+        let rid = events[1].recurrence_id().unwrap();
+        assert_eq!(rid.to_rfc3339(), "2026-01-12T00:00:00+00:00");
+    }
+
+    #[test]
+    fn parse_all_events_zero_vevents_is_invalid_input() {
+        // A VCALENDAR with only calendar-level properties (no events)
+        // is not a state the CalDAV surface accepts on PUT.
+        let body = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//test//EN\r
+END:VCALENDAR\r
+";
+        let err =
+            CalendarEvent::parse_all_events(Uuid::new_v4(), body).expect_err("must reject empty");
+        assert_eq!(err.kind, ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn parse_all_events_vtodo_is_ignored() {
+        // A body carrying only VTODOs (no VEVENTs) is treated as
+        // "zero events" — we don't persist tasks in the events table.
+        let body = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//test//EN\r
+BEGIN:VTODO\r
+UID:task-1@x\r
+SUMMARY:buy milk\r
+END:VTODO\r
+END:VCALENDAR\r
+";
+        let err = CalendarEvent::parse_all_events(Uuid::new_v4(), body)
+            .expect_err("VTODO-only body must be rejected");
+        assert_eq!(err.kind, ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn parse_all_events_preserves_valarm_inside_vevent() {
+        // VALARM lives INSIDE a VEVENT. The splitter must NOT be
+        // fooled by BEGIN:VALARM into thinking a new outer component
+        // has started — the whole VALARM block must ride along inside
+        // the parent VEVENT's stored ical_data.
+        let body = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//test//EN\r
+BEGIN:VEVENT\r
+UID:with-alarm@x\r
+DTSTAMP:20260101T100000Z\r
+DTSTART:20260101T090000Z\r
+DTEND:20260101T093000Z\r
+SUMMARY:Standup with alarm\r
+BEGIN:VALARM\r
+ACTION:DISPLAY\r
+TRIGGER:-PT15M\r
+DESCRIPTION:Standup soon\r
+END:VALARM\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+        let events = CalendarEvent::parse_all_events(Uuid::new_v4(), body)
+            .expect("VEVENT with VALARM must parse");
+        assert_eq!(events.len(), 1);
+        let stored = events[0].ical_data();
+        assert!(
+            stored.contains("BEGIN:VALARM"),
+            "VALARM must survive the split into stored ical_data"
+        );
+        assert!(
+            stored.contains("END:VALARM"),
+            "matching END:VALARM must survive too"
         );
     }
 
