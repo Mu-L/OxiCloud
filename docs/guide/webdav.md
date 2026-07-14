@@ -8,6 +8,49 @@ OxiCloud exposes a fully RFC 4918 compliant WebDAV interface at `/webdav/`. It w
 https://your-server:8086/webdav/
 ```
 
+## Drives in the URL
+
+A user can own multiple [drives](/guide/drives) (one personal + any
+number of shared drives they've been added to). The WebDAV URL scheme
+lets you address them all, and the operator can choose between two
+layouts via `OXICLOUD_WEBDAV_DRIVE_LISTING_PREFIX` (default `"@drive"`):
+
+**Default — `"@drive"` sigil.** Bare `/webdav/…` addresses your default
+personal drive, keeping single-drive clients working with zero config.
+Explicit drive listing lives under the sigil.
+
+| URL | Target |
+|---|---|
+| `/webdav/` | Your default personal drive (back-compat) |
+| `/webdav/Documents/report.pdf` | A file inside your default drive |
+| `/webdav/@drive/` | Directory listing of every drive you can read |
+| `/webdav/@drive/<uuid-or-name>/…` | A specific drive by UUID or display name |
+
+**Empty prefix (`""`) — flat layout.** `/webdav/` IS the drive listing.
+Every drive appears as a top-level entry. No hidden default.
+
+| URL | Target |
+|---|---|
+| `/webdav/` | Directory listing of every drive you can read |
+| `/webdav/<uuid-or-name>/…` | A specific drive by UUID or display name |
+
+Set `OXICLOUD_WEBDAV_DRIVE_LISTING_PREFIX=""` for the flat layout.
+Any non-empty value replaces the sigil (e.g. `"drives"` gives you
+`/webdav/drives/<selector>/…`).
+
+**Trade-off with the empty prefix**: recursive DAV clients (Cyberduck,
+Finder, rclone default, NC desktop) will mirror ALL drives you can
+read, which can be a lot of storage. The `@drive` sigil keeps the
+default drive as the client's sync root and puts the picker behind an
+opt-in URL. Pick the empty prefix only when you want explicit
+multi-drive visibility.
+
+**Folder name collision note.** A user could name a folder `@drive`
+inside their default drive; that folder would then mask the drive
+picker for that user under the default sigil. Rare enough to be
+accepted; the sigil is renameable via the env var above if it becomes
+an issue.
+
 ## Authentication
 
 HTTP Basic Authentication:
