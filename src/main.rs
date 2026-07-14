@@ -174,7 +174,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Explicit file → hard error on a missing/unreadable path.
             // Silent fallback would defeat the purpose of pinning the
             // config source.
-            if let Err(e) = dotenvy::from_filename(path) {
+            //
+            // `from_filename_override` (not `from_filename`) so the
+            // config file wins over the shell's process env. Without
+            // this, an operator's leftover `export OXICLOUD_*` from a
+            // dev session leaks into a `--config` invocation and
+            // silently corrupts test/CI runs — a rejected shell var
+            // stays in effect despite the "explicit config" contract.
+            // For the default (no `--config`) path we KEEP the
+            // non-overriding `dotenvy::dotenv()` — that path is dev
+            // convenience where a live shell export is the expected
+            // ad-hoc override.
+            if let Err(e) = dotenvy::from_filename_override(path) {
                 eprintln!("failed to load --config {path}: {e}");
                 std::process::exit(2);
             }
