@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use axum::body::Body;
 use bytes::Bytes;
@@ -80,6 +80,24 @@ pub async fn discard_ingested(dedup: &DedupService, blob: &IngestedBlob) {
 /// Shared mutable tee for computing a client-requested checksum during the
 /// ingest pass (REST chunked uploads) — no post-store re-read needed.
 pub type ChecksumTee = Arc<StdMutex<Option<IncrementalHasher>>>;
+
+/// A byte-range stream paired with its known length, used by
+/// [`ingest_range_patch_to_cas`] for the untouched prefix/suffix either
+/// side of a PATCH edit.
+pub type RangeSegment = (
+    Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
+    u64,
+);
+
+/// Size cap and expected-length validation for [`ingest_range_patch_to_cas`].
+pub struct PatchIngestBudget {
+    /// Caps the size of the *edit* (the request body), not the whole
+    /// spliced file — see the field's use in [`ingest_range_patch_to_cas`].
+    pub max_bytes: usize,
+    /// Declared `X-Update-Range` span, `None` for `append`. Validated
+    /// against the actual streamed body length, not `Content-Length`.
+    pub expected_body_len: Option<u64>,
+}
 
 /// Create a checksum tee for [`ingest_stream_to_cas`].
 pub fn checksum_tee(alg: ChecksumAlg) -> ChecksumTee {
@@ -260,24 +278,83 @@ pub async fn ingest_body_to_cas(
 /// Because FastCDC chunking is content-defined rather than offset-defined,
 /// unedited chunks on either side of the edit typically dedup for free.
 ///
+/// Each of `prefix`/`suffix` is paired with its known byte length (from the
+/// file's size and the requested range — callers compute it, not this
+/// function). `budget.max_bytes` bounds the size of the *edit* (the request
+/// body) — it is widened by the prefix/suffix lengths before being applied
+/// to the combined stream, so that already-stored, untouched bytes being
+/// re-ingested unchanged don't count against the cap. Without this, any
+/// PATCH against a file at or above `max_bytes` would be rejected
+/// regardless of how small the edit itself is.
+///
+/// `budget.expected_body_len`, when `Some`, is validated against the
+/// *actual* number of body bytes streamed — not the client-supplied
+/// `Content-Length` header, which chunked-transfer-encoded requests may
+/// omit entirely. Counting the real bytes means a request that declares
+/// `X-Update-Range: bytes=5-9` (a 5-byte span) but streams a
+/// differently-sized body is caught regardless of whether `Content-Length`
+/// was present. On mismatch the already-ingested blob is discarded and
+/// never reaches the atomic store, so a rejected PATCH can't leave stray
+/// unreferenced content.
+///
 /// [RFC 5789]: https://www.rfc-editor.org/rfc/rfc5789
 pub async fn ingest_range_patch_to_cas(
-    prefix: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
+    prefix: RangeSegment,
     body: Body,
-    suffix: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
+    suffix: RangeSegment,
     dedup: &Arc<DedupService>,
     filename: &str,
     claimed_type: &str,
-    max_bytes: usize,
+    budget: PatchIngestBudget,
 ) -> Result<IngestedBlob, AppError> {
-    let body_stream = BodyStream::new(body).filter_map(|item| async move {
-        match item {
-            Ok(frame) => frame.into_data().ok().map(Ok),
-            Err(e) => Some(Err(std::io::Error::other(e.to_string()))),
+    let PatchIngestBudget {
+        max_bytes,
+        expected_body_len,
+    } = budget;
+    let (prefix_stream, prefix_len) = prefix;
+    let (suffix_stream, suffix_len) = suffix;
+    let body_len = Arc::new(AtomicU64::new(0));
+    let counter = body_len.clone();
+    let body_stream = BodyStream::new(body).filter_map(move |item| {
+        let counter = counter.clone();
+        async move {
+            match item {
+                Ok(frame) => {
+                    let bytes = frame.into_data().ok()?;
+                    counter.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                    Some(Ok(bytes))
+                }
+                Err(e) => Some(Err(std::io::Error::other(e.to_string()))),
+            }
         }
     });
-    let combined = prefix.chain(body_stream).chain(suffix);
-    ingest_stream_to_cas(combined, dedup, filename, claimed_type, max_bytes, None).await
+    let effective_max = max_bytes.saturating_add((prefix_len + suffix_len) as usize);
+    let combined = prefix_stream.chain(body_stream).chain(suffix_stream);
+    let ingested =
+        ingest_stream_to_cas(combined, dedup, filename, claimed_type, effective_max, None)
+            .await
+            .map_err(|e| {
+                if e.error_type == "PayloadTooLarge" {
+                    AppError::payload_too_large(format!(
+                        "PATCH body exceeds the direct-PATCH edit-size cap ({max_bytes} bytes). \
+                     Use the chunked-upload protocol for edits larger than this."
+                    ))
+                } else {
+                    e
+                }
+            })?;
+
+    if let Some(expected) = expected_body_len {
+        let actual = body_len.load(Ordering::Relaxed);
+        if actual != expected {
+            discard_ingested(dedup, &ingested).await;
+            return Err(AppError::bad_request(format!(
+                "PATCH body ({actual} bytes) does not match the X-Update-Range span ({expected} bytes)"
+            )));
+        }
+    }
+
+    Ok(ingested)
 }
 
 /// Adapt a multipart field into a byte stream for [`ingest_stream_to_cas`].

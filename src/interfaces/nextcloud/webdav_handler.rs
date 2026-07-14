@@ -24,6 +24,7 @@ use crate::application::ports::file_ports::{
     FileManagementUseCase, FileRetrievalUseCase, FileUploadUseCase,
 };
 use crate::application::ports::folder_ports::FolderUseCase;
+use crate::application::ports::storage_ports::StorageUsagePort;
 use crate::application::ports::trash_ports::TrashUseCase;
 use crate::common::di::AppState;
 use crate::common::mime_detect::filename_from_path;
@@ -31,12 +32,15 @@ use crate::domain::services::authorization::{Permission, Resource, Subject};
 use crate::infrastructure::services::path_resolver_service::ResolvedResource;
 use crate::infrastructure::services::webdav_dead_property_store::ResourceRef;
 use crate::interfaces::api::handlers::webdav_handler::{
-    PROPFIND_BATCH_SIZE, dead_props_for, file_dead_props, files_dead_props_map, folder_dead_props, parse_update_range,
+    PROPFIND_BATCH_SIZE, dead_props_for, enforce_native_lock, file_dead_props, files_dead_props_map, folder_dead_props,
+    if_match_precondition_fails, if_none_match_precondition_fails, parse_update_range,
     folders_dead_props_map, streamed_file_dead_props,
 };
 use crate::interfaces::errors::AppError;
 use crate::interfaces::range_requests::{not_modified_response, range_response};
-use crate::interfaces::upload_ingest::{ingest_body_to_cas, ingest_range_patch_to_cas};
+use crate::interfaces::upload_ingest::{
+    PatchIngestBudget, discard_ingested, ingest_body_to_cas, ingest_range_patch_to_cas,
+};
 
 /// Extension trait to map XML write errors to `String` concisely.
 trait XmlResultExt<T> {
@@ -793,55 +797,6 @@ async fn handle_proppatch(
 
 // ──────────────────── PUT ────────────────────
 
-/// Strip the optional `W/` weak prefix and surrounding double-quotes
-/// from one ETag value in an `If-Match` / `If-None-Match` list. Returns
-/// `(is_weak, inner)`.
-fn parse_etag_value(raw: &str) -> (bool, &str) {
-    let trimmed = raw.trim();
-    if let Some(rest) = trimmed.strip_prefix("W/") {
-        (true, rest.trim().trim_matches('"'))
-    } else {
-        (false, trimmed.trim_matches('"'))
-    }
-}
-
-/// RFC 7232 §3.2 — `If-None-Match` fails for PUT when:
-///   - the header value is `*` and a current representation exists, OR
-///   - any listed ETag matches the current representation (weak comparison
-///     — weak validators in the request are equivalent to strong for the
-///     match itself, only If-Match is required to be strong).
-fn if_none_match_precondition_fails(header: &str, current_etag: Option<&str>) -> bool {
-    let v = header.trim();
-    if v == "*" {
-        return current_etag.is_some();
-    }
-    let Some(current) = current_etag else {
-        return false;
-    };
-    v.split(',').any(|tag| {
-        let (_, parsed) = parse_etag_value(tag);
-        !parsed.is_empty() && parsed == current
-    })
-}
-
-/// RFC 7232 §3.1 — `If-Match` fails for PUT when:
-///   - the resource doesn't currently exist (no strong validator to match), OR
-///   - the header isn't `*` and no listed ETag strong-matches the current one
-///     (weak validators in the request never satisfy a strong-match).
-fn if_match_precondition_fails(header: &str, current_etag: Option<&str>) -> bool {
-    let v = header.trim();
-    let Some(current) = current_etag else {
-        return true;
-    };
-    if v == "*" {
-        return false;
-    }
-    !v.split(',').any(|tag| {
-        let (is_weak, parsed) = parse_etag_value(tag);
-        !is_weak && !parsed.is_empty() && parsed == current
-    })
-}
-
 fn precondition_failed_response() -> Response<Body> {
     Response::builder()
         .status(StatusCode::PRECONDITION_FAILED)
@@ -1034,15 +989,67 @@ async fn handle_patch(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/octet-stream")
         .to_string();
+    let if_header = req
+        .headers()
+        .get("If")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
     let max_upload = state.core.config.storage.direct_put_max_bytes;
 
     // ── Existence check ───────────────────────────────────────────────
     // Unlike PUT, PATCH requires an existing file — a partial update of
-    // nothing isn't meaningful.
-    let file = file_service
+    // nothing isn't meaningful. On lookup failure, distinguish "it's a
+    // directory" (409, matching the plain WebDAV surface) from "it
+    // doesn't exist at all" (404) instead of collapsing both to 404.
+    let file = match file_service
         .get_file_by_path(&internal_path, chroot.drive_id)
         .await
+    {
+        Ok(file) => file,
+        Err(_) => {
+            if state
+                .applications
+                .folder_service
+                .get_folder_by_path(&internal_path, chroot.drive_id)
+                .await
+                .is_ok()
+            {
+                return Err(AppError::conflict("Cannot PATCH a directory"));
+            }
+            return Err(AppError::not_found(format!(
+                "File not found: {}",
+                internal_path
+            )));
+        }
+    };
+
+    // `get_file_by_path` performs no authorization check (see its own
+    // doc comment) — mirrors the plain WebDAV surface's explicit
+    // defense-in-depth Read check right after resolving the file, so a
+    // caller without Read on this specific file can't learn its size or
+    // ETag via the precondition/range-bounds responses below.
+    let file_uuid = Uuid::parse_str(&file.id)
         .map_err(|_| AppError::not_found(format!("File not found: {}", internal_path)))?;
+    state
+        .authorization
+        .require(
+            Subject::User(session.user.id),
+            Permission::Read,
+            Resource::File(file_uuid),
+        )
+        .await?;
+
+    // ── Active-lock guard (RFC 4918 §10.4 If: evaluation) ─────────────
+    // Shared with the plain WebDAV surface so a LOCK taken via /webdav/
+    // also protects the same file reached through /remote.php/dav/.
+    if let Some(resp) = enforce_native_lock(
+        &state.webdav_lock_store,
+        if_header.as_deref(),
+        &internal_path,
+        Some(&file.etag),
+    ) {
+        return Ok(resp);
+    }
 
     // ── RFC 7232 conditional preconditions ────────────────────────────
     let current_etag = Some(file.etag.as_str());
@@ -1080,6 +1087,10 @@ async fn handle_patch(
                     .map_err(AppError::from)?,
             )
         };
+    let suffix_len = match end {
+        Some(end) if end + 1 < file.size => file.size - (end + 1),
+        _ => 0,
+    };
     let suffix_stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> = match end
     {
         Some(end) if end + 1 < file.size => Box::into_pin(
@@ -1090,18 +1101,58 @@ async fn handle_patch(
         ),
         _ => Box::pin(stream::empty()),
     };
-
     let filename = filename_from_path(subpath).to_string();
     let ingested = ingest_range_patch_to_cas(
-        prefix_stream,
+        (prefix_stream, start),
         req.into_body(),
-        suffix_stream,
+        (suffix_stream, suffix_len),
         &state.core.dedup_service,
         &filename,
         &claimed_type,
-        max_upload,
+        PatchIngestBudget {
+            max_bytes: max_upload,
+            expected_body_len: end.map(|end| end - start + 1),
+        },
     )
     .await?;
+
+    // ── Quota enforcement ─────────────────────────────────────────────
+    if let Some(storage_svc) = state.storage_usage_service.as_ref()
+        && let Err(err) = storage_svc
+            .check_storage_quota(session.user.id, ingested.size)
+            .await
+    {
+        discard_ingested(&state.core.dedup_service, &ingested).await;
+        tracing::warn!(
+            "⛔ NC WEBDAV PATCH REJECTED (quota): user={}, file={}, size={}",
+            session.user.id,
+            internal_path,
+            ingested.size
+        );
+        return Err(AppError::new(
+            StatusCode::INSUFFICIENT_STORAGE,
+            err.message,
+            "QuotaExceeded",
+        ));
+    }
+
+    // ── Optimistic-concurrency re-check ───────────────────────────────
+    // `file.etag` was snapshotted before the (potentially slow) splice +
+    // CAS-ingest above. Re-verify nothing else wrote to this file in the
+    // meantime, narrowing the window in which two concurrent PATCHes to
+    // disjoint ranges — each individually passing its own If-Match check
+    // against the same stale snapshot — could otherwise silently clobber
+    // each other on the blind-overwrite write path below.
+    if let Ok(current) = file_service
+        .get_file_by_path(&internal_path, chroot.drive_id)
+        .await
+        && current.etag != file.etag
+    {
+        discard_ingested(&state.core.dedup_service, &ingested).await;
+        return Err(AppError::precondition_failed(
+            "File was modified concurrently — retry the PATCH",
+        ));
+    }
 
     // ── Atomic store ──────────────────────────────────────────────────
     let new_size = ingested.size;

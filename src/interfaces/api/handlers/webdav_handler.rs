@@ -1656,7 +1656,7 @@ fn evaluate_if_header(
 ///
 /// Shared by `handle_put`, `handle_delete`, `handle_move`,
 /// `handle_copy`, and `handle_proppatch`.
-fn enforce_native_lock(
+pub(crate) fn enforce_native_lock(
     lock_store: &crate::infrastructure::services::webdav_lock_service::WebDavLockStore,
     if_header: Option<&str>,
     path: &str,
@@ -2042,6 +2042,59 @@ pub(crate) fn parse_update_range(header: &str, size: u64) -> Result<(u64, Option
     Ok((start, Some(end)))
 }
 
+/// Strip the optional `W/` weak prefix and surrounding double-quotes
+/// from one ETag value in an `If-Match` / `If-None-Match` list. Returns
+/// `(is_weak, inner)`.
+fn parse_etag_value(raw: &str) -> (bool, &str) {
+    let trimmed = raw.trim();
+    if let Some(rest) = trimmed.strip_prefix("W/") {
+        (true, rest.trim().trim_matches('"'))
+    } else {
+        (false, trimmed.trim_matches('"'))
+    }
+}
+
+/// RFC 7232 §3.2 — `If-None-Match` fails when:
+///   - the header value is `*` and a current representation exists, OR
+///   - any listed ETag matches the current representation (weak comparison
+///     — weak validators in the request are equivalent to strong for the
+///     match itself, only If-Match is required to be strong).
+///
+/// `pub(crate)` so both the plain and NextCloud-surface WebDAV handlers
+/// share one RFC 7232-conformant implementation instead of each
+/// reimplementing ETag comparison (multi-value lists, `W/` weak prefix).
+pub(crate) fn if_none_match_precondition_fails(header: &str, current_etag: Option<&str>) -> bool {
+    let v = header.trim();
+    if v == "*" {
+        return current_etag.is_some();
+    }
+    let Some(current) = current_etag else {
+        return false;
+    };
+    v.split(',').any(|tag| {
+        let (_, parsed) = parse_etag_value(tag);
+        !parsed.is_empty() && parsed == current
+    })
+}
+
+/// RFC 7232 §3.1 — `If-Match` fails when:
+///   - the resource doesn't currently exist (no strong validator to match), OR
+///   - the header isn't `*` and no listed ETag strong-matches the current one
+///     (weak validators in the request never satisfy a strong-match).
+pub(crate) fn if_match_precondition_fails(header: &str, current_etag: Option<&str>) -> bool {
+    let v = header.trim();
+    let Some(current) = current_etag else {
+        return true;
+    };
+    if v == "*" {
+        return false;
+    }
+    !v.split(',').any(|tag| {
+        let (is_weak, parsed) = parse_etag_value(tag);
+        !is_weak && !parsed.is_empty() && parsed == current
+    })
+}
+
 /**
  * Handles PATCH requests (RFC 5789) for partial byte-range content updates.
  *
@@ -2164,22 +2217,18 @@ async fn handle_patch(
     }
 
     // ── RFC 7232 conditional preconditions ────────────────────────────
-    if let Some(ref inm) = if_none_match {
-        let server_tag = file.etag.trim_matches('"');
-        if inm == "*" || inm.trim_matches('"') == server_tag {
-            return Err(AppError::precondition_failed(
-                "If-None-Match — resource already exists with that ETag",
-            ));
-        }
-    }
-    if let Some(ref im) = if_match
-        && im != "*"
+    let current_etag = Some(file.etag.as_str());
+    if let Some(ref value) = if_none_match
+        && if_none_match_precondition_fails(value, current_etag)
     {
-        let client_tag = im.trim_matches('"');
-        let server_tag = file.etag.trim_matches('"');
-        if client_tag != server_tag {
-            return Err(AppError::precondition_failed("If-Match — ETag mismatch"));
-        }
+        return Err(AppError::precondition_failed(
+            "If-None-Match — resource already exists with that ETag",
+        ));
+    }
+    if let Some(ref value) = if_match
+        && if_match_precondition_fails(value, current_etag)
+    {
+        return Err(AppError::precondition_failed("If-Match — ETag mismatch"));
     }
 
     // ── Range parsing + validation ─────────────────────────────────────
@@ -2205,6 +2254,10 @@ async fn handle_patch(
                     .map_err(AppError::from)?,
             )
         };
+    let suffix_len = match end {
+        Some(end) if end + 1 < file.size => file.size - (end + 1),
+        _ => 0,
+    };
     let suffix_stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> = match end
     {
         Some(end) if end + 1 < file.size => Box::into_pin(
@@ -2215,16 +2268,18 @@ async fn handle_patch(
         ),
         _ => Box::pin(stream::empty()),
     };
-
     let filename = crate::common::mime_detect::filename_from_path(&path).to_string();
     let ingested = upload_ingest::ingest_range_patch_to_cas(
-        prefix_stream,
+        (prefix_stream, start),
         req.into_body(),
-        suffix_stream,
+        (suffix_stream, suffix_len),
         &state.core.dedup_service,
         &filename,
         &content_type,
-        max_upload,
+        upload_ingest::PatchIngestBudget {
+            max_bytes: max_upload,
+            expected_body_len: end.map(|end| end - start + 1),
+        },
     )
     .await?;
 
@@ -2245,6 +2300,24 @@ async fn handle_patch(
             StatusCode::INSUFFICIENT_STORAGE,
             err.message,
             "QuotaExceeded",
+        ));
+    }
+
+    // ── Optimistic-concurrency re-check ───────────────────────────────
+    // `file.etag` was snapshotted before the (potentially slow) splice +
+    // CAS-ingest above. Re-verify nothing else wrote to this file in the
+    // meantime, narrowing the window in which two concurrent PATCHes to
+    // disjoint ranges — each individually passing its own If-Match check
+    // against the same stale snapshot — could otherwise silently clobber
+    // each other on the blind-overwrite write path below.
+    if let Ok(current) = file_retrieval_service
+        .get_file_by_path(&path, drive_id)
+        .await
+        && current.etag != file.etag
+    {
+        upload_ingest::discard_ingested(&state.core.dedup_service, &ingested).await;
+        return Err(AppError::precondition_failed(
+            "File was modified concurrently — retry the PATCH",
         ));
     }
 
