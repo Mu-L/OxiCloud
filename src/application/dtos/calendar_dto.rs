@@ -89,6 +89,12 @@ pub struct CalendarEventDto {
     pub all_day: bool,
     pub rrule: Option<String>,
     pub ical_uid: String,
+    /// RFC 5545 §3.8.4.4 RECURRENCE-ID. `None` on masters and on
+    /// non-recurring events; `Some` on per-instance exception
+    /// overrides. Two rows sharing (`calendar_id`, `ical_uid`) but
+    /// distinguished by this field represent a recurring master and
+    /// its modified occurrence(s) respectively (see #528).
+    pub recurrence_id: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -106,6 +112,7 @@ impl Default for CalendarEventDto {
             all_day: false,
             rrule: None,
             ical_uid: String::new(),
+            recurrence_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -125,6 +132,7 @@ impl From<CalendarEvent> for CalendarEventDto {
             all_day: event.all_day(),
             rrule: event.rrule().map(|s| s.to_string()),
             ical_uid: event.ical_uid().to_string(),
+            recurrence_id: event.recurrence_id().copied(),
             created_at: *event.created_at(),
             updated_at: *event.updated_at(),
         }

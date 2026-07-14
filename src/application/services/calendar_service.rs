@@ -8,7 +8,9 @@ use crate::application::dtos::calendar_dto::{
     UpdateCalendarDto, UpdateEventDto,
 };
 use crate::application::ports::authorization_ports::AuthorizationEngine;
-use crate::application::ports::calendar_ports::{CalendarStoragePort, CalendarUseCase};
+use crate::application::ports::calendar_ports::{
+    CalendarStoragePort, CalendarUseCase, UpsertEventsResult,
+};
 use crate::common::errors::{DomainError, ErrorKind};
 use crate::domain::services::authorization::{Permission, Resource, Role, Subject};
 use crate::infrastructure::adapters::calendar_storage_adapter::CalendarStorageAdapter;
@@ -232,6 +234,21 @@ impl CalendarUseCase for CalendarService {
         self.require_calendar_perm(&event.calendar_id, user_id, Permission::Create)
             .await?;
         self.calendar_storage.create_event_from_ical(event).await
+    }
+
+    async fn upsert_ical_events(
+        &self,
+        event: CreateEventICalDto,
+        user_id: Uuid,
+    ) -> Result<UpsertEventsResult, DomainError> {
+        // Same gate as create_event_from_ical — a PUT to the collection
+        // is a write. `Permission::Create` matches the single-event
+        // path; per-instance exception updates ride on the same
+        // permission because from the ACL's perspective it's still
+        // a write to the calendar.
+        self.require_calendar_perm(&event.calendar_id, user_id, Permission::Create)
+            .await?;
+        self.calendar_storage.upsert_ical_events(event).await
     }
 
     async fn update_event(

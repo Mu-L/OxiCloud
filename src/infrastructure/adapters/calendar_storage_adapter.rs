@@ -13,7 +13,7 @@ use crate::application::dtos::calendar_dto::{
     CalendarDto, CalendarEventDto, CreateCalendarDto, CreateEventDto, CreateEventICalDto,
     UpdateCalendarDto, UpdateEventDto,
 };
-use crate::application::ports::calendar_ports::CalendarStoragePort;
+use crate::application::ports::calendar_ports::{CalendarStoragePort, UpsertEventsResult};
 use crate::common::errors::{DomainError, ErrorKind};
 use crate::domain::entities::calendar::Calendar;
 use crate::domain::entities::calendar_event::CalendarEvent;
@@ -260,6 +260,73 @@ impl CalendarStoragePort for CalendarStorageAdapter {
 
         let created = self.event_repository.create_event(event).await?;
         Ok(CalendarEventDto::from(created))
+    }
+
+    async fn upsert_ical_events(
+        &self,
+        dto: CreateEventICalDto,
+    ) -> Result<UpsertEventsResult, DomainError> {
+        let calendar_id = Uuid::parse_str(&dto.calendar_id).map_err(|_| {
+            DomainError::new(
+                ErrorKind::InvalidInput,
+                "Event",
+                "Invalid calendar ID format",
+            )
+        })?;
+
+        // Verify calendar exists before touching the events table.
+        let _calendar = self
+            .calendar_repository
+            .find_calendar_by_id(&calendar_id)
+            .await?;
+
+        // Split the body into one CalendarEvent per VEVENT. A body
+        // with zero VEVENTs (or only VTODOs / VJOURNALs) returns
+        // InvalidInput here — which the handler layer maps to 400.
+        let parsed = CalendarEvent::parse_all_events(calendar_id, &dto.ical_data)?;
+
+        let mut out = Vec::with_capacity(parsed.len());
+        let mut any_inserted = false;
+
+        for event in parsed {
+            let ical_uid = event.ical_uid().to_string();
+
+            // Existing row lookup routes on the master/exception split.
+            // Master: (calendar_id, ical_uid) WHERE recurrence_id IS NULL
+            // Exception: (calendar_id, ical_uid, recurrence_id)
+            let existing = match event.recurrence_id().copied() {
+                Some(rid) => {
+                    self.event_repository
+                        .find_event_by_ical_uid_and_recurrence_id(&calendar_id, &ical_uid, &rid)
+                        .await?
+                }
+                None => {
+                    self.event_repository
+                        .find_event_by_ical_uid(&calendar_id, &ical_uid)
+                        .await?
+                }
+            };
+
+            // Delete-then-insert keeps the DB-level partial unique
+            // indexes happy and matches the pre-#528 update semantics
+            // of the single-event path (fresh row id per replace,
+            // ETag changes on update).
+            if let Some(existing_event) = existing {
+                self.event_repository
+                    .delete_event(existing_event.id())
+                    .await?;
+            } else {
+                any_inserted = true;
+            }
+
+            let created = self.event_repository.create_event(event).await?;
+            out.push(CalendarEventDto::from(created));
+        }
+
+        Ok(UpsertEventsResult {
+            events: out,
+            any_inserted,
+        })
     }
 
     async fn update_event(

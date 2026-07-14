@@ -51,6 +51,29 @@ pub struct CalendarEvent {
     /// Recurrence rule in iCalendar RRULE format (optional)
     rrule: Option<String>,
 
+    /// RECURRENCE-ID (RFC 5545 §3.8.4.4) — non-NULL on exception
+    /// instances of a recurring event, NULL on the master.
+    ///
+    /// When a client (Thunderbird, Apple Calendar, Gnome Calendar, …)
+    /// modifies a SINGLE occurrence of a recurring event, it sends
+    /// a separate VEVENT that shares the master's UID and carries
+    /// a `RECURRENCE-ID` identifying which occurrence is being
+    /// overridden. That per-instance override lives as its own row
+    /// in `caldav.calendar_events`; the master row keeps NULL here.
+    ///
+    /// Lookup key is `(calendar_id, ical_uid, recurrence_id)` —
+    /// enforced at the DB layer by two partial unique indexes:
+    ///
+    ///   * `(calendar_id, ical_uid) WHERE recurrence_id IS NULL` —
+    ///     at most one master per UID per calendar.
+    ///   * `(calendar_id, ical_uid, recurrence_id) WHERE
+    ///     recurrence_id IS NOT NULL` — at most one override for a
+    ///     given (master, instance) pair.
+    ///
+    /// See AtalayaLabs/OxiCloud#528 for the ticket that motivated
+    /// this field, and `docs/plan/` (future) for the full model.
+    recurrence_id: Option<DateTime<Utc>>,
+
     /// Unique identifier in iCalendar format (used for CalDAV sync)
     ical_uid: String,
 
@@ -140,6 +163,7 @@ impl CalendarEvent {
             end_time,
             all_day,
             rrule,
+            recurrence_id: None,
             ical_uid: Uuid::new_v4().to_string(),
             ical_data,
             created_at: now,
@@ -209,6 +233,7 @@ impl CalendarEvent {
             end_time,
             all_day,
             rrule,
+            recurrence_id: None,
             ical_uid,
             ical_data,
             created_at,
@@ -237,24 +262,41 @@ impl CalendarEvent {
             )
         })?;
 
-        let dtstart = Self::extract_ical_property(&ical_data, "DTSTART").ok_or_else(|| {
-            DomainError::new(
-                ErrorKind::InvalidInput,
-                "CalendarEvent",
-                "Missing DTSTART in iCalendar data",
-            )
-        })?;
+        // DTSTART / DTEND: use the params-aware extractor so we can
+        // detect `VALUE=DATE` (all-day) from the property parameters
+        // rather than scanning the raw property line. The pre-parser-
+        // rewrite substring scan couldn't see param-carrying lines at
+        // all — see #528.
+        let (dtstart_value, dtstart_params) =
+            Self::extract_ical_property_with_params(&ical_data, "DTSTART").ok_or_else(|| {
+                DomainError::new(
+                    ErrorKind::InvalidInput,
+                    "CalendarEvent",
+                    "Missing DTSTART in iCalendar data",
+                )
+            })?;
 
-        let dtend = Self::extract_ical_property(&ical_data, "DTEND").ok_or_else(|| {
-            DomainError::new(
-                ErrorKind::InvalidInput,
-                "CalendarEvent",
-                "Missing DTEND in iCalendar data",
-            )
-        })?;
+        let (dtend_value, _dtend_params) =
+            Self::extract_ical_property_with_params(&ical_data, "DTEND").ok_or_else(|| {
+                DomainError::new(
+                    ErrorKind::InvalidInput,
+                    "CalendarEvent",
+                    "Missing DTEND in iCalendar data",
+                )
+            })?;
 
-        // Parse dates (simplified)
-        let start_time = Self::parse_ical_datetime(&dtstart).map_err(|e| {
+        // All-day detection: `VALUE=DATE` parameter on DTSTART.
+        // Falls back to `false` when the parameter is absent, matching
+        // RFC 5545 §3.3.4 ("If the property permits, multiple 'VALUE'
+        // parameters can be specified as a comma-separated list") —
+        // we're strict: only "DATE" (case-insensitive) counts, "DATE-TIME"
+        // and anything else means timed.
+        let all_day = dtstart_params
+            .get("VALUE")
+            .map(|vs| vs.iter().any(|v| v.eq_ignore_ascii_case("DATE")))
+            .unwrap_or(false);
+
+        let start_time = Self::parse_ical_datetime(&dtstart_value, all_day).map_err(|e| {
             DomainError::new(
                 ErrorKind::InvalidInput,
                 "CalendarEvent",
@@ -262,16 +304,13 @@ impl CalendarEvent {
             )
         })?;
 
-        let end_time = Self::parse_ical_datetime(&dtend).map_err(|e| {
+        let end_time = Self::parse_ical_datetime(&dtend_value, all_day).map_err(|e| {
             DomainError::new(
                 ErrorKind::InvalidInput,
                 "CalendarEvent",
                 format!("Invalid DTEND: {}", e),
             )
         })?;
-
-        // Determine if all-day event (simplified check)
-        let all_day = dtstart.contains("VALUE=DATE") && !dtstart.contains("T");
 
         // Extract optional fields
         let description = Self::extract_ical_property(&ical_data, "DESCRIPTION");
@@ -281,6 +320,26 @@ impl CalendarEvent {
         // Extract UID or generate a new one
         let ical_uid = Self::extract_ical_property(&ical_data, "UID")
             .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+        // RECURRENCE-ID (RFC 5545 §3.8.4.4). When present, this VEVENT
+        // is an override for a specific occurrence of a recurring
+        // master with the same UID. The parameter tells us whether the
+        // value is a date (all-day master) or datetime (timed master).
+        // A parse failure here downgrades to `None` — the VEVENT still
+        // gets stored, just as a plain event (worst case a client sync
+        // treats it as a new master, which the DB uniqueness will
+        // refuse; better a persistence error than a silent split).
+        let recurrence_id =
+            match Self::extract_ical_property_with_params(&ical_data, "RECURRENCE-ID") {
+                Some((value, params)) => {
+                    let is_date = params
+                        .get("VALUE")
+                        .map(|vs| vs.iter().any(|v| v.eq_ignore_ascii_case("DATE")))
+                        .unwrap_or(false);
+                    Self::parse_ical_datetime(&value, is_date).ok()
+                }
+                None => None,
+            };
 
         let now = Utc::now();
 
@@ -294,6 +353,7 @@ impl CalendarEvent {
             end_time,
             all_day,
             rrule,
+            recurrence_id,
             ical_uid,
             ical_data,
             created_at: now,
@@ -349,6 +409,24 @@ impl CalendarEvent {
     }
 
     /// Returns the event's iCalendar UID
+    /// Returns the RECURRENCE-ID for this event, if any. `None` on
+    /// masters and standalone (non-recurring) events; `Some` on
+    /// exception overrides that target a specific occurrence of a
+    /// recurring master with the same `ical_uid`.
+    pub fn recurrence_id(&self) -> Option<&DateTime<Utc>> {
+        self.recurrence_id.as_ref()
+    }
+
+    /// Set the RECURRENCE-ID on this event. Used by the repository
+    /// layer when reconstructing an entity from a stored row (the
+    /// column is read straight into the field — no re-parse of the
+    /// ical_data body). Passing `None` clears the marker, promoting
+    /// an exception back to a plain event.
+    pub fn set_recurrence_id(&mut self, recurrence_id: Option<DateTime<Utc>>) {
+        self.recurrence_id = recurrence_id;
+        self.updated_at = Utc::now();
+    }
+
     pub fn ical_uid(&self) -> &str {
         &self.ical_uid
     }
@@ -557,21 +635,27 @@ impl CalendarEvent {
         self.description = Self::extract_ical_property(&ical_data, "DESCRIPTION");
         self.location = Self::extract_ical_property(&ical_data, "LOCATION");
 
-        if let Some(dtstart) = Self::extract_ical_property(&ical_data, "DTSTART")
-            && let Ok(start_time) = Self::parse_ical_datetime(&dtstart)
+        // Extract DTSTART with parameters — needed for the all-day
+        // detection below AND for the DTSTART/DTEND datetime parsers
+        // (they need to know whether the value is a date or a datetime).
+        let dtstart_pair = Self::extract_ical_property_with_params(&ical_data, "DTSTART");
+        let all_day = dtstart_pair
+            .as_ref()
+            .and_then(|(_v, params)| params.get("VALUE"))
+            .map(|vs| vs.iter().any(|v| v.eq_ignore_ascii_case("DATE")))
+            .unwrap_or(false);
+        self.all_day = all_day;
+
+        if let Some((value, _params)) = &dtstart_pair
+            && let Ok(start_time) = Self::parse_ical_datetime(value, all_day)
         {
             self.start_time = start_time;
         }
 
-        if let Some(dtend) = Self::extract_ical_property(&ical_data, "DTEND")
-            && let Ok(end_time) = Self::parse_ical_datetime(&dtend)
+        if let Some((value, _params)) = Self::extract_ical_property_with_params(&ical_data, "DTEND")
+            && let Ok(end_time) = Self::parse_ical_datetime(&value, all_day)
         {
             self.end_time = end_time;
-        }
-
-        // Update all-day status based on DTSTART
-        if let Some(dtstart) = Self::extract_ical_property(&ical_data, "DTSTART") {
-            self.all_day = dtstart.contains("VALUE=DATE") && !dtstart.contains("T");
         }
 
         self.rrule = Self::extract_ical_property(&ical_data, "RRULE");
@@ -620,17 +704,20 @@ impl CalendarEvent {
             // or if it ended after the start of our range
             if let Some(until_pos) = rrule.find("UNTIL=") {
                 let until_start = until_pos + 6; // "UNTIL=" is 6 chars
-                if let Some(until_end) = rrule[until_start..].find(';') {
-                    let until_str = &rrule[until_start..until_start + until_end];
-                    if let Ok(until_date) = Self::parse_ical_datetime(until_str) {
-                        return until_date >= *start;
-                    }
+                let until_str = if let Some(until_end) = rrule[until_start..].find(';') {
+                    &rrule[until_start..until_start + until_end]
                 } else {
                     // UNTIL is the last part of the rule
-                    let until_str = &rrule[until_start..];
-                    if let Ok(until_date) = Self::parse_ical_datetime(until_str) {
-                        return until_date >= *start;
-                    }
+                    &rrule[until_start..]
+                };
+                // RFC 5545 §3.3.10 — UNTIL is either a DATE (`YYYYMMDD`,
+                // 8 chars) or a DATE-TIME (`YYYYMMDDTHHMMSSZ`, 16 chars,
+                // trailing Z). Distinguish by shape: exactly 8 chars ⇒
+                // date-only. Everything else is treated as datetime and
+                // parsed accordingly.
+                let is_date_only = until_str.len() == 8;
+                if let Ok(until_date) = Self::parse_ical_datetime(until_str, is_date_only) {
+                    return until_date >= *start;
                 }
             } else {
                 // No UNTIL specified, so recurrence continues indefinitely
@@ -646,60 +733,203 @@ impl CalendarEvent {
     /**
      * Extracts a property value from iCalendar data.
      *
+     * Backed by the `ical` crate's RFC 5545 parser (see `Cargo.toml`
+     * doc-comment on the dep). The pre-2026-07-14 hand-rolled scan
+     * looked for `\n<NAME>:` and refused any parameter-carrying
+     * property (`DTSTART;VALUE=DATE:20260101`,
+     * `RECURRENCE-ID;VALUE=DATE:...`, `ATTENDEE;CN=…;PARTSTAT=…:…`) —
+     * see AtalayaLabs/OxiCloud#528.
+     *
+     * The current implementation reads the first VEVENT from the raw
+     * body via `IcalParser` and returns the named property's `value`
+     * (parameters discarded — use `extract_ical_property_with_params`
+     * for callers that care about `VALUE=DATE`, `TZID`, etc.).
+     *
+     * Returns `None` when the property is missing, has an empty value,
+     * or the body isn't parseable as iCalendar. Whole-body parse
+     * failures collapse to `None` rather than surface — same behaviour
+     * as the pre-rewrite hand-rolled scan, which just returned `None`
+     * on any mismatch. If callers need to distinguish "missing" from
+     * "unparseable body", they should use `parse_first_vevent` directly.
+     *
      * @param ical_data The iCalendar data to search in
      * @param property_name The name of the property to extract
      * @return Option containing the property value if found
      */
     fn extract_ical_property(ical_data: &str, property_name: &str) -> Option<String> {
-        // Find the property in the iCalendar data
-        let search_str = format!("\n{}:", property_name);
-        let search_str_alt = format!("\r\n{}:", property_name);
+        Self::extract_ical_property_with_params(ical_data, property_name).map(|(v, _p)| v)
+    }
 
-        let pos = ical_data
-            .find(&search_str)
-            .or_else(|| ical_data.find(&search_str_alt));
+    /// Extract a property's value AND parameter map. Same lookup rules
+    /// as `extract_ical_property`; the second element is a map keyed by
+    /// parameter name (`"VALUE"`, `"TZID"`, `"CN"`, …) whose value is
+    /// the list of parameter values (parameters can be multi-valued —
+    /// `MEMBER="mailto:a@x","mailto:b@x"` — hence the `Vec<String>`
+    /// per key).
+    ///
+    /// Callers that only need the value should use `extract_ical_property`;
+    /// this variant is for DTSTART / DTEND / RECURRENCE-ID which need
+    /// `VALUE=DATE` detection to distinguish all-day from timed events.
+    fn extract_ical_property_with_params(
+        ical_data: &str,
+        property_name: &str,
+    ) -> Option<(String, std::collections::HashMap<String, Vec<String>>)> {
+        let event = Self::parse_first_vevent(ical_data)?;
+        let prop = event
+            .properties
+            .into_iter()
+            .find(|p| p.name.eq_ignore_ascii_case(property_name))?;
+        let value = prop.value?;
+        if value.trim().is_empty() {
+            return None;
+        }
+        let mut params: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        if let Some(param_list) = prop.params {
+            for (name, values) in param_list {
+                // RFC 5545 property parameter names are ASCII case-insensitive.
+                // Normalise to UPPER so callers key on a canonical form.
+                params.insert(name.to_ascii_uppercase(), values);
+            }
+        }
+        Some((value.trim().to_string(), params))
+    }
 
-        if let Some(pos) = pos {
-            // Find the start of the value
-            let value_start = pos + search_str.len();
+    /// Parse a VCALENDAR body containing one or more VEVENT components
+    /// (typically a master + one or more per-instance exception
+    /// overrides in the same PUT — RFC 5545 §3.6.1), returning one
+    /// `CalendarEvent` per VEVENT.
+    ///
+    /// Splitting is done on the raw text so each returned entity's
+    /// `ical_data` remains a valid standalone iCalendar body (the GET
+    /// path serves it verbatim). Line-folding (§3.1) is preserved
+    /// because we forward every line as-is inside the extracted block;
+    /// the ical-crate parser inside `from_ical` unfolds when reading.
+    ///
+    /// Nested VALARM / VTODO sub-components inside a VEVENT are
+    /// carried through unchanged — the scanner only splits on
+    /// `BEGIN:VEVENT` / `END:VEVENT` at the outer level.
+    ///
+    /// Returns `InvalidInput` if the body contains zero VEVENTs — a
+    /// PUT with no events isn't a state we accept on the CalDAV surface.
+    pub fn parse_all_events(calendar_id: Uuid, ical_data: &str) -> Result<Vec<Self>> {
+        let blocks = Self::split_vevents(ical_data);
 
-            // Find the end of the value (next line or end of string)
-            let value_end = ical_data[value_start..]
-                .find('\n')
-                .map(|p| value_start + p)
-                .unwrap_or_else(|| ical_data.len());
+        if blocks.is_empty() {
+            return Err(DomainError::new(
+                ErrorKind::InvalidInput,
+                "CalendarEvent",
+                "No VEVENT components found in iCalendar body",
+            ));
+        }
 
-            // Extract and return the value
-            let value = ical_data[value_start..value_end].trim();
-            if !value.is_empty() {
-                return Some(value.to_string());
+        let mut out = Vec::with_capacity(blocks.len());
+        for block in blocks {
+            // Wrap each VEVENT in a fresh VCALENDAR shell so the
+            // stored `ical_data` per row is self-describing (RFC 5545
+            // §3.4 mandates VERSION + PRODID on any exported body).
+            let wrapped = format!(
+                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//OxiCloud//NONSGML Calendar//EN\r\n{}END:VCALENDAR\r\n",
+                block,
+            );
+            out.push(Self::from_ical(calendar_id, wrapped)?);
+        }
+        Ok(out)
+    }
+
+    /// Extract each `BEGIN:VEVENT` … `END:VEVENT` block from the raw
+    /// body as its own String (CRLF-terminated). Component tags are
+    /// matched case-insensitively per RFC 5545 §3.1. Anything outside
+    /// a VEVENT (VTIMEZONE / VTODO / VJOURNAL / calendar-level
+    /// properties) is discarded — those aren't ours to persist.
+    fn split_vevents(ical_data: &str) -> Vec<String> {
+        let mut blocks = Vec::new();
+        let mut in_event = false;
+        let mut current = String::new();
+
+        for raw_line in ical_data.split('\n') {
+            let line = raw_line.trim_end_matches('\r');
+            // Match the tag ignoring case, allowing surrounding
+            // whitespace (some clients emit a leading space on folded
+            // continuations — the raw-line scan sees those but they
+            // won't start with BEGIN/END so they slot through as
+            // in-event content, which is correct).
+            let upper = line.trim_start().to_ascii_uppercase();
+
+            if upper.starts_with("BEGIN:VEVENT") {
+                in_event = true;
+                current.clear();
+            }
+
+            if in_event {
+                current.push_str(line);
+                current.push_str("\r\n");
+            }
+
+            if in_event && upper.starts_with("END:VEVENT") {
+                blocks.push(std::mem::take(&mut current));
+                in_event = false;
             }
         }
 
+        blocks
+    }
+
+    /// Parse the raw iCalendar body and return the first VEVENT
+    /// component's properties. Returns `None` on any parse failure or
+    /// if the body carries zero events (e.g. a `VCALENDAR` with only
+    /// VTODOs — not our concern for the events surface).
+    ///
+    /// Delegated to the `ical` crate's `IcalParser`, which handles
+    /// line-folding, escaped characters, and RFC 5545 parameter syntax.
+    fn parse_first_vevent(ical_data: &str) -> Option<ical::parser::ical::component::IcalEvent> {
+        use std::io::BufReader;
+        let reader = BufReader::new(ical_data.as_bytes());
+        let parser = ical::IcalParser::new(reader);
+        for cal in parser {
+            let Ok(cal) = cal else { continue };
+            if let Some(event) = cal.events.into_iter().next() {
+                return Some(event);
+            }
+        }
         None
     }
 
     /**
      * Parses an iCalendar datetime string into a DateTime object.
      *
-     * @param datetime The iCalendar datetime string to parse
+     * @param value The property value (already stripped of parameters
+     *              by the ical-crate-backed extractor).
+     * @param is_date_only True when the source line carried
+     *                     `VALUE=DATE` (all-day event) — caller derives
+     *                     this from `extract_ical_property_with_params`.
      * @return Result containing the parsed DateTime or an error
      */
-    fn parse_ical_datetime(datetime: &str) -> std::result::Result<DateTime<Utc>, String> {
-        // Handle VALUE=DATE format
-        if datetime.contains("VALUE=DATE") {
-            let date_str = datetime.split(':').next_back().unwrap_or("");
-            if date_str.len() != 8 {
-                return Err("Invalid date format".to_string());
+    fn parse_ical_datetime(
+        value: &str,
+        is_date_only: bool,
+    ) -> std::result::Result<DateTime<Utc>, String> {
+        // All-day form — YYYYMMDD, 8 chars, no time component. Caller
+        // signalled this via the `VALUE=DATE` parameter on the source
+        // property. Pre-2026-07-14 this was detected by scanning the
+        // raw property line for the substring `VALUE=DATE`, which
+        // failed because `extract_ical_property` refused to return
+        // param-carrying lines at all (see #528).
+        if is_date_only {
+            if value.len() != 8 {
+                return Err(format!(
+                    "Invalid all-day date format: expected YYYYMMDD (8 chars), got {} chars",
+                    value.len()
+                ));
             }
 
-            let year = date_str[0..4]
+            let year = value[0..4]
                 .parse::<i32>()
                 .map_err(|_| "Invalid year".to_string())?;
-            let month = date_str[4..6]
+            let month = value[4..6]
                 .parse::<u32>()
                 .map_err(|_| "Invalid month".to_string())?;
-            let day = date_str[6..8]
+            let day = value[6..8]
                 .parse::<u32>()
                 .map_err(|_| "Invalid day".to_string())?;
 
@@ -709,29 +939,33 @@ impl CalendarEvent {
             };
         }
 
-        // Handle standard UTC format (20230101T120000Z)
-        let datetime_str = datetime.split(':').next_back().unwrap_or(datetime);
-        if datetime_str.len() < 15 || !datetime_str.ends_with('Z') {
-            return Err("Invalid datetime format".to_string());
+        // Standard UTC form: YYYYMMDDTHHMMSSZ, 16 chars, trailing 'Z'.
+        // Floating-time (no 'Z') and TZID-anchored forms aren't yet
+        // supported — future work when we tackle VTIMEZONE properly.
+        if value.len() < 15 || !value.ends_with('Z') {
+            return Err(format!(
+                "Invalid datetime format: expected YYYYMMDDTHHMMSSZ, got {:?}",
+                value
+            ));
         }
 
-        let year = datetime_str[0..4]
+        let year = value[0..4]
             .parse::<i32>()
             .map_err(|_| "Invalid year".to_string())?;
-        let month = datetime_str[4..6]
+        let month = value[4..6]
             .parse::<u32>()
             .map_err(|_| "Invalid month".to_string())?;
-        let day = datetime_str[6..8]
+        let day = value[6..8]
             .parse::<u32>()
             .map_err(|_| "Invalid day".to_string())?;
 
-        let hour = datetime_str[9..11]
+        let hour = value[9..11]
             .parse::<u32>()
             .map_err(|_| "Invalid hour".to_string())?;
-        let minute = datetime_str[11..13]
+        let minute = value[11..13]
             .parse::<u32>()
             .map_err(|_| "Invalid minute".to_string())?;
-        let second = datetime_str[13..15]
+        let second = value[13..15]
             .parse::<u32>()
             .map_err(|_| "Invalid second".to_string())?;
 
@@ -814,5 +1048,515 @@ impl CalendarEvent {
             let after = &self.ical_data[value_end..];
             self.ical_data = format!("{}{}", before, after);
         }
+    }
+}
+
+#[cfg(test)]
+mod ical_parser_tests {
+    //! Regression tests for the `ical`-crate-backed property extractor.
+    //!
+    //! Every shape here failed under the pre-2026-07-14 hand-rolled
+    //! `find("\n<NAME>:")` scan (see AtalayaLabs/OxiCloud#528). Fixtures
+    //! are RFC 5545-shaped; when we bundle real client bodies from
+    //! Thunderbird / DAVx⁵ / Gnome Calendar the mapping will follow the
+    //! same style — each case declares which shape it exercises.
+    //!
+    //! Fixture sources / attributions:
+    //!   * RFC 5545 §3.6.1 (VEVENT baseline) — timed event example
+    //!   * RFC 5545 §3.8.2.4 (DTSTART DATE form) — all-day event
+    //!   * RFC 5545 §3.8.4.4 (RECURRENCE-ID) — exception instance
+    //!   * Shape adapted from Radicale test fixtures — RRULE + UNTIL
+    //!     with a DATE-form UNTIL for an all-day recurring event
+    //!
+    //! Everything is spec-shaped and byte-small; no network / no
+    //! external files. Real client bodies can be added later under
+    //! `tests/fixtures/ical/` and loaded via `include_str!`.
+
+    use super::*;
+
+    /// Simple timed VEVENT. Baseline sanity — this shape worked pre-
+    /// rewrite (no property parameters), so it's the regression floor.
+    const TIMED_EVENT: &str = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//OxiCloud test//EN\r
+BEGIN:VEVENT\r
+UID:timed-1@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART:20260101T120000Z\r
+DTEND:20260101T130000Z\r
+SUMMARY:Timed baseline\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+
+    /// All-day VEVENT — the exact shape #528 flagged. Property line
+    /// carries `;VALUE=DATE:` which the old scan refused; the crate-
+    /// backed extractor now parses it and the all-day flag is derived
+    /// from the `VALUE` parameter.
+    const ALL_DAY_EVENT: &str = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//OxiCloud test//EN\r
+BEGIN:VEVENT\r
+UID:allday-1@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART;VALUE=DATE:20260201\r
+DTEND;VALUE=DATE:20260202\r
+SUMMARY:All-day event\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+
+    /// Timed recurring master with a modified single occurrence
+    /// (RECURRENCE-ID identifies which instance). The exception VEVENT
+    /// shares the master's UID and adds `RECURRENCE-ID:` to pinpoint
+    /// the overridden date. This is the #528 shape — parser must not
+    /// choke on the presence of RECURRENCE-ID even though we don't
+    /// route it into the domain yet (that's phase 2).
+    const RECURRING_WITH_EXCEPTION: &str = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//OxiCloud test//EN\r
+BEGIN:VEVENT\r
+UID:daily-1@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART:20260101T090000Z\r
+DTEND:20260101T100000Z\r
+SUMMARY:Daily standup\r
+RRULE:FREQ=DAILY;COUNT=10\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+UID:daily-1@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART:20260103T110000Z\r
+DTEND:20260103T120000Z\r
+SUMMARY:Daily standup — rescheduled\r
+RECURRENCE-ID:20260103T090000Z\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+
+    /// All-day recurring with an all-day exception — the most-broken
+    /// case in #528 (RECURRENCE-ID;VALUE=DATE:...). Parser must accept
+    /// the parameter on both DTSTART and RECURRENCE-ID.
+    const ALL_DAY_RECURRING_WITH_EXCEPTION: &str = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//OxiCloud test//EN\r
+BEGIN:VEVENT\r
+UID:weekly-allday@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART;VALUE=DATE:20260105\r
+DTEND;VALUE=DATE:20260106\r
+SUMMARY:Weekly all-day\r
+RRULE:FREQ=WEEKLY;COUNT=4\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+UID:weekly-allday@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART;VALUE=DATE:20260113\r
+DTEND;VALUE=DATE:20260114\r
+SUMMARY:Weekly all-day — rescheduled\r
+RECURRENCE-ID;VALUE=DATE:20260112\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+
+    fn parse_ok(body: &str) -> CalendarEvent {
+        CalendarEvent::from_ical(Uuid::new_v4(), body.to_string())
+            .expect("expected successful parse")
+    }
+
+    #[test]
+    fn timed_event_parses_and_is_not_all_day() {
+        let ev = parse_ok(TIMED_EVENT);
+        assert_eq!(ev.summary(), "Timed baseline");
+        assert!(!ev.all_day());
+    }
+
+    #[test]
+    fn all_day_event_parses_and_flags_as_all_day() {
+        // Regression: DTSTART;VALUE=DATE:20260201 used to fail
+        // property-extraction ("Missing DTSTART") because the raw
+        // scan required a colon directly after the property name.
+        let ev = parse_ok(ALL_DAY_EVENT);
+        assert!(ev.all_day(), "VALUE=DATE parameter should flag all-day");
+        assert_eq!(
+            ev.start_time().date_naive().to_string(),
+            "2026-02-01",
+            "DTSTART value should parse the YYYYMMDD payload"
+        );
+    }
+
+    #[test]
+    fn recurring_with_exception_still_returns_the_master() {
+        // The crate parses BOTH events from the VCALENDAR body; our
+        // `parse_first_vevent` returns the first, which is the master.
+        // Exception routing is phase 2 — this test locks the current
+        // "first event wins" behavior so phase 2 knows what it's
+        // extending.
+        let ev = parse_ok(RECURRING_WITH_EXCEPTION);
+        assert_eq!(ev.summary(), "Daily standup");
+        assert_eq!(ev.ical_uid(), "daily-1@oxicloud.test");
+        assert_eq!(ev.rrule(), Some("FREQ=DAILY;COUNT=10"));
+    }
+
+    #[test]
+    fn all_day_recurring_with_exception_master_parses() {
+        // The #528 shape end-to-end: parameterised DTSTART on both the
+        // master and the exception, plus a parameterised RECURRENCE-ID.
+        // Pre-rewrite this was a 400 (post the error-mapping fix) or 500
+        // (before it); post-rewrite the master parses cleanly and the
+        // all_day flag is set from the master's DTSTART parameters.
+        let ev = parse_ok(ALL_DAY_RECURRING_WITH_EXCEPTION);
+        assert!(ev.all_day());
+        assert_eq!(ev.ical_uid(), "weekly-allday@oxicloud.test");
+    }
+
+    #[test]
+    fn missing_dtstart_still_returns_a_useful_error() {
+        // Preserve the pre-rewrite error contract for the genuinely-
+        // missing case. `dav_error_mapping.hurl` asserts this shape.
+        let body = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//OxiCloud test//EN\r
+BEGIN:VEVENT\r
+UID:missing-dtstart@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTEND:20260101T130000Z\r
+SUMMARY:No DTSTART\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+        let err = CalendarEvent::from_ical(Uuid::new_v4(), body.to_string())
+            .expect_err("expected InvalidInput for missing DTSTART");
+        assert_eq!(err.kind, ErrorKind::InvalidInput);
+        assert!(
+            err.message.contains("DTSTART"),
+            "message should mention DTSTART, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn extract_property_with_params_returns_parameter_map() {
+        // Direct test of the params-aware extractor. Confirms
+        // parameter names are normalised to uppercase and preserved
+        // as a list (RFC 5545 §3.2 — parameters can carry multiple
+        // comma-separated values).
+        let (value, params) =
+            CalendarEvent::extract_ical_property_with_params(ALL_DAY_EVENT, "DTSTART")
+                .expect("DTSTART must extract");
+        assert_eq!(value, "20260201");
+        let vals = params.get("VALUE").expect("VALUE param must be present");
+        assert_eq!(vals, &vec!["DATE".to_string()]);
+    }
+
+    #[test]
+    fn extract_property_case_insensitive_property_name() {
+        // Property names are ASCII case-insensitive per RFC 5545 §3.1.
+        // The lookup must accept "dtstart" as well as "DTSTART".
+        let v = CalendarEvent::extract_ical_property(TIMED_EVENT, "dtstart");
+        assert_eq!(v.as_deref(), Some("20260101T120000Z"));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Phase 2 — RECURRENCE-ID extraction into the entity
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn master_event_has_no_recurrence_id() {
+        // A plain VEVENT (no RECURRENCE-ID line) should carry a NULL
+        // recurrence_id — that's what marks it as a master in the DB.
+        let ev = parse_ok(TIMED_EVENT);
+        assert!(
+            ev.recurrence_id().is_none(),
+            "master should have recurrence_id = None"
+        );
+    }
+
+    #[test]
+    fn recurring_master_has_no_recurrence_id_even_with_rrule() {
+        // The presence of RRULE on the master does not by itself
+        // populate recurrence_id — only RECURRENCE-ID does. The
+        // exception-instance VEVENT in the same VCALENDAR carries
+        // RECURRENCE-ID; `parse_first_vevent` returns the master, so
+        // we get `None` here. Phase 3 will introduce a `parse_all_events`
+        // helper to surface the exceptions.
+        let ev = parse_ok(RECURRING_WITH_EXCEPTION);
+        assert!(
+            ev.recurrence_id().is_none(),
+            "master with RRULE should still have recurrence_id = None"
+        );
+        assert_eq!(ev.rrule(), Some("FREQ=DAILY;COUNT=10"));
+    }
+
+    #[test]
+    fn timed_exception_populates_recurrence_id() {
+        // A standalone exception-override VEVENT (as sent by a client
+        // that's already synced the master and is now modifying one
+        // instance) parses with recurrence_id = the RECURRENCE-ID's
+        // timestamp. This is the phase-2 half of #528 — the value is
+        // preserved through the domain model; phase 3 will use it to
+        // route inserts to their own row.
+        let exception = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//OxiCloud test//EN\r
+BEGIN:VEVENT\r
+UID:daily-1@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART:20260103T110000Z\r
+DTEND:20260103T120000Z\r
+SUMMARY:Daily standup — rescheduled\r
+RECURRENCE-ID:20260103T090000Z\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+        let ev = parse_ok(exception);
+        let rid = ev
+            .recurrence_id()
+            .expect("exception must have recurrence_id set");
+        assert_eq!(
+            rid.to_rfc3339(),
+            "2026-01-03T09:00:00+00:00",
+            "RECURRENCE-ID must parse to the timed override timestamp"
+        );
+    }
+
+    #[test]
+    fn all_day_exception_populates_recurrence_id_at_midnight() {
+        // RECURRENCE-ID;VALUE=DATE:20260112 — the exact shape #528
+        // flagged. Domain normalises the DATE form to midnight UTC on
+        // the given day so the field's type stays `DateTime<Utc>`.
+        let exception = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//OxiCloud test//EN\r
+BEGIN:VEVENT\r
+UID:weekly-allday@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART;VALUE=DATE:20260113\r
+DTEND;VALUE=DATE:20260114\r
+SUMMARY:Weekly all-day — rescheduled\r
+RECURRENCE-ID;VALUE=DATE:20260112\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+        let ev = parse_ok(exception);
+        let rid = ev
+            .recurrence_id()
+            .expect("all-day exception must have recurrence_id set");
+        assert_eq!(
+            rid.to_rfc3339(),
+            "2026-01-12T00:00:00+00:00",
+            "all-day RECURRENCE-ID must normalise to 00:00:00 UTC of the target date"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Phase 3 — parse_all_events (multi-VEVENT splitter)
+    // ─────────────────────────────────────────────────────────────
+
+    /// Timed daily recurring master + one timed exception override,
+    /// both inside a single VCALENDAR wrapper — the shape a CalDAV
+    /// client PUTs when it modifies one occurrence.
+    const MASTER_PLUS_TIMED_EXCEPTION: &str = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//OxiCloud test//EN\r
+BEGIN:VEVENT\r
+UID:daily-1@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART:20260101T090000Z\r
+DTEND:20260101T093000Z\r
+SUMMARY:Daily standup\r
+RRULE:FREQ=DAILY;COUNT=10\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+UID:daily-1@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART:20260103T110000Z\r
+DTEND:20260103T120000Z\r
+SUMMARY:Daily standup — rescheduled\r
+RECURRENCE-ID:20260103T090000Z\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+
+    #[test]
+    fn parse_all_events_splits_master_and_exception() {
+        // Both VEVENTs must come back: master with recurrence_id=None,
+        // exception with recurrence_id=Some. UIDs match (that's what
+        // ties the exception to its master); it's the recurrence_id
+        // marker that distinguishes them.
+        let cal_id = Uuid::new_v4();
+        let events = CalendarEvent::parse_all_events(cal_id, MASTER_PLUS_TIMED_EXCEPTION)
+            .expect("both VEVENTs must parse");
+
+        assert_eq!(events.len(), 2, "expected master + exception");
+        assert_eq!(events[0].ical_uid(), "daily-1@oxicloud.test");
+        assert_eq!(events[1].ical_uid(), "daily-1@oxicloud.test");
+
+        assert!(
+            events[0].recurrence_id().is_none(),
+            "first row must be the master (recurrence_id None)"
+        );
+        let rid = events[1]
+            .recurrence_id()
+            .expect("second row must be the exception override");
+        assert_eq!(rid.to_rfc3339(), "2026-01-03T09:00:00+00:00");
+
+        assert_eq!(events[0].rrule(), Some("FREQ=DAILY;COUNT=10"));
+        assert!(
+            events[1].rrule().is_none(),
+            "exception overrides do NOT carry RRULE"
+        );
+
+        // Each event's stored ical_data must be a self-contained
+        // VCALENDAR body so the GET path can serve it verbatim.
+        for e in &events {
+            assert!(e.ical_data().starts_with("BEGIN:VCALENDAR"));
+            assert!(e.ical_data().trim_end().ends_with("END:VCALENDAR"));
+        }
+    }
+
+    #[test]
+    fn parse_all_events_lone_master_returns_single_event() {
+        // No RECURRENCE-ID exception in the body → one row, master.
+        let cal_id = Uuid::new_v4();
+        let events =
+            CalendarEvent::parse_all_events(cal_id, TIMED_EVENT).expect("plain event must parse");
+        assert_eq!(events.len(), 1);
+        assert!(events[0].recurrence_id().is_none());
+    }
+
+    #[test]
+    fn parse_all_events_all_day_master_plus_all_day_exception() {
+        // The #528 shape: DATE-form DTSTART on both, DATE-form
+        // RECURRENCE-ID on the exception. Pre-parser-rewrite this
+        // silently 500'd because the param-carrying property lines
+        // were invisible to the substring scanner.
+        let body = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//OxiCloud test//EN\r
+BEGIN:VEVENT\r
+UID:weekly-allday@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART;VALUE=DATE:20260105\r
+DTEND;VALUE=DATE:20260106\r
+SUMMARY:Weekly review\r
+RRULE:FREQ=WEEKLY;COUNT=4\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+UID:weekly-allday@oxicloud.test\r
+DTSTAMP:20260101T100000Z\r
+DTSTART;VALUE=DATE:20260113\r
+DTEND;VALUE=DATE:20260114\r
+SUMMARY:Weekly review — rescheduled\r
+RECURRENCE-ID;VALUE=DATE:20260112\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+        let cal_id = Uuid::new_v4();
+        let events = CalendarEvent::parse_all_events(cal_id, body).expect("both must parse");
+        assert_eq!(events.len(), 2);
+        assert!(events[0].all_day());
+        assert!(events[1].all_day());
+        assert!(events[0].recurrence_id().is_none());
+        let rid = events[1].recurrence_id().unwrap();
+        assert_eq!(rid.to_rfc3339(), "2026-01-12T00:00:00+00:00");
+    }
+
+    #[test]
+    fn parse_all_events_zero_vevents_is_invalid_input() {
+        // A VCALENDAR with only calendar-level properties (no events)
+        // is not a state the CalDAV surface accepts on PUT.
+        let body = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//test//EN\r
+END:VCALENDAR\r
+";
+        let err =
+            CalendarEvent::parse_all_events(Uuid::new_v4(), body).expect_err("must reject empty");
+        assert_eq!(err.kind, ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn parse_all_events_vtodo_is_ignored() {
+        // A body carrying only VTODOs (no VEVENTs) is treated as
+        // "zero events" — we don't persist tasks in the events table.
+        let body = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//test//EN\r
+BEGIN:VTODO\r
+UID:task-1@x\r
+SUMMARY:buy milk\r
+END:VTODO\r
+END:VCALENDAR\r
+";
+        let err = CalendarEvent::parse_all_events(Uuid::new_v4(), body)
+            .expect_err("VTODO-only body must be rejected");
+        assert_eq!(err.kind, ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn parse_all_events_preserves_valarm_inside_vevent() {
+        // VALARM lives INSIDE a VEVENT. The splitter must NOT be
+        // fooled by BEGIN:VALARM into thinking a new outer component
+        // has started — the whole VALARM block must ride along inside
+        // the parent VEVENT's stored ical_data.
+        let body = "\
+BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//test//EN\r
+BEGIN:VEVENT\r
+UID:with-alarm@x\r
+DTSTAMP:20260101T100000Z\r
+DTSTART:20260101T090000Z\r
+DTEND:20260101T093000Z\r
+SUMMARY:Standup with alarm\r
+BEGIN:VALARM\r
+ACTION:DISPLAY\r
+TRIGGER:-PT15M\r
+DESCRIPTION:Standup soon\r
+END:VALARM\r
+END:VEVENT\r
+END:VCALENDAR\r
+";
+        let events = CalendarEvent::parse_all_events(Uuid::new_v4(), body)
+            .expect("VEVENT with VALARM must parse");
+        assert_eq!(events.len(), 1);
+        let stored = events[0].ical_data();
+        assert!(
+            stored.contains("BEGIN:VALARM"),
+            "VALARM must survive the split into stored ical_data"
+        );
+        assert!(
+            stored.contains("END:VALARM"),
+            "matching END:VALARM must survive too"
+        );
+    }
+
+    #[test]
+    fn set_recurrence_id_setter_round_trips() {
+        // Repository rehydration path: `with_id` initialises
+        // recurrence_id to None; the repo calls `set_recurrence_id`
+        // with the DB column value. Prove both branches survive the
+        // setter cleanly.
+        let mut ev = parse_ok(TIMED_EVENT);
+        assert!(ev.recurrence_id().is_none());
+
+        let target = Utc.with_ymd_and_hms(2026, 3, 15, 12, 0, 0).unwrap();
+        ev.set_recurrence_id(Some(target));
+        assert_eq!(ev.recurrence_id(), Some(&target));
+
+        ev.set_recurrence_id(None);
+        assert!(ev.recurrence_id().is_none());
     }
 }

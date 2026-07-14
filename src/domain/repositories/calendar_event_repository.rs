@@ -46,11 +46,33 @@ pub trait CalendarEventRepository: Send + Sync + 'static {
         end: &DateTime<Utc>,
     ) -> CalendarEventRepositoryResult<Vec<CalendarEvent>>;
 
-    /// Finds an event by its iCalendar UID in a specific calendar
+    /// Finds an event by its iCalendar UID in a specific calendar.
+    ///
+    /// **Master-only lookup.** Filters `recurrence_id IS NULL` so the
+    /// return value is unambiguous — the row that clients treat as
+    /// "the event with this UID" is the master. Per-instance override
+    /// rows share the UID but live under
+    /// `find_event_by_ical_uid_and_recurrence_id` (see #528).
     async fn find_event_by_ical_uid(
         &self,
         calendar_id: &Uuid,
         ical_uid: &str,
+    ) -> CalendarEventRepositoryResult<Option<CalendarEvent>>;
+
+    /// Finds a specific per-instance exception override for a recurring
+    /// master (RFC 5545 §3.8.4.4). `recurrence_id` pinpoints which
+    /// occurrence of the master with the given UID is being targeted;
+    /// returns `None` if no override has been PUT for that instance
+    /// yet — which the PUT handler then uses to decide insert vs.
+    /// update.
+    ///
+    /// The row is guaranteed unique by the partial index
+    /// `idx_calendar_events_exception_unique`.
+    async fn find_event_by_ical_uid_and_recurrence_id(
+        &self,
+        calendar_id: &Uuid,
+        ical_uid: &str,
+        recurrence_id: &DateTime<Utc>,
     ) -> CalendarEventRepositoryResult<Option<CalendarEvent>>;
 
     /// Finds the events matching any of the given iCalendar UIDs in one
