@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
 
 use crate::common::errors::{DomainError, Result};
 
@@ -76,6 +75,20 @@ impl NextcloudChunkedUploadService {
     /// `interfaces/upload_ingest::stream_body_to_path` helper to stream the
     /// HTTP body directly to disk and avoid materialising the whole chunk
     /// in RAM.
+    ///
+    /// Uses `tokio::fs::write` (single `spawn_blocking` around
+    /// `std::fs::write`) rather than manually driving
+    /// `create + write_all` and letting the tokio handle drop close the
+    /// fd. The manual shape leaked a race: `tokio::fs::File::drop`
+    /// dispatches `close(2)` to the blocking pool without awaiting it,
+    /// and until close completes the dirent update may not be visible
+    /// to a subsequent `read_dir` — on macOS APFS routinely, on Linux
+    /// under I/O contention. In practice that turned into
+    /// `ordered_chunk_paths` silently missing a just-uploaded chunk;
+    /// the NC assembly path (`handle_assemble` → `ordered_chunk_paths`)
+    /// would then produce a truncated file with no error to the client.
+    /// `std::fs::write` opens, writes, and synchronously closes before
+    /// returning, so the dirent is guaranteed visible on `.await`.
     pub async fn store_chunk(
         &self,
         user: &str,
@@ -84,13 +97,9 @@ impl NextcloudChunkedUploadService {
         data: &[u8],
     ) -> Result<()> {
         let chunk_path = self.safe_chunk_path(user, upload_id, chunk_name)?;
-        let mut file = fs::File::create(&chunk_path)
+        fs::write(&chunk_path, data)
             .await
-            .map_err(|e| DomainError::internal_error("ChunkedUpload", e.to_string()))?;
-        file.write_all(data)
-            .await
-            .map_err(|e| DomainError::internal_error("ChunkedUpload", e.to_string()))?;
-        Ok(())
+            .map_err(|e| DomainError::internal_error("ChunkedUpload", e.to_string()))
     }
 
     /// List the session's chunk files in assembly (numeric) order.
