@@ -52,6 +52,11 @@ async fn get_openapi_spec() -> AxumJson<utoipa::openapi::OpenApi> {
 
 use crate::interfaces::api::handlers::admin_handler;
 use crate::interfaces::api::handlers::batch_handler::{self, BatchHandlerState};
+// `chunked_upload_handler::*` are marked `#[deprecated]` (prefer
+// `/api/files/delta/*`); the router still needs to reference them
+// until clients migrate. See the `chunked_upload_router` block
+// below for the local `#[allow(deprecated)]`.
+#[allow(deprecated)]
 use crate::interfaces::api::handlers::chunked_upload_handler::{
     cancel_upload, complete_upload, create_upload, get_upload_status, upload_chunk,
 };
@@ -368,6 +373,13 @@ pub fn create_api_routes(app_state: &Arc<AppState>) -> Router<Arc<AppState>> {
     // Create routes for chunked uploads (large files >10MB).
     // All five handlers are free functions — see chunked_upload_handler.rs for why
     // #[utoipa::path] cannot be applied to ChunkedUploadHandler impl methods directly.
+    //
+    // Each handler carries `#[deprecated]` so utoipa marks the OpenAPI paths
+    // deprecated (Swagger UI shows the strikethrough + banner) and existing
+    // callers get a compile-time nudge to migrate to `/api/files/delta/*`.
+    // The route registration itself has to keep referencing them until the
+    // clients migrate off, so we suppress the local `deprecated` lint here.
+    #[allow(deprecated)]
     let chunked_upload_router = Router::new()
         .route("/", post(create_upload))
         .route("/{upload_id}", axum::routing::patch(upload_chunk))
