@@ -111,6 +111,17 @@ pub enum OptimizedFileContent {
     Stream(Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>),
 }
 
+/// Result of a cache-aware HTTP-Range read
+/// (`FileRetrievalService::get_file_range_preloaded`). Same split as
+/// [`OptimizedFileContent`]: handlers map each variant onto a response body.
+pub enum RangeContent {
+    /// Zero-copy slice out of the RAM content cache (a `Bytes::slice` is a
+    /// refcount bump — no allocation, no I/O, no DB).
+    Bytes(Bytes),
+    /// Streaming range read from the blob store (cache miss / large file).
+    Stream(Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>),
+}
+
 /// Primary port for file retrieval operations
 pub trait FileRetrievalUseCase: Send + Sync + 'static {
     /// Gets a file by its ID (system/internal — no ownership check).

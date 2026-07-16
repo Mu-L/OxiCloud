@@ -112,13 +112,33 @@ impl ChunkIngestOutcome {
 /// mid-stream — a client disconnect aborts the whole handler future — the
 /// guard spawns a rollback so pinned chunks don't leak references forever and
 /// written files become GC-collectible rows instead of invisible orphans.
-struct IngestGuard {
-    pool: Arc<PgPool>,
-    backend: Arc<dyn BlobStorageBackend>,
+/// Whether the ingest loop overlaps batch settling with source reading
+/// (default on). `OXICLOUD_INGEST_OVERLAP=0` restores the old inline
+/// behaviour — kept as a bench/ops escape hatch.
+fn ingest_overlap_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("OXICLOUD_INGEST_OVERLAP").map_or(true, |v| v != "0" && v != "false")
+    })
+}
+
+/// Compensation ledger of one ingest session. Shared (`Arc<tokio::Mutex>`)
+/// between the ingest loop and the overlapped batch-settle task: the settler
+/// holds the lock for the whole batch and records progressively, so a
+/// rollback (explicit or Drop-spawned) that acquires the lock is guaranteed
+/// to observe every pin/write the in-flight settle made.
+#[derive(Default)]
+struct IngestState {
     /// Pre-existing chunks whose ref_count this session bumped (distinct).
     pinned: Vec<String>,
     /// Chunks written to the backend but not yet registered: (hash, size).
     written: Vec<(String, i64)>,
+}
+
+struct IngestGuard {
+    pool: Arc<PgPool>,
+    backend: Arc<dyn BlobStorageBackend>,
+    state: Arc<tokio::sync::Mutex<IngestState>>,
     armed: bool,
 }
 
@@ -127,8 +147,7 @@ impl IngestGuard {
         Self {
             pool,
             backend,
-            pinned: Vec::new(),
-            written: Vec::new(),
+            state: Arc::new(tokio::sync::Mutex::new(IngestState::default())),
             armed: true,
         }
     }
@@ -143,8 +162,15 @@ impl IngestGuard {
     /// spawned Drop path).
     async fn rollback(mut self) {
         self.armed = false;
-        let pinned = std::mem::take(&mut self.pinned);
-        let written = std::mem::take(&mut self.written);
+        // Lock acquisition serializes after any in-flight batch settle, so
+        // its pins/writes are visible here.
+        let (pinned, written) = {
+            let mut st = self.state.lock().await;
+            (
+                std::mem::take(&mut st.pinned),
+                std::mem::take(&mut st.written),
+            )
+        };
         Self::run_rollback(self.pool.clone(), self.backend.clone(), pinned, written).await;
     }
 
@@ -211,24 +237,33 @@ impl IngestGuard {
 
 impl Drop for IngestGuard {
     fn drop(&mut self) {
-        if !self.armed || (self.pinned.is_empty() && self.written.is_empty()) {
+        if !self.armed {
             return;
         }
-        let pinned = std::mem::take(&mut self.pinned);
-        let written = std::mem::take(&mut self.written);
+        // The rollback task locks the shared state first, so it naturally
+        // waits out an in-flight batch settle and observes its recordings.
+        let state = self.state.clone();
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
                 let pool = self.pool.clone();
                 let backend = self.backend.clone();
                 handle.spawn(async move {
+                    let (pinned, written) = {
+                        let mut st = state.lock().await;
+                        (
+                            std::mem::take(&mut st.pinned),
+                            std::mem::take(&mut st.written),
+                        )
+                    };
+                    if pinned.is_empty() && written.is_empty() {
+                        return;
+                    }
                     Self::run_rollback(pool, backend, pinned, written).await;
                 });
             }
             Err(_) => tracing::warn!(
-                "Ingest guard dropped outside a runtime: {} pins / {} written chunks \
+                "Ingest guard dropped outside a runtime: any pins / written chunks \
                  stay leaked until the next GC sweep",
-                pinned.len(),
-                written.len()
             ),
         }
     }
@@ -628,6 +663,13 @@ impl DedupService {
         .map_err(|e| DomainError::internal_error("Dedup", format!("chunk_sizes query: {e}")))
     }
 
+    /// Read-ahead depth the backend recommends for multi-chunk drains
+    /// (1 local, 8 for request-latency-bound object stores) — see
+    /// `BlobStorageBackend::read_prefetch` and benches/BLOB-PREFETCH.md.
+    pub fn read_prefetch(&self) -> usize {
+        self.backend.read_prefetch()
+    }
+
     /// Stream one chunk's raw bytes from the backend. The caller is
     /// responsible for entitlement (see [`claimable_chunks`]).
     pub async fn chunk_stream(
@@ -876,8 +918,28 @@ impl DedupService {
         let mut hasher = blake3::Hasher::new();
         let mut head: Vec<u8> = Vec::with_capacity(sniff_len.min(16 * 1024));
 
-        for (hash, declared_size) in chunks {
-            let mut stream = self.backend.get_blob_stream(hash).await?;
+        // Overlap the NEXT chunk's open with the current chunk's hash+drain
+        // — the same `buffered(read_prefetch)` combinator as the download
+        // path (benches/BLOB-PREFETCH.md measured +7-12 % on local disk;
+        // request-latency-bound object stores gain far more). Hashing stays
+        // strictly in manifest order: `buffered` yields in input order.
+        let prefetch = self.backend.read_prefetch().max(1);
+        let backend = self.backend.clone();
+        let mut opened = futures::stream::iter(chunks.iter().cloned())
+            .map(move |(hash, declared_size)| {
+                let backend = backend.clone();
+                async move {
+                    backend
+                        .get_blob_stream(&hash)
+                        .await
+                        .map(|s| (hash, declared_size, s))
+                }
+            })
+            .buffered(prefetch);
+
+        while let Some(next) = opened.next().await {
+            let (hash, declared_size, mut stream) = next?;
+            let (hash, declared_size) = (&hash, &declared_size);
             let mut actual: u64 = 0;
             while let Some(part) = stream.next().await {
                 let part = part.map_err(|e| {
@@ -954,7 +1016,7 @@ impl DedupService {
     where
         S: Stream<Item = Result<Bytes, std::io::Error>> + Send,
     {
-        let mut guard = IngestGuard::new(self.pool.clone(), self.backend.clone());
+        let guard = IngestGuard::new(self.pool.clone(), self.backend.clone());
 
         let reader = StreamReader::new(Box::pin(source));
         let mut chunker = fastcdc::v2020::AsyncStreamCDC::new(
@@ -973,11 +1035,35 @@ impl DedupService {
         let mut session_seen: HashSet<String> = HashSet::new();
         let mut pending: Vec<(String, Bytes)> = Vec::new();
         let mut pending_bytes: usize = 0;
+        // Depth-1 settle pipeline: batch N settles on a spawned task while
+        // the loop keeps reading/chunking/hashing batch N+1 from the source
+        // — the inline shape froze the reader (and the client's socket) for
+        // every settle (benches/INGEST-OVERLAP.md). The task records into
+        // the guard's shared state under its lock, so rollback stays exact
+        // even if this future is dropped mid-settle.
+        let mut in_flight: Option<tokio::task::JoinHandle<Result<(), DomainError>>> = None;
+
+        /// Await the previous batch's settle, mapping panics/aborts to a
+        /// domain error so both are compensated identically.
+        async fn join_settle(
+            handle: tokio::task::JoinHandle<Result<(), DomainError>>,
+        ) -> Result<(), DomainError> {
+            match handle.await {
+                Ok(res) => res,
+                Err(e) => Err(DomainError::internal_error(
+                    "Dedup",
+                    format!("Chunk settle task failed: {e}"),
+                )),
+            }
+        }
 
         while let Some(item) = chunk_stream.next().await {
             let chunk = match item {
                 Ok(chunk) => chunk,
                 Err(e) => {
+                    if let Some(handle) = in_flight.take() {
+                        let _ = join_settle(handle).await;
+                    }
                     guard.rollback().await;
                     return Err(DomainError::internal_error(
                         "Dedup",
@@ -1000,7 +1086,26 @@ impl DedupService {
                 pending.push((hash, Bytes::from(data)));
                 if pending.len() >= Self::FLUSH_MAX_CHUNKS || pending_bytes >= Self::FLUSH_MAX_BYTES
                 {
-                    if let Err(e) = self.flush_pending(&mut guard, &mut pending).await {
+                    if let Some(handle) = in_flight.take()
+                        && let Err(e) = join_settle(handle).await
+                    {
+                        guard.rollback().await;
+                        return Err(e);
+                    }
+                    let batch = std::mem::take(&mut pending);
+                    let handle = tokio::spawn(Self::settle_batch(
+                        self.pool.clone(),
+                        self.backend.clone(),
+                        guard.state.clone(),
+                        batch,
+                    ));
+                    // Bench/ops escape hatch: OXICLOUD_INGEST_OVERLAP=0
+                    // reproduces the old inline-settle behaviour (await the
+                    // batch before reading on) — used by
+                    // benches/INGEST-OVERLAP.md for an in-binary A/B.
+                    if ingest_overlap_enabled() {
+                        in_flight = Some(handle);
+                    } else if let Err(e) = join_settle(handle).await {
                         guard.rollback().await;
                         return Err(e);
                     }
@@ -1009,7 +1114,20 @@ impl DedupService {
             }
         }
 
-        if let Err(e) = self.flush_pending(&mut guard, &mut pending).await {
+        if let Some(handle) = in_flight.take()
+            && let Err(e) = join_settle(handle).await
+        {
+            guard.rollback().await;
+            return Err(e);
+        }
+        if let Err(e) = Self::settle_batch(
+            self.pool.clone(),
+            self.backend.clone(),
+            guard.state.clone(),
+            std::mem::take(&mut pending),
+        )
+        .await
+        {
             guard.rollback().await;
             return Err(e);
         }
@@ -1018,10 +1136,15 @@ impl DedupService {
         // One batched fsync sweep (no-op for remote backends, durable on
         // PUT), then one batched INSERT. A crash before the INSERT leaves
         // only unreferenced files; never a row pointing at unsynced bytes.
-        if !guard.written.is_empty() {
-            let new_hashes: Vec<String> = guard.written.iter().map(|(h, _)| h.clone()).collect();
-            let new_sizes: Vec<i64> = guard.written.iter().map(|(_, s)| *s).collect();
-
+        // No settle is in flight past this point — the lock is uncontended.
+        let (new_hashes, new_sizes): (Vec<String>, Vec<i64>) = {
+            let st = guard.state.lock().await;
+            (
+                st.written.iter().map(|(h, _)| h.clone()).collect(),
+                st.written.iter().map(|(_, s)| *s).collect(),
+            )
+        };
+        if !new_hashes.is_empty() {
             if let Err(e) = self.backend.sync_blobs(&new_hashes).await {
                 guard.rollback().await;
                 return Err(e);
@@ -1047,7 +1170,7 @@ impl DedupService {
             }
         }
 
-        let newly_written = guard.written.len();
+        let newly_written = new_hashes.len();
         guard.disarm();
 
         Ok(ChunkIngestOutcome {
@@ -1061,18 +1184,23 @@ impl DedupService {
 
     /// Settle one batch of distinct in-RAM chunks against PG + the backend.
     ///
-    /// Successfully pinned hashes and written chunks are recorded on the
-    /// guard as they happen, so a failure mid-batch leaves nothing
-    /// untracked for rollback.
-    async fn flush_pending(
-        &self,
-        guard: &mut IngestGuard,
-        pending: &mut Vec<(String, Bytes)>,
+    /// Static (no `&self`) so the ingest loop can run it on a spawned task
+    /// and keep consuming the source stream while the batch settles — the
+    /// inline shape stalled the reader for the whole settle every 8 MiB
+    /// (benches/INGEST-OVERLAP.md). The shared-state lock is held for the
+    /// entire batch: pinned hashes and written chunks are recorded
+    /// progressively under it, so a failure (or a rollback racing this
+    /// settle) leaves nothing untracked.
+    async fn settle_batch(
+        pool: Arc<PgPool>,
+        backend: Arc<dyn BlobStorageBackend>,
+        state: Arc<tokio::sync::Mutex<IngestState>>,
+        batch: Vec<(String, Bytes)>,
     ) -> Result<(), DomainError> {
-        if pending.is_empty() {
+        if batch.is_empty() {
             return Ok(());
         }
-        let batch = std::mem::take(pending);
+        let mut guard = state.lock().await;
         let hashes: Vec<String> = batch.iter().map(|(h, _)| h.clone()).collect();
 
         // Pin-or-classify in one statement: rows that exist take this
@@ -1084,7 +1212,7 @@ impl DedupService {
               RETURNING hash",
         )
         .bind(&hashes)
-        .fetch_all(self.pool.as_ref())
+        .fetch_all(pool.as_ref())
         .await
         .map_err(|e| {
             DomainError::internal_error("Dedup", format!("Failed to pin existing chunks: {e}"))
@@ -1106,7 +1234,6 @@ impl DedupService {
 
         // Unsynced writes — durability comes from the single end-of-stream
         // sweep, before any PG row references these chunks.
-        let backend = self.backend.clone();
         let results: Vec<Result<(String, i64), DomainError>> = stream::iter(to_write)
             .map(|(hash, data)| {
                 let backend = backend.clone();

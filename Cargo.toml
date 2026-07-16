@@ -220,6 +220,14 @@ name = "bench_static_precompress"
 path = "examples/bench_static_precompress.rs"
 required-features = ["bench"]
 
+# Round-2 battery: range-from-cache, NC chunk gate, delta prefetch, ingest
+# overlap (real store_from_stream; run with OXICLOUD_INGEST_OVERLAP=0/1),
+# ZIP streaming TTFB. Sections 1 and 4 need Postgres.
+[[example]]
+name = "bench_round2"
+path = "examples/bench_round2.rs"
+required-features = ["bench"]
+
 # Video thumbnail benchmark — Option B (server-side ffmpeg frame → WebP). Needs
 # `ffmpeg` on PATH (libx264/libx265/libvpx-vp9 to synthesize the test corpus).
 [[example]]
