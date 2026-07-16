@@ -518,6 +518,52 @@ HTTP 200
 jsonpath "$.id" == "{{audit13_contact_id}}"
 
 
+# ─────────────────────────────────────────────────────────────
+# Step 21h–21i — Regression pin for AuthZ audit #19 (2026-07-12).
+#
+# `ContactService::create_contact` + `create_contact_from_vcard`
+# + `create_group` used to `authz.require(Update)` on the address
+# book, which the Contributor bundle (Read + Create) does NOT
+# satisfy — so Contributor grantees were blocked from adding
+# contacts via REST or CardDAV PUT despite holding the intended
+# Create permission. Not a bypass, an over-restrictive gate.
+# Fix: `Permission::Create`. Sibling `#13` above closed the
+# mirror bug on the delete verbs.
+#
+# The pin demotes Bob from Editor (Step 21d) to Contributor —
+# Contributor is the minimal role that MUST succeed post-fix and
+# FAILED pre-fix. Bob then POSTs a contact via REST; pre-fix this
+# 403'd, post-fix returns 201.
+# ─────────────────────────────────────────────────────────────
+
+# 21h — Demote Bob from Editor to Contributor.
+PUT {{base_url}}/api/grants/role
+Authorization: Bearer {{token}}
+Content-Type: application/json
+{
+  "subject":  { "type": "user",         "id": "{{bob_user_id}}" },
+  "resource": { "type": "address_book", "id": "{{share_book_id}}" },
+  "role":     "contributor"
+}
+
+HTTP 200
+
+
+# 21i — Bob (Contributor) creates a contact → 201. Pre-fix, the
+# service required Update which Contributor's bundle doesn't hold,
+# so this 403'd and the CardDAV surface was equally blocked.
+POST {{base_url}}/api/address-books/{{share_book_id}}/contacts
+Authorization: Bearer {{bob_token}}
+Content-Type: application/json
+{
+  "full_name": "audit-19 contributor-can-create canary"
+}
+
+HTTP 201
+[Captures]
+audit19_contact_id: jsonpath "$.id"
+
+
 # Step 22 — Alice revokes the grant.
 DELETE {{base_url}}/api/grants/{{share_grant_id}}
 Authorization: Bearer {{token}}
