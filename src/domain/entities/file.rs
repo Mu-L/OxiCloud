@@ -352,8 +352,25 @@ impl File {
     /// formula here changes it everywhere — that is the property
     /// we want.
     pub fn compute_etag(blob_hash: &str, modified_at: u64) -> String {
-        let prefix: String = blob_hash.chars().take(16).collect();
-        format!("{}-{}", prefix, modified_at)
+        use std::fmt::Write as _;
+
+        // Byte index just past the 16th char (whole string when shorter).
+        // `blob_hash` is lowercase hex ASCII in practice, so this is
+        // effectively `min(len, 16)`, but `char_indices` keeps the slice
+        // char-boundary-safe for exotic fixture values — byte-identical
+        // to the old `chars().take(16).collect::<String>()` without the
+        // intermediate allocation.
+        let end = match blob_hash.char_indices().nth(16) {
+            Some((i, _)) => i,
+            None => blob_hash.len(),
+        };
+
+        // Single allocation: prefix + '-' + up to 20 digits (u64::MAX).
+        let mut etag = String::with_capacity(end + 1 + 20);
+        etag.push_str(&blob_hash[..end]);
+        etag.push('-');
+        let _ = write!(etag, "{modified_at}");
+        etag
     }
 
     // Getters

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::application::dtos::cursor::{CursorListResponse, CursorQuery, PageCursor};
+use crate::application::dtos::display_helpers::intern_display;
 use crate::application::dtos::grant_dto::{ResourceContentDto, ResourceTypeDto};
 use crate::domain::entities::folder::Folder;
 use crate::domain::services::authorization::ResourceKind;
@@ -99,24 +100,33 @@ pub struct FolderDto {
 
 impl From<Folder> for FolderDto {
     fn from(folder: Folder) -> Self {
-        let is_root = folder.parent_id().is_none();
-        let etag = folder.etag().to_string();
+        // Consume the entity by moving all fields — zero heap allocations
+        // for id, name, path, parent_id (previously 3-4× .to_string()).
+        let parts = folder.into_parts();
+
+        let is_root = parts.parent_id.is_none();
+        // Single-allocation ETag straight from the owned parts. The old
+        // shape (`folder.etag().to_string()`) built the String and then
+        // cloned it — a pure double-alloc.
+        let etag = Folder::compute_etag(&parts.id, parts.tree_modified_at);
 
         Self {
-            id: folder.id().to_string(),
-            name: folder.name().to_string(),
-            path: folder.path_string().to_string(),
-            parent_id: folder.parent_id().map(String::from),
-            drive_id: folder.drive_id(),
-            created_at: folder.created_at(),
-            modified_at: folder.modified_at(),
+            id: parts.id,
+            name: parts.name,
+            path: parts.path_string,
+            parent_id: parts.parent_id,
+            drive_id: parts.drive_id,
+            created_at: parts.created_at,
+            modified_at: parts.modified_at,
             is_root,
-            icon_class: Arc::from("fas fa-folder"),
-            icon_special_class: Arc::from("folder-icon"),
-            category: Arc::from("Folder"),
+            // Constant display fields: refcount bump on interned statics
+            // instead of 3 fresh Arc allocations per row.
+            icon_class: intern_display("fas fa-folder"),
+            icon_special_class: intern_display("folder-icon"),
+            category: intern_display("Folder"),
             etag,
-            created_by: folder.created_by(),
-            updated_by: folder.updated_by(),
+            created_by: parts.created_by,
+            updated_by: parts.updated_by,
         }
     }
 }
@@ -163,9 +173,9 @@ impl FolderDto {
             created_at: 0,
             modified_at: 0,
             is_root: true,
-            icon_class: Arc::from("fas fa-folder"),
-            icon_special_class: Arc::from("folder-icon"),
-            category: Arc::from("Folder"),
+            icon_class: intern_display("fas fa-folder"),
+            icon_special_class: intern_display("folder-icon"),
+            category: intern_display("Folder"),
             etag: String::new(),
             created_by: None,
             updated_by: None,

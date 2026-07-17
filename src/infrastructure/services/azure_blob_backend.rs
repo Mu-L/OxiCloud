@@ -130,10 +130,32 @@ impl BlobStorageBackend for AzureBlobBackend {
                 return Ok(size);
             }
 
-            client.put_block_blob(data.to_vec()).await.map_err(|e| {
+            // `Bytes` converts into `azure_core::Body` by reference count —
+            // the old `data.to_vec()` copied every chunk once more.
+            client.put_block_blob(data).await.map_err(|e| {
                 DomainError::internal_error("Azure", format!("Failed to upload blob {hash}: {e}"))
             })?;
 
+            Ok(size)
+        })
+    }
+
+    /// Dedup settle path: PUT unconditionally. Content-addressed keys make
+    /// re-PUTs idempotent, so the `get_properties` probe
+    /// `put_blob_from_bytes` pays is a pure extra round-trip on every NEW
+    /// chunk (2 RTTs -> 1, benches/S3-PUT.md — same shape as S3).
+    fn put_blob_from_bytes_unsynced(
+        &self,
+        hash: &str,
+        data: Bytes,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<u64, DomainError>> + Send + '_>> {
+        let hash = hash.to_owned();
+        Box::pin(async move {
+            let client = self.blob_client(&hash);
+            let size = data.len() as u64;
+            client.put_block_blob(data).await.map_err(|e| {
+                DomainError::internal_error("Azure", format!("Failed to upload blob {hash}: {e}"))
+            })?;
             Ok(size)
         })
     }

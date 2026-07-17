@@ -8,6 +8,175 @@
 //! then fall back to the file extension when the MIME is generic
 //! (`application/octet-stream` or empty).
 
+use std::collections::HashMap;
+use std::fmt::Write as _;
+use std::sync::{Arc, LazyLock};
+
+// ─── Arc<str> interning for closed-set display values ────────────────
+//
+// `FileDto` / `FolderDto` store their display fields as `Arc<str>` so DTO
+// clones are O(1). But `Arc::<str>::from(&str)` always allocates + copies,
+// so building the DTO paid 3-4 heap allocations per row even though the
+// value space is a small closed set. Interning turns each conversion into
+// a HashMap lookup + refcount bump.
+
+/// Every `&'static str` that [`icon_class_for`], [`icon_special_class_for`]
+/// and [`category_for`] can return, plus the folder-DTO constants.
+///
+/// Keep this table in sync when adding a value to those functions — a
+/// missing entry is not a bug (callers fall back to `Arc::from`, same
+/// bytes, one extra allocation), just a lost optimization.
+static DISPLAY_INTERN: LazyLock<HashMap<&'static str, Arc<str>>> = LazyLock::new(|| {
+    const CLOSED_SET: &[&str] = &[
+        // icon_class_for
+        "fas fa-file-pdf",
+        "fas fa-file-word",
+        "fas fa-file-excel",
+        "fas fa-file-powerpoint",
+        "fas fa-file-archive",
+        "fas fa-file-code",
+        "fas fa-hdd",
+        "fas fa-file-image",
+        "fas fa-file-video",
+        "fas fa-file-audio",
+        "fas fa-file-alt",
+        "fas fa-terminal",
+        "fas fa-file",
+        // icon_special_class_for
+        "pdf-icon",
+        "doc-icon",
+        "spreadsheet-icon",
+        "presentation-icon",
+        "archive-icon",
+        "code-icon json-icon",
+        "code-icon js-icon",
+        "code-icon ts-icon",
+        "code-icon html-icon",
+        "code-icon sql-icon",
+        "code-icon config-icon",
+        "code-icon php-icon",
+        "script-icon",
+        "installer-icon",
+        "image-icon",
+        "video-icon",
+        "audio-icon",
+        "code-icon py-icon",
+        "code-icon rust-icon",
+        "code-icon",
+        "code-icon go-icon",
+        "code-icon ruby-icon",
+        "code-icon md-icon",
+        "code-icon css-icon",
+        "code-icon java-icon",
+        "code-icon c-icon",
+        "code-icon cs-icon",
+        "code-icon swift-icon",
+        "",
+        // category_for
+        "PDF",
+        "Document",
+        "Spreadsheet",
+        "Presentation",
+        "Archive",
+        "Code",
+        "Installer",
+        "Image",
+        "Video",
+        "Audio",
+        "Markdown",
+        "Text",
+        // FolderDto constants
+        "fas fa-folder",
+        "folder-icon",
+        "Folder",
+    ];
+    CLOSED_SET.iter().map(|s| (*s, Arc::from(*s))).collect()
+});
+
+/// Returns a shared `Arc<str>` for a display value from the closed sets
+/// above (icon class, icon special class, category). Lookup + refcount
+/// bump instead of alloc + copy; unknown values (future additions not
+/// yet in the table) fall back to `Arc::from` with identical bytes.
+pub fn intern_display(s: &'static str) -> Arc<str> {
+    DISPLAY_INTERN
+        .get(s)
+        .cloned()
+        .unwrap_or_else(|| Arc::from(s))
+}
+
+/// The MIME types that dominate real storage rows. Exotic types fall back
+/// to a per-row `Arc::from` — correctness is unaffected, only the alloc is.
+static MIME_INTERN: LazyLock<HashMap<&'static str, Arc<str>>> = LazyLock::new(|| {
+    const COMMON_MIMES: &[&str] = &[
+        "",
+        "directory",
+        "application/octet-stream",
+        // Images
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "image/svg+xml",
+        "image/heic",
+        "image/heif",
+        "image/avif",
+        "image/bmp",
+        "image/tiff",
+        "image/x-icon",
+        // Video
+        "video/mp4",
+        "video/quicktime",
+        "video/webm",
+        "video/x-matroska",
+        "video/x-msvideo",
+        // Audio
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/ogg",
+        "audio/flac",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/aac",
+        // Documents
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.oasis.opendocument.text",
+        "application/vnd.oasis.opendocument.spreadsheet",
+        // Text / code
+        "text/plain",
+        "text/csv",
+        "text/html",
+        "text/css",
+        "text/markdown",
+        "text/xml",
+        "application/json",
+        "application/javascript",
+        "application/xml",
+        "application/x-yaml",
+        // Archives
+        "application/zip",
+        "application/gzip",
+        "application/x-tar",
+        "application/x-7z-compressed",
+        "application/x-rar-compressed",
+    ];
+    COMMON_MIMES.iter().map(|s| (*s, Arc::from(*s))).collect()
+});
+
+/// Returns a shared `Arc<str>` for the given MIME type. Common types hit
+/// the intern table (refcount bump); exotic ones allocate as before.
+pub fn intern_mime(mime: &str) -> Arc<str> {
+    MIME_INTERN
+        .get(mime)
+        .cloned()
+        .unwrap_or_else(|| Arc::from(mime))
+}
+
 // ─── Private: extract lowercase extension from a filename ────────────
 fn ext_of(name: &str) -> Option<&str> {
     let name = name.rsplit('/').next().unwrap_or(name); // strip path
@@ -388,11 +557,21 @@ pub fn format_file_size(bytes: u64) -> String {
 
     let value = bytes as f64 / K.powi(i as i32);
 
-    // Two decimal places, then strip trailing zeros (matches JS parseFloat behaviour)
-    let formatted = format!("{:.2}", value);
-    let formatted = formatted.trim_end_matches('0').trim_end_matches('.');
-
-    format!("{} {}", formatted, SIZES[i])
+    // Single buffer: write the 2-decimal value, strip trailing zeros in
+    // place (matches JS parseFloat behaviour), then append the unit.
+    // 16 chars covers the worst case ("16777216 TB" for u64::MAX,
+    // "1023.99 Bytes" for the longest unit), so no realloc occurs.
+    let mut out = String::with_capacity(16);
+    let _ = write!(out, "{:.2}", value);
+    while out.ends_with('0') {
+        out.pop();
+    }
+    if out.ends_with('.') {
+        out.pop();
+    }
+    out.push(' ');
+    out.push_str(SIZES[i]);
+    out
 }
 
 #[cfg(test)]
@@ -503,6 +682,50 @@ mod tests {
         assert_eq!(
             category_for("notes.md", "application/octet-stream"),
             "Markdown"
+        );
+    }
+
+    /// Every value the closed-set display functions can return must hit
+    /// the intern table (same bytes, shared allocation) — a miss is only
+    /// a lost optimization, but this test keeps the table in sync.
+    #[test]
+    fn test_intern_display_covers_closed_sets_and_shares_storage() {
+        for s in [
+            "fas fa-file-pdf",
+            "fas fa-file",
+            "fas fa-terminal",
+            "fas fa-folder",
+            "code-icon rust-icon",
+            "folder-icon",
+            "",
+            "PDF",
+            "Folder",
+            "Document",
+            "Markdown",
+        ] {
+            let a = intern_display(s);
+            let b = intern_display(s);
+            assert_eq!(&*a, s, "interned bytes must be identical");
+            assert!(
+                Arc::ptr_eq(&a, &b),
+                "closed-set value {s:?} must come from the intern table"
+            );
+        }
+    }
+
+    #[test]
+    fn test_intern_mime_common_hits_table_exotic_falls_back() {
+        let a = intern_mime("image/jpeg");
+        let b = intern_mime("image/jpeg");
+        assert_eq!(&*a, "image/jpeg");
+        assert!(Arc::ptr_eq(&a, &b), "common MIME must be interned");
+
+        let exotic = intern_mime("chemical/x-pdb");
+        assert_eq!(&*exotic, "chemical/x-pdb");
+        let exotic2 = intern_mime("chemical/x-pdb");
+        assert!(
+            !Arc::ptr_eq(&exotic, &exotic2),
+            "exotic MIME falls back to a fresh Arc"
         );
     }
 

@@ -488,13 +488,21 @@ impl FileBlobReadRepository {
     /// `sort_date` epoch for each file (used as pagination cursor).
     ///
     /// Uses the denormalised `media_sort_date` column (synced from
-    /// `file_metadata.captured_at` by trigger) so no JOIN with
-    /// `file_metadata` is needed.  The partial covering index
-    /// `idx_files_media_timeline_by_drive` (migration 20260901000001)
-    /// keys on `(drive_id, media_sort_date DESC)` filtered on non-trashed
-    /// image/video rows — Postgres does one IndexScan per in-scope
-    /// drive_id already ordered by capture date, so LIMIT stops the scan
-    /// early. Same O(LIMIT) shape as the pre-D7 `user_id`-keyed hot path.
+    /// `file_metadata.captured_at` by trigger). The accessible drive ids
+    /// are materialised once, then a `CROSS JOIN LATERAL (… ORDER BY
+    /// media_sort_date DESC LIMIT k)` per drive turns the partial covering
+    /// index `idx_files_media_timeline_by_drive` (migration 20260901000001,
+    /// `(drive_id, media_sort_date DESC)` filtered on non-trashed
+    /// image/video rows) into one BOUNDED index scan per drive; the outer
+    /// merge sorts `drives × k` rows. The folders / file_metadata joins sit
+    /// outside the top-N so only the k emitted rows pay them.
+    ///
+    /// The previous shape put the joins and the global `ORDER BY … LIMIT`
+    /// above a `drive_id IN (…)` nested loop — Postgres fed EVERY media row
+    /// through the join into a top-N heapsort, scanning the timeline index
+    /// to exhaustion on every page: O(library) per page, 97 ms on a
+    /// 50k-photo library vs 1.6 ms for this shape (55.7x,
+    /// benches/PHOTOS-TIMELINE.md).
     ///
     /// Scope (`docs/plan/drive.md` §15): drives with
     /// `policies.include_in_photo_index = true` where the caller has a
@@ -537,37 +545,47 @@ impl FileBlobReadRepository {
         };
         let sql = format!(
             r#"
-            SELECT fi.id::text, fi.name, fi.folder_id::text, fo.path,
-                   fi.size, fi.mime_type,
-                   EXTRACT(EPOCH FROM fi.created_at)::bigint,
-                   EXTRACT(EPOCH FROM fi.updated_at)::bigint,
-                   fi.blob_hash,
-
-                   fi.created_by, fi.updated_by,
-                   EXTRACT(EPOCH FROM fi.media_sort_date)::bigint AS sort_date,
+            WITH accessible AS MATERIALIZED (
+                SELECT d.id
+                  FROM storage.drives d
+                  JOIN storage.role_grants g
+                    ON g.resource_type = 'drive'
+                   AND g.resource_id   = d.id
+                 WHERE (
+                         (g.subject_type = 'user'  AND g.subject_id = $1)
+                      OR (g.subject_type = 'group' AND g.subject_id IN
+                              (SELECT storage.caller_group_ids($1)))
+                       )
+                   AND (g.expires_at IS NULL OR g.expires_at > NOW())
+                   AND (d.policies->>'include_in_photo_index')::boolean = true
+            )
+            SELECT top.id::text, top.name, top.folder_id::text, fo.path,
+                   top.size, top.mime_type,
+                   EXTRACT(EPOCH FROM top.created_at)::bigint,
+                   EXTRACT(EPOCH FROM top.updated_at)::bigint,
+                   top.blob_hash,
+                   top.created_by, top.updated_by,
+                   EXTRACT(EPOCH FROM top.media_sort_date)::bigint AS sort_date,
                    fm.width, fm.height
-              FROM storage.files fi
-              LEFT JOIN storage.folders fo ON fo.id = fi.folder_id
-              LEFT JOIN storage.file_metadata fm ON fm.file_id = fi.id
-             WHERE fi.drive_id IN (
-                     SELECT d.id
-                       FROM storage.drives d
-                       JOIN storage.role_grants g
-                         ON g.resource_type = 'drive'
-                        AND g.resource_id   = d.id
-                      WHERE (
-                              (g.subject_type = 'user'  AND g.subject_id = $1)
-                           OR (g.subject_type = 'group' AND g.subject_id IN
-                                   (SELECT storage.caller_group_ids($1)))
-                            )
-                        AND (g.expires_at IS NULL OR g.expires_at > NOW())
-                        AND (d.policies->>'include_in_photo_index')::boolean = true
-                   )
-               AND NOT fi.is_trashed
-               AND (fi.mime_type LIKE 'image/%' OR fi.mime_type LIKE 'video/%')
-               {cursor_pred}
-             ORDER BY fi.media_sort_date DESC
-             LIMIT $3
+              FROM (
+                SELECT fi.*
+                  FROM accessible a
+                 CROSS JOIN LATERAL (
+                    SELECT fi.*
+                      FROM storage.files fi
+                     WHERE fi.drive_id = a.id
+                       AND NOT fi.is_trashed
+                       AND (fi.mime_type LIKE 'image/%' OR fi.mime_type LIKE 'video/%')
+                       {cursor_pred}
+                     ORDER BY fi.media_sort_date DESC
+                     LIMIT $3
+                 ) fi
+                 ORDER BY fi.media_sort_date DESC
+                 LIMIT $3
+              ) top
+              LEFT JOIN storage.folders fo ON fo.id = top.folder_id
+              LEFT JOIN storage.file_metadata fm ON fm.file_id = top.id
+             ORDER BY top.media_sort_date DESC
             "#,
         );
         let rows: Vec<MediaFileRow> = sqlx::query_as(&sql)

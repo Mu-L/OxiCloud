@@ -385,7 +385,6 @@ async fn handle_propfind(
             CardDavAdapter::generate_contacts_response(
                 &mut response_body,
                 std::slice::from_ref(&contact),
-                &[(contact.uid.clone(), contact_to_vcard(&contact))],
                 &report,
                 base_href,
             )
@@ -449,22 +448,10 @@ async fn handle_report(
             .map_err(AppError::from)?,
     };
 
-    // Generate vCards
-    let vcards: Vec<(String, String)> = contacts
-        .iter()
-        .map(|c| (c.uid.clone(), contact_to_vcard(c)))
-        .collect();
-
     let base_href = &format!("/carddav/{}/", address_book_id);
     let mut response_body = Vec::new();
-    CardDavAdapter::generate_contacts_response(
-        &mut response_body,
-        &contacts,
-        &vcards,
-        &report,
-        base_href,
-    )
-    .map_err(|e| AppError::internal_error(format!("Failed to generate XML: {}", e)))?;
+    CardDavAdapter::generate_contacts_response(&mut response_body, &contacts, &report, base_href)
+        .map_err(|e| AppError::internal_error(format!("Failed to generate XML: {}", e)))?;
 
     Ok(Response::builder()
         .status(StatusCode::MULTI_STATUS)

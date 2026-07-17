@@ -656,8 +656,12 @@ impl AppServiceFactory {
             content_index_port,
             Some(authz.clone()),
             Some(drive_repo.clone()),
-            300,  // Cache TTL in seconds (5 minutes)
-            1000, // Maximum cache entries
+            300, // Cache TTL in seconds (5 minutes)
+            // Byte budget for cached result pages (weigher-bounded, 32 MiB
+            // default; env OXICLOUD_SEARCH_CACHE_MAX_BYTES). Replaces the old
+            // entry-count capacity, which let 500-row pages keyed by
+            // user×query×offset×limit pin hundreds of MB for the TTL.
+            self.config.search_cache.max_bytes,
         )));
 
         tracing::info!("Application services initialized");

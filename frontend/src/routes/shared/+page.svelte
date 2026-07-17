@@ -27,7 +27,7 @@
 	import UserVignette from '$lib/components/UserVignette.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { ui } from '$lib/stores/ui.svelte';
-	import { iconNameFromClass } from '$lib/utils/display';
+	import { formatDate, iconNameFromClass } from '$lib/utils/display';
 
 	type GroupBy = 'items' | 'sharedWith';
 
@@ -158,9 +158,9 @@
 	}
 	function expiryLabel(iso: string | null | undefined): string {
 		if (!iso) return t('share.noExpiry', 'No expiry');
-		const d = new Date(iso);
-		if (Number.isNaN(d.getTime())) return '';
-		return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+		// Same semantics as before (`''` for unparseable dates), now via the
+		// shared util so it reuses the cached Intl.DateTimeFormat.
+		return formatDate(iso);
 	}
 	function isoToDate(iso: string | null | undefined): string {
 		return iso ? String(iso).slice(0, 10) : '';

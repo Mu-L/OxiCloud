@@ -67,7 +67,78 @@ pub struct SearchService {
     /// Lock-free concurrent cache with automatic TTL and LRU eviction (moka).
     /// Values are `Arc<SearchResultsDto>` so cache insert/hit is a single
     /// atomic ref-count increment (~1 ns) instead of cloning thousands of Strings.
+    ///
+    /// **Byte-bounded**, not entry-bounded: entries are weighed by
+    /// [`search_results_entry_weight`] and `max_capacity` is a byte budget.
+    /// Keys span user × query × offset × limit, and each page holds up to 500
+    /// enriched rows (~500–900 B of owned Strings each) — an entry-count bound
+    /// let hundreds of MB of result pages accumulate invisibly.
     search_cache: moka::future::Cache<u64, Arc<SearchResultsDto>>,
+}
+
+// ─── Search-results cache (byte-bounded) ─────────────────────────────────
+
+/// Approximate heap bytes retained by one cached search page.
+///
+/// With a `weigher` installed, moka's `max_capacity` is the sum of entry
+/// *weights*, so this converts the cache bound from "number of entries" to
+/// real bytes: the length of every owned `String` in each file/folder row,
+/// plus a fixed per-row and per-entry overhead for struct fields, the 24-B
+/// `String` headers, `Vec` slots and allocator slop. Same pattern as the
+/// file-content cache and the dedup manifest cache.
+///
+/// `pub` so `examples/bench_search_cache_mem.rs` can recompute retained
+/// bytes with the exact production formula.
+pub fn search_results_entry_weight(_key: &u64, value: &Arc<SearchResultsDto>) -> u32 {
+    /// Fixed per-row overhead: struct scalars + one 24-B header per `String`
+    /// field (12 on a file row, 4 on a folder row) + `Vec` slot + allocator
+    /// slop. Deliberately a round upper-ish estimate — under-weighing is the
+    /// failure mode that re-opens the memory hole.
+    const ROW_OVERHEAD: usize = 200;
+    /// Fixed per-entry overhead: `Arc` + `SearchResultsDto` scalars + `Vec`
+    /// headers + moka's own bookkeeping per entry.
+    const ENTRY_OVERHEAD: usize = 256;
+
+    fn opt_len(s: &Option<String>) -> usize {
+        s.as_deref().map_or(0, str::len)
+    }
+
+    let mut bytes = ENTRY_OVERHEAD + value.sort_by.len();
+    for f in &value.files {
+        bytes += ROW_OVERHEAD
+            + f.id.len()
+            + f.name.len()
+            + f.path.len()
+            + f.mime_type.len()
+            + opt_len(&f.folder_id)
+            + f.size_formatted.len()
+            + f.icon_class.len()
+            + f.icon_special_class.len()
+            + f.category.len()
+            + f.blob_hash.len()
+            + opt_len(&f.snippet)
+            + opt_len(&f.match_source);
+    }
+    for d in &value.folders {
+        bytes += ROW_OVERHEAD + d.id.len() + d.name.len() + d.path.len() + opt_len(&d.parent_id);
+    }
+    bytes.min(u32::MAX as usize) as u32
+}
+
+/// Build the search-results cache exactly as production wires it: a byte
+/// budget enforced through [`search_results_entry_weight`], plus TTL.
+///
+/// Shared with `examples/bench_search_cache_mem.rs` so the benchmark
+/// measures the identical cache configuration that serves requests.
+pub fn build_search_results_cache(
+    cache_ttl_secs: u64,
+    max_bytes: u64,
+) -> moka::future::Cache<u64, Arc<SearchResultsDto>> {
+    moka::future::Cache::builder()
+        .max_capacity(max_bytes)
+        .weigher(search_results_entry_weight)
+        .time_to_live(Duration::from_secs(cache_ttl_secs))
+        .build()
 }
 
 // ─── Utility functions (pure, no self — computed on the server) ─────────
@@ -160,6 +231,10 @@ fn get_category(name: &str, mime: &str) -> String {
 impl SearchService {
     /**
      * Creates a new instance of the search service.
+     *
+     * `max_cache_bytes` is the byte budget for the results cache (weigher-
+     * bounded, see [`search_results_entry_weight`]) — it replaced the old
+     * entry-count capacity, which was blind to how big each cached page is.
      */
     pub fn new(
         file_repository: Arc<FileBlobReadRepository>,
@@ -168,12 +243,9 @@ impl SearchService {
         authorization: Option<Arc<crate::infrastructure::services::pg_acl_engine::PgAclEngine>>,
         drive_repo: Option<Arc<dyn crate::domain::repositories::drive_repository::DriveRepository>>,
         cache_ttl: u64,
-        max_cache_size: usize,
+        max_cache_bytes: u64,
     ) -> Self {
-        let search_cache = moka::future::Cache::builder()
-            .max_capacity(max_cache_size as u64)
-            .time_to_live(Duration::from_secs(cache_ttl))
-            .build();
+        let search_cache = build_search_results_cache(cache_ttl, max_cache_bytes);
 
         Self {
             file_repository,
@@ -813,6 +885,88 @@ mod tests {
             snippet: None,
             match_source: None,
         }
+    }
+
+    #[test]
+    fn entry_weight_counts_every_owned_string_plus_overheads() {
+        // Empty page: entry overhead + sort_by ("relevance" = 9 bytes).
+        let empty = Arc::new(SearchResultsDto::empty());
+        let base = search_results_entry_weight(&0, &empty) as usize;
+        assert_eq!(base, 256 + 9);
+
+        // One file row: base + row overhead + its owned string bytes
+        // (id 7 + name 7 + path 8 + mime 10; the rest are empty/None).
+        let one_file = Arc::new(SearchResultsDto::new(
+            vec![dto("abc.txt", 50, 10, 1)],
+            Vec::new(),
+            100,
+            0,
+            Some(1),
+            0,
+            "relevance".to_string(),
+        ));
+        let w = search_results_entry_weight(&0, &one_file) as usize;
+        assert_eq!(w, base + 200 + 7 + 7 + 8 + 10);
+
+        // Folder rows weigh too (id 2 + name 4 + path 5 + parent 6 = 17).
+        let one_folder = Arc::new(SearchResultsDto::new(
+            Vec::new(),
+            vec![SearchFolderResultDto {
+                id: "f1".to_string(),
+                name: "docs".to_string(),
+                path: "/docs".to_string(),
+                parent_id: Some("parent".to_string()),
+                drive_id: Uuid::nil(),
+                created_at: 0,
+                modified_at: 0,
+                is_root: false,
+                relevance_score: 50,
+            }],
+            100,
+            0,
+            Some(1),
+            0,
+            "relevance".to_string(),
+        ));
+        let w = search_results_entry_weight(&0, &one_folder) as usize;
+        assert_eq!(w, base + 200 + 2 + 4 + 5 + 6);
+    }
+
+    #[tokio::test]
+    async fn cache_evicts_down_to_the_byte_budget() {
+        // Budget fits ~2 of these entries; inserting 20 must never let the
+        // weighted size settle above the budget.
+        let entry = |i: usize| {
+            Arc::new(SearchResultsDto::new(
+                (0..50)
+                    .map(|r| dto(&format!("file_{i}_{r}_{}", "x".repeat(100)), 50, 1, 1))
+                    .collect(),
+                Vec::new(),
+                50,
+                0,
+                Some(50),
+                0,
+                "relevance".to_string(),
+            ))
+        };
+        let per_entry = search_results_entry_weight(&0, &entry(0)) as u64;
+        let budget = per_entry * 2 + per_entry / 2;
+
+        let cache = build_search_results_cache(300, budget);
+        for i in 0..20u64 {
+            cache.insert(i, entry(i as usize)).await;
+        }
+        cache.run_pending_tasks().await;
+
+        let retained: u64 = cache
+            .iter()
+            .map(|(k, v)| search_results_entry_weight(&k, &v) as u64)
+            .sum();
+        assert!(
+            retained <= budget,
+            "retained {retained} B exceeds budget {budget} B"
+        );
+        assert!(cache.entry_count() <= 2);
     }
 
     #[test]

@@ -16,7 +16,6 @@ use uuid::Uuid;
 use crate::application::adapters::webdav_adapter::{
     PropFindRequest, PropPatchOp, QualifiedName, WebDavAdapter, is_protected_property,
 };
-use crate::application::dtos::pagination::PaginationRequestDto;
 use crate::application::ports::authorization_ports::AuthorizationEngine;
 use crate::application::ports::favorites_ports::FavoritesUseCase;
 use crate::application::ports::file_ports::{
@@ -1584,38 +1583,42 @@ fn build_nc_streaming_propfind(
                 after_name = batch.last().map(|f| f.name.clone());
             }
 
-            // Subfolders in pages — also collections, same trailing-slash rule.
-            let mut page = 0usize;
+            // Subfolders in pages — also collections, same trailing-slash
+            // rule. Keyset cursor: O(page) per page off
+            // idx_folders_unique_name instead of the quadratic
+            // COUNT(*) OVER() + LIMIT/OFFSET walk (benches/FOLDER-KEYSET.md).
+            let mut after_folder: Option<String> = None;
             loop {
-                let pag = PaginationRequestDto {
-                    page,
-                    page_size: PROPFIND_BATCH_SIZE as usize,
-                };
-                let result = folder_service
-                    .list_folders_paginated_with_perms(Some(&folder.id), user_id, &pag)
+                let batch = folder_service
+                    .list_folders_batch_with_perms(
+                        Some(&folder.id),
+                        user_id,
+                        after_folder.as_deref(),
+                        PROPFIND_BATCH_SIZE as usize,
+                    )
                     .await
                     .map_err(|e| std::io::Error::other(e.to_string()))?;
-                if result.items.is_empty() {
+                if batch.is_empty() {
                     break;
                 }
 
                 let favs = if let Some(fav) = fav_svc {
                     let items: Vec<(&str, &str)> =
-                        result.items.iter().map(|sf| (sf.id.as_str(), "folder")).collect();
+                        batch.iter().map(|sf| (sf.id.as_str(), "folder")).collect();
                     fav.batch_check_favorites(user_id, &items).await.unwrap_or_default()
                 } else {
                     HashSet::new()
                 };
-                let folder_uuids: Vec<String> = result.items.iter().map(|sf| sf.id.clone()).collect();
+                let folder_uuids: Vec<String> = batch.iter().map(|sf| sf.id.clone()).collect();
                 let (_, sub_id_map) = batch_resolve_ids(file_id_svc, &[], &folder_uuids).await;
                 // Batched — see benches/DEAD-PROPS.md.
                 let sub_deads =
-                    folders_dead_props_map(&state.webdav_dead_props, &result.items).await;
+                    folders_dead_props_map(&state.webdav_dead_props, &batch).await;
 
-                let mut chunk = Vec::with_capacity(result.items.len() * 1024);
+                let mut chunk = Vec::with_capacity(batch.len() * 1024);
                 {
                     let mut xml = Writer::new(&mut chunk);
-                    for sf in result.items.iter() {
+                    for sf in batch.iter() {
                         let dead = dead_props_for(&sf.id, &sub_deads);
                         let child_sub = if subpath.is_empty() {
                             sf.name.clone()
@@ -1629,13 +1632,13 @@ fn build_nc_streaming_propfind(
                             .map_err(std::io::Error::other)?;
                     }
                 }
-                let has_more = result.pagination.has_next;
+                let has_more = (batch.len() as i64) == PROPFIND_BATCH_SIZE;
+                after_folder = batch.last().map(|sf| sf.name.clone());
                 yield Bytes::from(chunk);
 
                 if !has_more {
                     break;
                 }
-                page += 1;
             }
         }
 

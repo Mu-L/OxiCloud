@@ -10,7 +10,7 @@
 	import { lazyComponent } from '$lib/composables/lazyComponent.svelte';
 	import DrivePicker from '$lib/components/DrivePicker.svelte';
 	import Icon from '$lib/icons/Icon.svelte';
-	import { iconNameFromClass } from '$lib/utils/display';
+	import { dateTimeFormatFor, iconNameFromClass } from '$lib/utils/display';
 	import { userInitials, avatarColorIndex } from '$lib/utils/avatar';
 	import { i18n, LANGUAGES, setLocale, t, type Locale } from '$lib/i18n/index.svelte';
 	import { apiFetch } from '$lib/api/client';
@@ -230,7 +230,7 @@
 	const currentLang = $derived(LANGUAGES.find((l) => l.code === i18n.locale) ?? LANGUAGES[0]);
 
 	function formatTime(ms: number): string {
-		return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+		return dateTimeFormatFor(undefined, { hour: '2-digit', minute: '2-digit' }).format(ms);
 	}
 
 	function notifIcon(kind: string): string {

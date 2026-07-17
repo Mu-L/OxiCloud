@@ -273,11 +273,16 @@ pub fn multipart_field_stream(
 pub fn stream_from_files(
     paths: Vec<PathBuf>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    // 512 KiB per poll: each ReaderStream poll on a tokio::fs::File is one
+    // blocking-pool dispatch + one read(2) of the buffer size. The old
+    // 64 KiB buffer paid 8x the dispatches/syscalls of every other blob
+    // read path (STREAM_CHUNK_SIZE = 256 KiB) for the single read pass
+    // over every completed chunked upload (benches/UPLOAD-SPOOL.md).
     stream::iter(paths.into_iter().map(Ok::<_, std::io::Error>))
         .and_then(|path| async move {
             tokio::fs::File::open(path)
                 .await
-                .map(|file| ReaderStream::with_capacity(file, 64 * 1024))
+                .map(|file| ReaderStream::with_capacity(file, 512 * 1024))
         })
         .try_flatten()
 }
@@ -319,9 +324,15 @@ pub async fn stream_body_to_path(
     max_bytes: usize,
     checksum_alg: Option<ChecksumAlg>,
 ) -> Result<StreamedToPath, AppError> {
-    let mut file = tokio::fs::File::create(path)
+    // BufWriter coalesces the per-HTTP-frame writes (~16-64 KiB each) into
+    // 512 KiB write(2)s — a bare tokio File dispatches one blocking-pool op
+    // per frame (benches/UPLOAD-SPOOL.md). Same capacity as the dedup
+    // handler's spool loop. On the error paths below the partial file is
+    // removed, so silently dropping unflushed buffer contents is fine.
+    let file = tokio::fs::File::create(path)
         .await
         .map_err(|e| AppError::internal_error(format!("Failed to open chunk file: {e}")))?;
+    let mut file = tokio::io::BufWriter::with_capacity(512 * 1024, file);
 
     let mut total_bytes: usize = 0;
     let mut stream = BodyStream::new(body);

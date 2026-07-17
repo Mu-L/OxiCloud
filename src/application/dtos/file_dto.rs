@@ -6,7 +6,8 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::display_helpers::{
-    category_for, format_file_size, icon_class_for, icon_special_class_for,
+    category_for, format_file_size, icon_class_for, icon_special_class_for, intern_display,
+    intern_mime,
 };
 
 /// DTO for file responses
@@ -101,11 +102,15 @@ impl From<File> for FileDto {
         // for id, name, path, folder_id (previously 4× .to_string()).
         let parts = file.into_parts();
 
-        let icon_class = Arc::from(icon_class_for(&parts.name, &parts.mime_type));
-        let icon_special_class = Arc::from(icon_special_class_for(&parts.name, &parts.mime_type));
-        let category = Arc::from(category_for(&parts.name, &parts.mime_type));
+        // Display fields come from closed static tables and MIME values
+        // repeat massively across rows — intern instead of allocating a
+        // fresh Arc<str> per row (`Arc::from(&str)` always allocs+copies).
+        let icon_class = intern_display(icon_class_for(&parts.name, &parts.mime_type));
+        let icon_special_class =
+            intern_display(icon_special_class_for(&parts.name, &parts.mime_type));
+        let category = intern_display(category_for(&parts.name, &parts.mime_type));
         let size_formatted = format_file_size(parts.size);
-        let mime_type = Arc::from(parts.mime_type.as_str());
+        let mime_type = intern_mime(&parts.mime_type);
 
         Self {
             id: parts.id,
@@ -169,13 +174,13 @@ impl FileDto {
             name: "stub-file".to_string(),
             path: "/stub/path".to_string(),
             size: 0,
-            mime_type: Arc::from("application/octet-stream"),
+            mime_type: intern_mime("application/octet-stream"),
             folder_id: None,
             created_at: 0,
             modified_at: 0,
-            icon_class: Arc::from("fas fa-file"),
-            icon_special_class: Arc::from(""),
-            category: Arc::from("Document"),
+            icon_class: intern_display("fas fa-file"),
+            icon_special_class: intern_display(""),
+            category: intern_display("Document"),
             size_formatted: "0 Bytes".to_string(),
             content_hash: String::new(),
             etag: String::new(),

@@ -7,6 +7,30 @@ use crate::domain::services::path_service::{
 // Re-export entity errors from the centralized module
 pub use super::entity_errors::{FolderError, FolderResult};
 
+/// Owned parts of a [`Folder`] entity, produced by [`Folder::into_parts()`].
+///
+/// Consuming a `Folder` into `FolderParts` **moves** every field without
+/// cloning, eliminating the 3-4 heap allocations that previously occurred
+/// when converting `Folder → FolderDto` via `.to_string()` on each getter.
+/// Mirrors [`super::file::FileParts`].
+pub struct FolderParts {
+    pub id: String,
+    pub name: String,
+    pub storage_path: StoragePath,
+    pub path_string: String,
+    pub parent_id: Option<String>,
+    /// Drive that owns this folder. See [`Folder::drive_id`].
+    pub drive_id: Uuid,
+    pub created_at: u64,
+    pub modified_at: u64,
+    /// Descendant-rollup timestamp. See [`Folder::tree_modified_at`].
+    pub tree_modified_at: u64,
+    /// §14 provenance: original creator. See [`Folder::created_by`].
+    pub created_by: Option<Uuid>,
+    /// §14 provenance: most recent mutator. See [`Folder::updated_by`].
+    pub updated_by: Option<Uuid>,
+}
+
 /// Represents a folder entity in the domain
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Folder {
@@ -219,6 +243,26 @@ impl Folder {
         })
     }
 
+    /// Consume the entity and return all fields by ownership.
+    ///
+    /// Use this when converting `Folder` into a DTO to avoid cloning
+    /// every `String` field (saves 3-4 heap allocations per folder).
+    pub fn into_parts(self) -> FolderParts {
+        FolderParts {
+            id: self.id,
+            name: self.name,
+            storage_path: self.storage_path,
+            path_string: self.path_string,
+            parent_id: self.parent_id,
+            drive_id: self.drive_id,
+            created_at: self.created_at,
+            modified_at: self.modified_at,
+            tree_modified_at: self.tree_modified_at,
+            created_by: self.created_by,
+            updated_by: self.updated_by,
+        }
+    }
+
     // Getters
     pub fn id(&self) -> &str {
         &self.id
@@ -326,8 +370,25 @@ impl Folder {
     ///   changed; the folder's own value stays untouched
     ///   (self-exclusion).
     pub fn compute_etag(id: &str, tree_modified_at: u64) -> String {
-        let prefix: String = id.chars().take(16).collect();
-        format!("{}-{}", prefix, tree_modified_at)
+        use std::fmt::Write as _;
+
+        // Byte index just past the 16th char (whole string when shorter).
+        // `id` is a UUID string (ASCII) in practice, so this is
+        // effectively `min(len, 16)`, but `char_indices` keeps the slice
+        // char-boundary-safe for exotic fixture values — byte-identical
+        // to the old `chars().take(16).collect::<String>()` without the
+        // intermediate allocation.
+        let end = match id.char_indices().nth(16) {
+            Some((i, _)) => i,
+            None => id.len(),
+        };
+
+        // Single allocation: prefix + '-' + up to 20 digits (u64::MAX).
+        let mut etag = String::with_capacity(end + 1 + 20);
+        etag.push_str(&id[..end]);
+        etag.push('-');
+        let _ = write!(etag, "{tree_modified_at}");
+        etag
     }
 
     /// Creates a new Folder instance from a DTO

@@ -501,6 +501,61 @@ impl FolderRepository for FolderDbRepository {
         Ok((folders?, total))
     }
 
+    /// Keyset sub-folder page: `name > $after ORDER BY name LIMIT $limit`,
+    /// one bounded index-range read off `idx_folders_unique_name` — the
+    /// cursor predicate is only emitted when a cursor exists (a bound
+    /// disjunction would block the index condition under generic plans,
+    /// same rule as `list_files_batch`). Root scope (`parent_id = None`)
+    /// keeps the trait's in-memory default: roots are one-per-drive, a
+    /// handful of rows.
+    async fn list_folders_batch(
+        &self,
+        parent_id: Option<&str>,
+        after_name: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Folder>, DomainError> {
+        let Some(pid) = parent_id else {
+            let mut all = self.list_folders(None).await?;
+            all.sort_by(|a, b| a.name().cmp(b.name()));
+            return Ok(all
+                .into_iter()
+                .filter(|f| after_name.is_none_or(|a| f.name() > a))
+                .take(limit)
+                .collect());
+        };
+
+        let cursor_pred = if after_name.is_some() {
+            "AND name > $3"
+        } else {
+            "AND $3::text IS NULL"
+        };
+        let sql = format!(
+            "SELECT id::text, name, path, parent_id::text, drive_id, \
+                    EXTRACT(EPOCH FROM created_at)::bigint, \
+                    EXTRACT(EPOCH FROM updated_at)::bigint, \
+                    EXTRACT(EPOCH FROM tree_modified_at)::bigint, \
+                    created_by, updated_by \
+               FROM storage.folders \
+              WHERE parent_id = $1::uuid AND NOT is_trashed \
+                {cursor_pred} \
+              ORDER BY name \
+              LIMIT $2"
+        );
+        let rows: Vec<FolderRow> = sqlx::query_as(&sql)
+            .bind(pid)
+            .bind(limit as i64)
+            .bind(after_name)
+            .fetch_all(self.pool())
+            .await
+            .map_err(|e| DomainError::internal_error("FolderDb", format!("batch: {e}")))?;
+
+        rows.into_iter()
+            .map(|(id, name, path, pid, did, ca, ma, tma, cb, ub)| {
+                Self::row_to_folder(id, name, path, pid, did, ca, ma, tma, cb, ub)
+            })
+            .collect()
+    }
+
     /// Paginated companion to `list_root_folders_for_caller` — same
     /// drive-membership predicate, adds LIMIT/OFFSET and an optional
     /// window-function COUNT so total pages can be surfaced without a
@@ -1391,13 +1446,6 @@ impl FolderDbRepository {
             WHERE fm.folder_id = $1::uuid AND NOT fm.is_trashed
         "#;
 
-        let cte_inner = match (include_folders, include_files) {
-            (true, true) => format!("{folder_branch} UNION ALL {file_branch}"),
-            (true, false) => folder_branch.to_owned(),
-            (false, true) => file_branch.to_owned(),
-            (false, false) => unreachable!(),
-        };
-
         // ── Cursor binds ─────────────────────────────────────────────────────
         // $1 = parent_id   $2 = cursor_str   $3 = cursor_int
         // $4 = cursor_ts   $5 = cursor_id    $6 = limit
@@ -1406,112 +1454,184 @@ impl FolderDbRepository {
         let cursor_ts = cursor.and_then(|c| c.sort_ts);
         let cursor_id = cursor.map(|c| c.resource_id);
 
-        // ── Sort-specific WHERE + ORDER BY ───────────────────────────────────
-        // Each arm produces two variants based on `reverse`.
-        // For "name": folder_first stays ASC in both directions (folders always
-        // precede files); only the alpha order within each group flips.
-        let (where_clause, order_clause) = match order_by {
+        // ── Per-branch cursor pushdown ───────────────────────────────────────
+        // The cursor is applied INSIDE each UNION-ALL branch as a sargable
+        // row-value comparison on base columns — not on the CTE's computed
+        // columns — and every branch pre-sorts and pre-limits, so Postgres
+        // reads O(limit) rows per branch instead of rescanning and
+        // top-N-sorting the entire folder on every page (19.5x on a
+        // 20k-entry folder, benches/LISTING-KEYSET.md). The "name" sort is
+        // served by the expression indexes idx_files_folder_lname /
+        // idx_folders_parent_lname (migration 20260918000000).
+        //
+        // Sort-key columns that are CONSTANT within a branch (folder_first,
+        // the folder branch's type_order = 0 and size = -1) are folded in
+        // Rust: depending on which group the cursor points into, the branch
+        // predicate shortens to a row-value over the remaining keys, the
+        // branch keeps all its rows, or the branch drops out entirely.
+        enum BranchCursor {
+            /// The cursor has moved past every row this branch can produce.
+            Drop,
+            /// Every row in this branch sorts after the cursor.
+            All,
+            /// Row-value comparison over the branch's non-constant sort keys.
+            Pred(String),
+        }
+        use BranchCursor::{All, Drop, Pred};
+
+        let has_cursor = cursor.is_some();
+        // (folder-branch cursor, file-branch cursor, per-branch ORDER BY on
+        //  the branch's output aliases, outer merge ORDER BY)
+        let (folder_cur, file_cur, branch_order, outer_order) = match order_by {
             "type" => {
-                if reverse {
-                    (
-                        r#"WHERE ($3::bigint IS NULL)
-                              OR (type_order < $3)
-                              OR (type_order = $3 AND sort_str < $2)
-                              OR (type_order = $3 AND sort_str = $2 AND id < $5::uuid)"#,
-                        "ORDER BY type_order DESC, sort_str DESC, id DESC",
-                    )
+                let (op, ord) = if reverse {
+                    ("<", "ORDER BY type_order DESC, sort_str DESC, id DESC")
                 } else {
-                    (
-                        r#"WHERE ($3::bigint IS NULL)
-                              OR (type_order > $3)
-                              OR (type_order = $3 AND sort_str > $2)
-                              OR (type_order = $3 AND sort_str = $2 AND id > $5::uuid)"#,
-                        "ORDER BY type_order ASC, sort_str ASC, id ASC",
-                    )
-                }
+                    (">", "ORDER BY type_order ASC, sort_str ASC, id ASC")
+                };
+                let folder_cur = match cursor_int {
+                    None => All,
+                    // Folder rows have type_order = 0; a cursor sitting on a
+                    // file (type_order > 0) either exhausts the folder group
+                    // (ASC) or precedes all of it (DESC).
+                    Some(c_to) if c_to > 0 => {
+                        if reverse {
+                            All
+                        } else {
+                            Drop
+                        }
+                    }
+                    Some(_) => Pred(format!("(LOWER(f.name), f.id) {op} ($2, $5::uuid)")),
+                };
+                let file_cur = if has_cursor {
+                    Pred(format!(
+                        "(fm.category_order::bigint, LOWER(fm.name), fm.id) {op} ($3, $2, $5::uuid)"
+                    ))
+                } else {
+                    All
+                };
+                (folder_cur, file_cur, ord, ord)
             }
             "modified_at" => {
-                if reverse {
-                    (
-                        r#"WHERE ($4::timestamptz IS NULL)
-                              OR (modified_at > $4)
-                              OR (modified_at = $4 AND id > $5::uuid)"#,
-                        "ORDER BY modified_at ASC, id ASC",
-                    )
+                let (op, ord) = if reverse {
+                    (">", "ORDER BY modified_at ASC, id ASC")
                 } else {
-                    (
-                        r#"WHERE ($4::timestamptz IS NULL)
-                              OR (modified_at < $4)
-                              OR (modified_at = $4 AND id < $5::uuid)"#,
-                        "ORDER BY modified_at DESC, id DESC",
-                    )
-                }
+                    ("<", "ORDER BY modified_at DESC, id DESC")
+                };
+                let mk = |col: &str| {
+                    if has_cursor {
+                        Pred(format!("({col}.updated_at, {col}.id) {op} ($4, $5::uuid)"))
+                    } else {
+                        All
+                    }
+                };
+                (mk("f"), mk("fm"), ord, ord)
             }
             "created_at" => {
-                if reverse {
-                    (
-                        r#"WHERE ($4::timestamptz IS NULL)
-                              OR (created_at > $4)
-                              OR (created_at = $4 AND id > $5::uuid)"#,
-                        "ORDER BY created_at ASC, id ASC",
-                    )
+                let (op, ord) = if reverse {
+                    (">", "ORDER BY created_at ASC, id ASC")
                 } else {
-                    (
-                        r#"WHERE ($4::timestamptz IS NULL)
-                              OR (created_at < $4)
-                              OR (created_at = $4 AND id < $5::uuid)"#,
-                        "ORDER BY created_at DESC, id DESC",
-                    )
-                }
+                    ("<", "ORDER BY created_at DESC, id DESC")
+                };
+                let mk = |col: &str| {
+                    if has_cursor {
+                        Pred(format!("({col}.created_at, {col}.id) {op} ($4, $5::uuid)"))
+                    } else {
+                        All
+                    }
+                };
+                (mk("f"), mk("fm"), ord, ord)
             }
             "size" => {
-                if reverse {
-                    (
-                        r#"WHERE ($3::bigint IS NULL)
-                              OR (size < $3)
-                              OR (size = $3 AND id < $5::uuid)"#,
-                        "ORDER BY size DESC, id DESC",
-                    )
+                let (op, ord) = if reverse {
+                    ("<", "ORDER BY size DESC, id DESC")
                 } else {
-                    (
-                        r#"WHERE ($3::bigint IS NULL)
-                              OR (size > $3)
-                              OR (size = $3 AND id > $5::uuid)"#,
-                        "ORDER BY size ASC, id ASC",
-                    )
-                }
+                    (">", "ORDER BY size ASC, id ASC")
+                };
+                let folder_cur = match cursor_int {
+                    None => All,
+                    // Folder rows have size = -1; a cursor sitting on a file
+                    // (size >= 0) exhausts the folder group (ASC) or precedes
+                    // all of it (DESC).
+                    Some(c_sz) if c_sz > -1 => {
+                        if reverse {
+                            All
+                        } else {
+                            Drop
+                        }
+                    }
+                    Some(_) => Pred(format!("f.id {op} $5::uuid")),
+                };
+                let file_cur = if has_cursor {
+                    Pred(format!("(fm.size::bigint, fm.id) {op} ($3, $5::uuid)"))
+                } else {
+                    All
+                };
+                (folder_cur, file_cur, ord, ord)
             }
             _ => {
-                // "name" (default): folder_first stays ASC so folders always precede
-                // files; only the alpha order within each group flips when reversed.
-                if reverse {
-                    (
-                        r#"WHERE ($3::bigint IS NULL)
-                              OR (folder_first::bigint > $3)
-                              OR (folder_first::bigint = $3 AND sort_str < $2)
-                              OR (folder_first::bigint = $3 AND sort_str = $2 AND id < $5::uuid)"#,
-                        "ORDER BY folder_first ASC, sort_str DESC, id DESC",
-                    )
+                // "name" (default): folder_first stays ASC so folders always
+                // precede files; only the alpha order within each group flips
+                // when reversed. cursor_int carries folder_first (0|1).
+                let op = if reverse { "<" } else { ">" };
+                let branch_ord = if reverse {
+                    "ORDER BY sort_str DESC, id DESC"
                 } else {
-                    (
-                        r#"WHERE ($3::bigint IS NULL)
-                              OR (folder_first::bigint > $3)
-                              OR (folder_first::bigint = $3 AND sort_str > $2)
-                              OR (folder_first::bigint = $3 AND sort_str = $2 AND id > $5::uuid)"#,
-                        "ORDER BY folder_first ASC, sort_str ASC, id ASC",
-                    )
-                }
+                    "ORDER BY sort_str ASC, id ASC"
+                };
+                let outer_ord = if reverse {
+                    "ORDER BY folder_first ASC, sort_str DESC, id DESC"
+                } else {
+                    "ORDER BY folder_first ASC, sort_str ASC, id ASC"
+                };
+                let (folder_cur, file_cur) = match cursor_int {
+                    None => (All, All),
+                    // Cursor inside the folder group: folders continue after
+                    // the row-value cursor; every file still follows.
+                    Some(0) => (
+                        Pred(format!("(LOWER(f.name), f.id) {op} ($2, $5::uuid)")),
+                        All,
+                    ),
+                    // Cursor inside the file group: the folder group is done.
+                    Some(_) => (
+                        Drop,
+                        Pred(format!("(LOWER(fm.name), fm.id) {op} ($2, $5::uuid)")),
+                    ),
+                };
+                (folder_cur, file_cur, branch_ord, outer_ord)
             }
         };
 
+        let wrap = |branch: &str, cur: &BranchCursor| -> Option<String> {
+            let extra = match cur {
+                Drop => return None,
+                All => String::new(),
+                Pred(p) => format!(" AND {p}"),
+            };
+            Some(format!(
+                "(SELECT * FROM ({branch}{extra}) b {branch_order} LIMIT $6)"
+            ))
+        };
+        let mut branches = Vec::with_capacity(2);
+        if include_folders && let Some(b) = wrap(folder_branch, &folder_cur) {
+            branches.push(b);
+        }
+        if include_files && let Some(b) = wrap(file_branch, &file_cur) {
+            branches.push(b);
+        }
+        // Every requested branch dropped out (e.g. folders-only listing with
+        // the cursor already past the folder group).
+        if branches.is_empty() {
+            return Ok(Vec::new());
+        }
+        let inner = branches.join(" UNION ALL ");
+
         let sql = format!(
-            "WITH resources AS ({cte_inner}) \
-             SELECT resource_type, id, name, folder_id, mime_type, size, \
+            "SELECT resource_type, id, name, folder_id, mime_type, size, \
                     created_at, modified_at, drive_id, blob_hash, \
                     sort_str, type_order, folder_first \
-             FROM resources \
-             {where_clause} \
-             {order_clause} \
+             FROM ({inner}) r \
+             {outer_order} \
              LIMIT $6"
         );
 

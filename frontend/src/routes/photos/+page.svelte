@@ -15,6 +15,7 @@
 	import { t } from '$lib/i18n/index.svelte';
 	import { ui } from '$lib/stores/ui.svelte';
 	import { filterDotfiles } from '$lib/utils/dotfileFilter';
+	import { dateTimeFormatFor } from '$lib/utils/display';
 	import { isVideo, photoTimestamp } from '$lib/utils/media';
 
 	type Tab = 'moments' | 'places' | 'people';
@@ -75,13 +76,13 @@
 	function bucketLabel(d: Date): string {
 		if (groupMode === 'year') return `${d.getFullYear()}`;
 		if (groupMode === 'month')
-			return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
-		return d.toLocaleDateString(undefined, {
+			return dateTimeFormatFor(undefined, { year: 'numeric', month: 'long' }).format(d);
+		return dateTimeFormatFor(undefined, {
 			weekday: 'long',
 			year: 'numeric',
 			month: 'long',
 			day: 'numeric'
-		});
+		}).format(d);
 	}
 
 	const groups = $derived.by(() => {

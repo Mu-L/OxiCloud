@@ -781,25 +781,25 @@ async fn build_streaming_propfind_response(
 
         // ── Children (only if Depth == 1) ────────────────────────
         if depth == "1" {
-            let pagination = crate::application::dtos::pagination::PaginationRequestDto {
-                page: 0,
-                page_size: PROPFIND_BATCH_SIZE as usize,
-            };
             let fid_ref = folder_id.as_deref();
 
-            // Stream sub-folders in pages (user-scoped)
-            let mut page = 0usize;
+            // Stream sub-folders in pages (user-scoped, keyset cursor —
+            // O(page) per page off idx_folders_unique_name instead of the
+            // quadratic COUNT(*) OVER() + LIMIT/OFFSET walk; 4.5x on a
+            // 5k-dir parent, benches/FOLDER-KEYSET.md).
+            let mut after_folder: Option<String> = None;
             loop {
-                let pag = crate::application::dtos::pagination::PaginationRequestDto {
-                    page,
-                    page_size: pagination.page_size,
-                };
-                let result = folder_service
-                    .list_folders_paginated_with_perms(fid_ref, user_id, &pag)
+                let batch = folder_service
+                    .list_folders_batch_with_perms(
+                        fid_ref,
+                        user_id,
+                        after_folder.as_deref(),
+                        PROPFIND_BATCH_SIZE as usize,
+                    )
                     .await
                     .map_err(|e| std::io::Error::other(e.to_string()))?;
 
-                if result.items.is_empty() {
+                if batch.is_empty() {
                     break;
                 }
 
@@ -808,25 +808,25 @@ async fn build_streaming_propfind_response(
                 // 1-4.5 s of pure DB chatter on a 2000-child folder
                 // (measured in benches/DEAD-PROPS.md).
                 let subfolder_deads =
-                    folders_dead_props_map(&dead_props_store, &result.items).await;
+                    folders_dead_props_map(&dead_props_store, &batch).await;
 
-                let mut chunk = Vec::with_capacity(result.items.len() * 800);
+                let mut chunk = Vec::with_capacity(batch.len() * 800);
                 {
                     let mut w = Writer::new(&mut chunk);
-                    for subfolder in result.items.iter() {
+                    for subfolder in batch.iter() {
                         let child_dead = dead_props_for(&subfolder.id, &subfolder_deads);
                         let href = format!("{}{}/", base_href, encode_path_segment(&subfolder.name));
                         WebDavAdapter::write_folder_entry_with_dead_props(&mut w, subfolder, &propfind_request, &href, child_dead, quota)
                             .map_err(|e| std::io::Error::other(e.to_string()))?;
                     }
                 }
-                let has_more = result.pagination.has_next;
+                let has_more = (batch.len() as i64) == PROPFIND_BATCH_SIZE;
+                after_folder = batch.last().map(|f| f.name.clone());
                 yield Bytes::from(chunk);
 
                 if !has_more {
                     break;
                 }
-                page += 1;
             }
 
             // Stream files in pages (user-scoped, keyset cursor — O(page)
