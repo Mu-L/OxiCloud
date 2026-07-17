@@ -27,6 +27,7 @@ use crate::application::ports::storage_ports::StorageUsagePort;
 use crate::common::di::AppState;
 use crate::domain::repositories::drive_repository::DriveRepository;
 use crate::domain::services::authorization::{Resource, Subject};
+use crate::interfaces::api::handlers::dedup_handler::{get_stats, recalculate_stats};
 use crate::interfaces::api::handlers::search_handler::clear_search_cache;
 use crate::interfaces::errors::AppError;
 use crate::interfaces::middleware::auth::AuthUser;
@@ -96,6 +97,16 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         // `/api/search/cache` pre-2026-07-17; the URL now declares
         // its admin intent up front.
         .route("/search/cache", delete(clear_search_cache))
+        // Dedup — global storage stats + integrity recalculation
+        // (AuthZ audit #24 + #25, 2026-07-17). Both are operator-only
+        // observability / maintenance surfaces (blob-count-level data
+        // + verify_integrity sweep). Moved here from `/api/dedup/*`
+        // so the URL declares admin intent and the middleware layer
+        // enforces it — same pattern as `search/cache` above. The
+        // any-authenticated sibling routes (`/check`, `/check-batch`,
+        // `/blob/{hash}`) stay at `/api/dedup/*`.
+        .route("/dedup/stats", get(get_stats))
+        .route("/dedup/recalculate", post(recalculate_stats))
         // SMTP diagnostics
         .route("/smtp/info", get(get_smtp_info))
         .route("/smtp/test", post(send_smtp_test))

@@ -391,18 +391,19 @@ pub fn create_api_routes(app_state: &Arc<AppState>) -> Router<Arc<AppState>> {
     // Create routes for deduplication endpoints.
     // All handlers are free functions — see dedup_handler.rs for why
     // #[utoipa::path] cannot be applied to DedupHandler impl methods directly.
-    use super::handlers::dedup_handler::{
-        check_hash, check_hashes_batch, get_blob, get_stats, recalculate_stats,
-    };
+    use super::handlers::dedup_handler::{check_hash, check_hashes_batch, get_blob};
     let dedup_router = Router::new()
         .route("/check/{hash}", get(check_hash))
         .route("/check-batch", post(check_hashes_batch))
-        .route("/stats", get(get_stats))
         .route("/blob/{hash}", get(get_blob))
-        // NOTE: remove_reference is intentionally NOT exposed as a public
-        // endpoint — ref_count management is an internal concern handled
-        // automatically when files are deleted via the file API.
-        .route("/recalculate", post(recalculate_stats))
+        // NOTE: `remove_reference` is intentionally NOT exposed as a
+        // public endpoint — ref_count management is an internal concern
+        // handled automatically when files are deleted via the file API.
+        //
+        // `/stats` and `/recalculate` moved to `/api/admin/dedup/*`
+        // (AuthZ audit #24/#25, 2026-07-17) so the middleware admin
+        // gate covers them by construction. See
+        // `admin_handler::admin_routes()`.
         .with_state(app_state.clone());
 
     let mut router = Router::new()
