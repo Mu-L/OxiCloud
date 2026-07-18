@@ -350,6 +350,16 @@ name = "bench_micro_allocs"
 path = "examples/bench_micro_allocs.rs"
 required-features = ["bench"]
 
+# Round-8 battery ─────────────────────────────────────────────────────────────
+
+# Shared-album thumbnail authz — folder-grant cascade query per thumbnail vs
+# the cascade_grant_cache; includes a revocation safety gate (needs the dev
+# Postgres up).
+[[example]]
+name = "bench_thumbnail_cascade_cache"
+path = "examples/bench_thumbnail_cascade_cache.rs"
+required-features = ["bench"]
+
 # Round-7 battery ─────────────────────────────────────────────────────────────
 
 # Range-seek per-request authz duplication — the per-seek require the range
