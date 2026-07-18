@@ -625,6 +625,11 @@ impl FileBlobReadRepository {
             SELECT count(*)              AS n,
                    avg(fm.longitude)     AS clng,
                    avg(fm.latitude)      AS clat,
+                   -- NOTE: `min(fm.file_id)::text` (cast per cluster, not
+                   -- per row) was attempted in ROUND11 §Q4 and REJECTED by
+                   -- its benchmark gate: PostgreSQL has no `min(uuid)`
+                   -- aggregate, and adding a custom one is schema surface
+                   -- this viewport query doesn't justify.
                    min(fm.file_id::text) AS sample_id
               FROM storage.file_metadata fm
               JOIN storage.files fi ON fi.id = fm.file_id
@@ -921,7 +926,7 @@ impl FileReadPort for FileBlobReadRepository {
         .map_err(|e| DomainError::internal_error("FileBlobRead", format!("path: {e}")))?
         .ok_or_else(|| DomainError::not_found("File", id))?;
 
-        Ok(StoragePath::from_folder_and_name(row.1.as_deref(), &row.0).0)
+        Ok(StoragePath::from_folder_and_name(row.1.as_deref(), &row.0))
     }
 
     async fn get_parent_folder_id(

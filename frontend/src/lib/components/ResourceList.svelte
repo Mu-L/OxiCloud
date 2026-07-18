@@ -474,7 +474,23 @@
 	// items — selection persists across a display-filter toggle, and
 	// stale-selection cleanup only fires when items truly leave the
 	// dataset (reload, delete, etc.), not when the filter hides them.
-	const selectedItems = $derived(items.filter((i) => selected.has(i.id)));
+	//
+	// Index rebuilt only when `items` changes; the projection is then
+	// O(k · log k) in the selection size k instead of a full O(N) re-scan
+	// of the list on every toggle (O(N²)-ish across a shift-range gesture
+	// once the batch toolbar is mounted — benches/ROUND11.md §S1). The
+	// index sort preserves item order, so the toolbar sees the same array
+	// the old filter produced.
+	const itemIndexById = $derived(new Map(items.map((i, idx) => [i.id, idx])));
+	const selectedItems = $derived.by(() => {
+		const picked: { idx: number; item: FileItem | FolderItem }[] = [];
+		for (const id of selected) {
+			const idx = itemIndexById.get(id);
+			if (idx !== undefined) picked.push({ idx, item: items[idx] });
+		}
+		picked.sort((a, b) => a.idx - b.idx);
+		return picked.map((p) => p.item);
+	});
 
 	// Drop selection ids that are no longer present after a reload.
 	$effect(() => {
