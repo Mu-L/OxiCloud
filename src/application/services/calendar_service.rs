@@ -356,6 +356,28 @@ impl CalendarUseCase for CalendarService {
         }
     }
 
+    async fn stream_events_uid_order(
+        &self,
+        calendar_id: &str,
+        user_id: Uuid,
+    ) -> Result<
+        futures::stream::BoxStream<'static, Result<CalendarEventDto, DomainError>>,
+        DomainError,
+    > {
+        // Same Read gate as `list_events`, checked ONCE before the
+        // cursor opens — the stream itself carries no further authz
+        // (single request, same caller, same resource).
+        let calendar = self.calendar_storage.get_calendar(calendar_id).await?;
+        let allowed = calendar.is_public
+            || self
+                .has_calendar_perm(calendar_id, user_id, Permission::Read)
+                .await?;
+        if !allowed {
+            return Err(DomainError::not_found("Calendar", calendar_id));
+        }
+        Ok(self.calendar_storage.stream_events_uid_order(calendar_id))
+    }
+
     async fn get_events_in_range(
         &self,
         calendar_id: &str,

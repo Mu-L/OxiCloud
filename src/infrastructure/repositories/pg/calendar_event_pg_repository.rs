@@ -16,6 +16,31 @@ impl CalendarEventPgRepository {
     pub fn new(pool: Arc<PgPool>) -> Self {
         Self { pool }
     }
+
+    /// Shared row → entity mapping (the inline shape every listing
+    /// method uses, factored for the cursor stream).
+    fn row_to_event(row: &sqlx::postgres::PgRow) -> CalendarEventRepositoryResult<CalendarEvent> {
+        let mut event = CalendarEvent::with_id(
+            row.get("id"),
+            row.get("calendar_id"),
+            row.get("summary"),
+            row.get::<Option<String>, _>("description"),
+            row.get::<Option<String>, _>("location"),
+            row.get("start_time"),
+            row.get("end_time"),
+            row.get("all_day"),
+            row.get::<Option<String>, _>("rrule"),
+            row.get("ical_uid"),
+            row.get("ical_data"),
+            row.get("created_at"),
+            row.get("updated_at"),
+        )
+        .map_err(|e| {
+            DomainError::database_error(format!("Error creating calendar event: {}", e))
+        })?;
+        event.set_recurrence_id(row.get::<Option<DateTime<Utc>>, _>("recurrence_id"));
+        Ok(event)
+    }
 }
 
 impl CalendarEventRepository for CalendarEventPgRepository {
@@ -545,6 +570,57 @@ impl CalendarEventRepository for CalendarEventPgRepository {
         })?;
 
         Ok(result.rows_affected() as i64)
+    }
+
+    fn stream_events_uid_order(
+        &self,
+        calendar_id: Uuid,
+    ) -> futures::stream::BoxStream<'static, CalendarEventRepositoryResult<CalendarEvent>> {
+        // ONE ordered scan for the whole calendar, served through a PG
+        // cursor (`fetch`) so only a window of rows is in flight. The
+        // window function puts every UID's rows adjacent, bundles
+        // ordered by first occurrence — exactly the first-appearance
+        // order the buffered `ORDER BY start_time` listing produced
+        // after grouping — with the master row first inside each UID.
+        //
+        // The first streaming shape hydrated pages via
+        // `ical_uid = ANY(page)`: ~20 µs per index descent made the
+        // total wall 3-4x the buffered single scan (measured in
+        // benches/ROUND5.md). This keeps the buffered path's one
+        // scan+sort while bounding memory to a page.
+        let pool = self.pool.clone();
+        let stream: futures::stream::BoxStream<
+            'static,
+            CalendarEventRepositoryResult<CalendarEvent>,
+        > = Box::pin(async_stream::try_stream! {
+            let mut conn = pool.acquire().await.map_err(|e| {
+                DomainError::database_error(format!("Failed to acquire connection: {}", e))
+            })?;
+            let mut rows = sqlx::query(
+                r#"
+                SELECT
+                    id, calendar_id, summary, description, location,
+                    start_time, end_time, all_day, rrule,
+                    created_at, updated_at, ical_uid, ical_data, recurrence_id
+                FROM caldav.calendar_events
+                WHERE calendar_id = $1
+                ORDER BY MIN(start_time) OVER (PARTITION BY ical_uid),
+                         ical_uid,
+                         (recurrence_id IS NOT NULL),
+                         start_time
+                "#,
+            )
+            .bind(calendar_id)
+            .fetch(&mut *conn);
+
+            use futures::TryStreamExt;
+            while let Some(row) = rows.try_next().await.map_err(|e| {
+                DomainError::database_error(format!("Failed to stream events: {}", e))
+            })? {
+                yield Self::row_to_event(&row)?;
+            }
+        });
+        stream
     }
 
     async fn list_events_by_calendar_paginated(

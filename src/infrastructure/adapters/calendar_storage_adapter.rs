@@ -447,6 +447,30 @@ impl CalendarStoragePort for CalendarStorageAdapter {
         Ok(events.into_iter().map(CalendarEventDto::from).collect())
     }
 
+    fn stream_events_uid_order(
+        &self,
+        calendar_id: &str,
+    ) -> futures::stream::BoxStream<'static, Result<CalendarEventDto, DomainError>> {
+        use futures::StreamExt;
+        let uuid = match Uuid::parse_str(calendar_id) {
+            Ok(u) => u,
+            Err(_) => {
+                return Box::pin(futures::stream::once(async {
+                    Err(DomainError::new(
+                        ErrorKind::InvalidInput,
+                        "Calendar",
+                        "Invalid calendar ID format",
+                    ))
+                }));
+            }
+        };
+        Box::pin(
+            self.event_repository
+                .stream_events_uid_order(uuid)
+                .map(|r| r.map(CalendarEventDto::from)),
+        )
+    }
+
     async fn list_events_by_calendar_paginated(
         &self,
         calendar_id: &str,

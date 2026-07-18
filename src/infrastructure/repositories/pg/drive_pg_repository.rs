@@ -621,13 +621,14 @@ impl DriveRepository for DrivePgRepository {
     async fn list_readable_by(
         &self,
         caller_id: Uuid,
-    ) -> Result<Vec<DriveWithRootName>, DriveRepositoryError> {
+    ) -> Result<Arc<Vec<DriveWithRootName>>, DriveRepositoryError> {
         // Serve from the per-user cache; concurrent misses for the same
         // caller are coalesced into one join (`try_get_with`), and errors
         // are never cached. See the `readable_cache` field docs for the
-        // freshness/invalidation contract.
-        let cached = self
-            .readable_cache
+        // freshness/invalidation contract. The Arc is handed to callers
+        // directly — a warm hit is a refcount bump, not a deep clone of
+        // every row's Strings.
+        self.readable_cache
             .try_get_with(caller_id, async move {
                 self.query_readable_by(caller_id).await.map(Arc::new)
             })
@@ -635,8 +636,7 @@ impl DriveRepository for DrivePgRepository {
             .map_err(|e: Arc<DriveRepositoryError>| {
                 Arc::try_unwrap(e)
                     .unwrap_or_else(|shared| DriveRepositoryError::StorageError(shared.to_string()))
-            })?;
-        Ok((*cached).clone())
+            })
     }
 
     async fn list_all(&self) -> Result<Vec<DriveWithRootName>, DriveRepositoryError> {

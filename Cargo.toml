@@ -334,6 +334,22 @@ name = "bench_azure_stream"
 path = "examples/bench_azure_stream.rs"
 required-features = ["bench"]
 
+# Round-5 battery ─────────────────────────────────────────────────────────────
+
+# CalDAV whole-calendar REPORT/GET — buffered double-residency vs uid-keyset
+# streaming; TTFB + peak live heap (needs the dev Postgres up).
+[[example]]
+name = "bench_caldav_stream"
+path = "examples/bench_caldav_stream.rs"
+required-features = ["bench"]
+
+# Round-5 micro-allocation pack — suggest clones, readable-cache Arc hit,
+# SPA-listing interning, NC href prefix, CardDAV REPORT churn. No Postgres.
+[[example]]
+name = "bench_micro_allocs"
+path = "examples/bench_micro_allocs.rs"
+required-features = ["bench"]
+
 # Round-3 battery ─────────────────────────────────────────────────────────────
 
 # Web-UI folder listing — whole-folder rescan + top-N sort per page vs keyset

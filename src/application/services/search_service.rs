@@ -359,7 +359,7 @@ impl SearchService {
         // grants are honoured inline by `storage.caller_group_ids` on
         // the SQL side, so no Rust-side subject expansion here.
         let accessible_drives: Vec<Uuid> = match drive_repo.list_readable_by(user_id).await {
-            Ok(drives) => drives.into_iter().map(|d| d.drive.id).collect(),
+            Ok(drives) => drives.iter().map(|d| d.drive.id).collect(),
             Err(e) => {
                 tracing::warn!("Content-index: drive lookup failed — degrading to empty: {e}");
                 return Vec::new();
@@ -529,28 +529,34 @@ impl SearchService {
         // Pre-compute once — avoids N heap allocations inside the loops.
         let query_lower = query.to_lowercase();
 
-        for file in &files {
-            let file_dto = FileDto::from(file.clone());
+        // Consume the entities: the old loop deep-cloned every File into
+        // the DTO conversion and then cloned name/id/path AGAIN into the
+        // suggestion — 3 field clones + a full entity clone per row on
+        // an every-keystroke path.
+        for file in files {
+            let file_dto = FileDto::from(file);
             let score = compute_relevance(&file_dto.name, &query_lower);
+            let icon_class = get_icon_class(&file_dto.name, &file_dto.mime_type);
+            let icon_special_class = get_icon_special_class(&file_dto.name, &file_dto.mime_type);
             suggestions.push(SearchSuggestionItem {
-                name: file_dto.name.clone(),
+                name: file_dto.name,
                 item_type: "file".to_string(),
-                id: file_dto.id.clone(),
-                path: file_dto.path.clone(),
-                icon_class: get_icon_class(&file_dto.name, &file_dto.mime_type),
-                icon_special_class: get_icon_special_class(&file_dto.name, &file_dto.mime_type),
+                id: file_dto.id,
+                path: file_dto.path,
+                icon_class,
+                icon_special_class,
                 relevance_score: score,
             });
         }
 
-        for folder in &folders {
-            let folder_dto = FolderDto::from(folder.clone());
+        for folder in folders {
+            let folder_dto = FolderDto::from(folder);
             let score = compute_relevance(&folder_dto.name, &query_lower);
             suggestions.push(SearchSuggestionItem {
-                name: folder_dto.name.clone(),
+                name: folder_dto.name,
                 item_type: "folder".to_string(),
-                id: folder_dto.id.clone(),
-                path: folder_dto.path.clone(),
+                id: folder_dto.id,
+                path: folder_dto.path,
                 icon_class: "fas fa-folder".to_string(),
                 icon_special_class: "folder-icon".to_string(),
                 relevance_score: score,

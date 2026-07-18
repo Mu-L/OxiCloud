@@ -801,7 +801,7 @@ impl TrashService {
         // role_grants on resource_type='drive', including group-mediated
         // grants). Empty set → empty page without a SQL round-trip.
         let drive_ids: Vec<Uuid> = match self.drive_repo.list_readable_by(user_id).await {
-            Ok(drives) => drives.into_iter().map(|d| d.drive.id).collect(),
+            Ok(drives) => drives.iter().map(|d| d.drive.id).collect(),
             Err(e) => {
                 return Err(DomainError::internal_error(
                     "Trash",

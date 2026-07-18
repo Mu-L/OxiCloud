@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::application::dtos::display_helpers::{
-    category_for, format_file_size, icon_class_for, icon_special_class_for,
+    category_for, format_file_size, icon_class_for, icon_special_class_for, intern_display,
+    intern_mime,
 };
 use crate::application::dtos::file_dto::FileDto;
 use crate::application::dtos::folder_dto::{
@@ -482,9 +483,9 @@ pub async fn list_folder_resources(
                             created_at: row.created_at.timestamp() as u64,
                             modified_at: row.modified_at.timestamp() as u64,
                             is_root: false,
-                            icon_class: Arc::from("fas fa-folder"),
-                            icon_special_class: Arc::from("folder-icon"),
-                            category: Arc::from("Folder"),
+                            icon_class: intern_display("fas fa-folder"),
+                            icon_special_class: intern_display("folder-icon"),
+                            category: intern_display("Folder"),
                             // §14 provenance not selected by the resources query.
                             created_by: None,
                             updated_by: None,
@@ -518,13 +519,15 @@ pub async fn list_folder_resources(
                             name: row.name.clone(),
                             path: String::new(),
                             size: size_bytes,
-                            mime_type: Arc::from(mime),
+                            mime_type: intern_mime(mime),
                             folder_id: row.parent_id.map(|u| u.to_string()),
                             created_at: row.created_at.timestamp() as u64,
                             modified_at: row.modified_at.timestamp() as u64,
-                            icon_class: Arc::from(icon_class_for(&row.name, mime)),
-                            icon_special_class: Arc::from(icon_special_class_for(&row.name, mime)),
-                            category: Arc::from(category_for(&row.name, mime)),
+                            icon_class: intern_display(icon_class_for(&row.name, mime)),
+                            icon_special_class: intern_display(icon_special_class_for(
+                                &row.name, mime,
+                            )),
+                            category: intern_display(category_for(&row.name, mime)),
                             size_formatted: format_file_size(size_bytes),
                             sort_date: None,
                             content_hash,

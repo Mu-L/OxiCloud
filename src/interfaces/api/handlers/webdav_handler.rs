@@ -20,6 +20,7 @@ use uuid::Uuid;
 use crate::application::adapters::webdav_adapter::{
     LockInfo, PropFindRequest, PropPatchOp, QualifiedName, WebDavAdapter, is_protected_property,
 };
+use crate::application::dtos::display_helpers::intern_display;
 use crate::application::dtos::file_dto::FileDto;
 use crate::application::dtos::folder_dto::FolderDto;
 use crate::application::ports::authorization_ports::AuthorizationEngine;
@@ -65,10 +66,6 @@ const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'@');
 
 /// Percent-encode a single URI path segment (folder/file name).
-fn encode_path_segment(segment: &str) -> String {
-    utf8_percent_encode(segment, PATH_SEGMENT_ENCODE_SET).to_string()
-}
-
 /// Percent-encode a full slash-separated path, encoding each segment individually.
 pub(crate) fn encode_uri_path(path: &str) -> String {
     use std::fmt::Write as _;
@@ -373,14 +370,14 @@ async fn lookup_drive_selector(
         .list_readable_by(user_id)
         .await
         .map_err(|e| AppError::internal_error(format!("Failed to list drives: {:?}", e)))?;
-    for d in visible {
+    for d in visible.iter() {
         if let Some(uuid) = uuid_opt
             && d.drive.id == uuid
         {
-            return Ok(d);
+            return Ok(d.clone());
         }
         if d.root_folder_name == selector_decoded.as_ref() {
-            return Ok(d);
+            return Ok(d.clone());
         }
     }
     Err(AppError::not_found(format!(
@@ -552,9 +549,9 @@ async fn handle_propfind(
                 created_at: Utc::now().timestamp() as u64,
                 modified_at: Utc::now().timestamp() as u64,
                 is_root: true,
-                icon_class: Arc::from("fas fa-folder"),
-                icon_special_class: Arc::from("folder-icon"),
-                category: Arc::from("Folder"),
+                icon_class: intern_display("fas fa-folder"),
+                icon_special_class: intern_display("folder-icon"),
+                category: intern_display("Folder"),
                 created_by: None,
                 updated_by: None,
             };
@@ -815,7 +812,11 @@ async fn build_streaming_propfind_response(
                     let mut w = Writer::new(&mut chunk);
                     for subfolder in batch.iter() {
                         let child_dead = dead_props_for(&subfolder.id, &subfolder_deads);
-                        let href = format!("{}{}/", base_href, encode_path_segment(&subfolder.name));
+                        let href = format!(
+                            "{}{}/",
+                            base_href,
+                            utf8_percent_encode(&subfolder.name, PATH_SEGMENT_ENCODE_SET)
+                        );
                         WebDavAdapter::write_folder_entry_with_dead_props(&mut w, subfolder, &propfind_request, &href, child_dead, quota)
                             .map_err(|e| std::io::Error::other(e.to_string()))?;
                     }
@@ -856,7 +857,11 @@ async fn build_streaming_propfind_response(
                     let mut w = Writer::new(&mut chunk);
                     for file in batch.iter() {
                         let child_dead = dead_props_for(&file.id, &file_deads);
-                        let href = format!("{}{}", base_href, encode_path_segment(&file.name));
+                        let href = format!(
+                            "{}{}",
+                            base_href,
+                            utf8_percent_encode(&file.name, PATH_SEGMENT_ENCODE_SET)
+                        );
                         WebDavAdapter::write_file_entry_with_dead_props(&mut w, file, &propfind_request, &href, child_dead)
                             .map_err(|e| std::io::Error::other(e.to_string()))?;
                     }

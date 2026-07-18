@@ -1064,68 +1064,139 @@ impl CalDavAdapter {
         // Write the calendar collection itself
         Self::write_calendar_response(&mut xml_writer, calendar, request, base_href, caller_id)?;
 
-        // If depth > 0, include event resources — folded per UID
-        // so a recurring event's master + per-instance exception
-        // overrides share ONE D:response (RFC 4791 §4.1 + RFC
-        // 5545 §3.6.1). Pre-fix this loop emitted one D:response
-        // per DB row, and since master + exception share the
-        // same href (base + uid.ics) clients saw a duplicate
-        // href and deduped — the exception appeared to have
-        // vanished.
+        // If depth > 0, include event resources — see
+        // `write_collection_event_page`, which the streaming emitter
+        // reuses page by page.
         if depth != "0" {
-            for bundle in group_events_by_uid(events) {
-                // The master (sorted first by group_events_by_uid)
-                // supplies the ETag anchor + getlastmodified. If
-                // the bundle is all exceptions (no master row),
-                // fall back to the first exception.
-                let anchor = match bundle.first() {
-                    Some(e) => *e,
-                    None => continue,
-                };
-                let event_href = format!("{}{}.ics", base_href, anchor.ical_uid);
-
-                xml_writer.write_event(Event::Start(BytesStart::new("D:response")))?;
-                xml_writer.write_event(Event::Start(BytesStart::new("D:href")))?;
-                xml_writer.write_event(Event::Text(BytesText::new(&event_href)))?;
-                xml_writer.write_event(Event::End(BytesEnd::new("D:href")))?;
-
-                xml_writer.write_event(Event::Start(BytesStart::new("D:propstat")))?;
-                xml_writer.write_event(Event::Start(BytesStart::new("D:prop")))?;
-
-                // resourcetype (empty for non-collection)
-                xml_writer.write_event(Event::Empty(BytesStart::new("D:resourcetype")))?;
-
-                // getetag — anchor row's id
-                xml_writer.write_event(Event::Start(BytesStart::new("D:getetag")))?;
-                xml_writer
-                    .write_event(Event::Text(BytesText::new(&format!("\"{}\"", anchor.id))))?;
-                xml_writer.write_event(Event::End(BytesEnd::new("D:getetag")))?;
-
-                // getcontenttype
-                xml_writer.write_event(Event::Start(BytesStart::new("D:getcontenttype")))?;
-                xml_writer.write_event(Event::Text(BytesText::new(
-                    "text/calendar; component=vevent",
-                )))?;
-                xml_writer.write_event(Event::End(BytesEnd::new("D:getcontenttype")))?;
-
-                // getlastmodified — anchor row's updated_at
-                xml_writer.write_event(Event::Start(BytesStart::new("D:getlastmodified")))?;
-                xml_writer
-                    .write_event(Event::Text(BytesText::new(&anchor.updated_at.to_rfc2822())))?;
-                xml_writer.write_event(Event::End(BytesEnd::new("D:getlastmodified")))?;
-
-                xml_writer.write_event(Event::End(BytesEnd::new("D:prop")))?;
-
-                xml_writer.write_event(Event::Start(BytesStart::new("D:status")))?;
-                xml_writer.write_event(Event::Text(BytesText::new("HTTP/1.1 200 OK")))?;
-                xml_writer.write_event(Event::End(BytesEnd::new("D:status")))?;
-
-                xml_writer.write_event(Event::End(BytesEnd::new("D:propstat")))?;
-                xml_writer.write_event(Event::End(BytesEnd::new("D:response")))?;
-            }
+            Self::write_collection_event_page(&mut xml_writer, events, base_href)?;
         }
 
+        Self::write_caldav_multistatus_end(&mut xml_writer)?;
+        Ok(())
+    }
+
+    /// Multistatus opening + the calendar collection's own
+    /// `D:response` — the head of a depth-1 collection PROPFIND. The
+    /// streaming emitter calls this once, then
+    /// [`Self::write_collection_event_page`] per hydrated UID page,
+    /// then [`Self::write_caldav_multistatus_end`].
+    pub fn write_collection_head<W: Write>(
+        xml_writer: &mut Writer<W>,
+        calendar: &CalendarDto,
+        request: &PropFindRequest,
+        base_href: &str,
+        caller_id: &str,
+    ) -> Result<()> {
+        Self::write_caldav_multistatus_start(xml_writer)?;
+        Self::write_calendar_response(xml_writer, calendar, request, base_href, caller_id)
+    }
+
+    /// One depth-1 collection page: event resources folded per UID so a
+    /// recurring master + per-instance exception overrides share ONE
+    /// `D:response` (RFC 4791 §4.1 + RFC 5545 §3.6.1) — emitting one
+    /// response per DB row made clients dedupe the shared href and the
+    /// exception appeared to vanish. Callers guarantee same-UID rows
+    /// arrive within a single page.
+    pub fn write_collection_event_page<W: Write>(
+        xml_writer: &mut Writer<W>,
+        events: &[CalendarEventDto],
+        base_href: &str,
+    ) -> Result<()> {
+        for bundle in group_events_by_uid(events) {
+            // The master (sorted first by group_events_by_uid)
+            // supplies the ETag anchor + getlastmodified. If
+            // the bundle is all exceptions (no master row),
+            // fall back to the first exception.
+            let anchor = match bundle.first() {
+                Some(e) => *e,
+                None => continue,
+            };
+            let event_href = format!("{}{}.ics", base_href, anchor.ical_uid);
+
+            xml_writer.write_event(Event::Start(BytesStart::new("D:response")))?;
+            xml_writer.write_event(Event::Start(BytesStart::new("D:href")))?;
+            xml_writer.write_event(Event::Text(BytesText::new(&event_href)))?;
+            xml_writer.write_event(Event::End(BytesEnd::new("D:href")))?;
+
+            xml_writer.write_event(Event::Start(BytesStart::new("D:propstat")))?;
+            xml_writer.write_event(Event::Start(BytesStart::new("D:prop")))?;
+
+            // resourcetype (empty for non-collection)
+            xml_writer.write_event(Event::Empty(BytesStart::new("D:resourcetype")))?;
+
+            // getetag — anchor row's id
+            xml_writer.write_event(Event::Start(BytesStart::new("D:getetag")))?;
+            xml_writer.write_event(Event::Text(BytesText::new(&format!("\"{}\"", anchor.id))))?;
+            xml_writer.write_event(Event::End(BytesEnd::new("D:getetag")))?;
+
+            // getcontenttype
+            xml_writer.write_event(Event::Start(BytesStart::new("D:getcontenttype")))?;
+            xml_writer.write_event(Event::Text(BytesText::new(
+                "text/calendar; component=vevent",
+            )))?;
+            xml_writer.write_event(Event::End(BytesEnd::new("D:getcontenttype")))?;
+
+            // getlastmodified — anchor row's updated_at
+            xml_writer.write_event(Event::Start(BytesStart::new("D:getlastmodified")))?;
+            xml_writer.write_event(Event::Text(BytesText::new(&anchor.updated_at.to_rfc2822())))?;
+            xml_writer.write_event(Event::End(BytesEnd::new("D:getlastmodified")))?;
+
+            xml_writer.write_event(Event::End(BytesEnd::new("D:prop")))?;
+
+            xml_writer.write_event(Event::Start(BytesStart::new("D:status")))?;
+            xml_writer.write_event(Event::Text(BytesText::new("HTTP/1.1 200 OK")))?;
+            xml_writer.write_event(Event::End(BytesEnd::new("D:status")))?;
+
+            xml_writer.write_event(Event::End(BytesEnd::new("D:propstat")))?;
+            xml_writer.write_event(Event::End(BytesEnd::new("D:response")))?;
+        }
+        Ok(())
+    }
+
+    /// Write the CalDAV `<D:multistatus>` opening tag (DAV + CalDAV +
+    /// CalendarServer namespaces). Streaming emitters call this once,
+    /// then [`Self::write_report_page`] per hydrated UID page, then
+    /// [`Self::write_caldav_multistatus_end`].
+    pub fn write_caldav_multistatus_start<W: Write>(xml_writer: &mut Writer<W>) -> Result<()> {
+        xml_writer.write_event(Event::Start(
+            BytesStart::new("D:multistatus").with_attributes([
+                ("xmlns:D", "DAV:"),
+                ("xmlns:C", "urn:ietf:params:xml:ns:caldav"),
+                ("xmlns:CS", "http://calendarserver.org/ns/"),
+            ]),
+        ))?;
+        Ok(())
+    }
+
+    /// Close the multistatus opened by
+    /// [`Self::write_caldav_multistatus_start`].
+    pub fn write_caldav_multistatus_end<W: Write>(xml_writer: &mut Writer<W>) -> Result<()> {
         xml_writer.write_event(Event::End(BytesEnd::new("D:multistatus")))?;
+        Ok(())
+    }
+
+    /// One REPORT page: group `events` per UID and emit one
+    /// `D:response` per bundle. Callers guarantee same-UID rows arrive
+    /// within a single page (the uid-keyset pager does).
+    pub fn write_report_page<W: Write>(
+        xml_writer: &mut Writer<W>,
+        events: &[CalendarEventDto],
+        request: &CalDavReportType,
+        base_href: &str,
+    ) -> Result<()> {
+        let props = match request {
+            CalDavReportType::CalendarQuery { props, .. } => props,
+            CalDavReportType::CalendarMultiget { props, .. } => props,
+            CalDavReportType::SyncCollection { props, .. } => props,
+        };
+        for bundle in group_events_by_uid(events) {
+            let anchor = match bundle.first() {
+                Some(e) => *e,
+                None => continue,
+            };
+            let href = format!("{}{}.ics", base_href, anchor.ical_uid);
+            Self::write_event_response(xml_writer, &bundle, props, &href)?;
+        }
         Ok(())
     }
 
@@ -1138,42 +1209,15 @@ impl CalDavAdapter {
     ) -> Result<()> {
         let mut xml_writer = Writer::new(writer);
 
-        // Start multistatus response
-        xml_writer.write_event(Event::Start(
-            BytesStart::new("D:multistatus").with_attributes([
-                ("xmlns:D", "DAV:"),
-                ("xmlns:C", "urn:ietf:params:xml:ns:caldav"),
-                ("xmlns:CS", "http://calendarserver.org/ns/"),
-            ]),
-        ))?;
+        Self::write_caldav_multistatus_start(&mut xml_writer)?;
 
-        // Determine which properties to include based on request type —
-        // borrowed straight out of the request (the old `clone()` copied
-        // the whole Vec of owned QualifiedName strings per REPORT).
-        let props = match request {
-            CalDavReportType::CalendarQuery { props, .. } => props,
-            CalDavReportType::CalendarMultiget { props, .. } => props,
-            CalDavReportType::SyncCollection { props, .. } => props,
-        };
+        // Responses folded per UID so a recurring master + exception
+        // overrides share ONE D:response (RFC 4791 §4.1) — see
+        // `write_report_page`, which the streaming emitters reuse
+        // page by page.
+        Self::write_report_page(&mut xml_writer, events, request, base_href)?;
 
-        // Add responses for events — folded per UID so a
-        // recurring master + per-instance exception overrides
-        // share ONE D:response with all VEVENTs concatenated
-        // into the calendar-data payload (RFC 4791 §4.1). Pre-
-        // fix this loop emitted one D:response per DB row, so
-        // master + exception carried duplicate hrefs and clients
-        // deduped, hiding the exception from the resulting sync.
-        for bundle in group_events_by_uid(events) {
-            let anchor = match bundle.first() {
-                Some(e) => *e,
-                None => continue,
-            };
-            let href = format!("{}{}.ics", base_href, anchor.ical_uid);
-            Self::write_event_response(&mut xml_writer, &bundle, props, &href)?;
-        }
-
-        // End multistatus
-        xml_writer.write_event(Event::End(BytesEnd::new("D:multistatus")))?;
+        Self::write_caldav_multistatus_end(&mut xml_writer)?;
 
         Ok(())
     }

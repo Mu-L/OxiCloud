@@ -8,7 +8,8 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::application::dtos::display_helpers::{
-    category_for, format_file_size, icon_class_for, icon_special_class_for,
+    category_for, format_file_size, icon_class_for, icon_special_class_for, intern_display,
+    intern_mime,
 };
 use crate::application::dtos::file_dto::FileDto;
 use crate::application::dtos::folder_dto::FolderDto;
@@ -230,9 +231,9 @@ pub async fn list_recent_resources(
                             created_at: row.resource_created_at.timestamp() as u64,
                             modified_at: row.modified_at.timestamp() as u64,
                             is_root: false,
-                            icon_class: std::sync::Arc::from("fas fa-folder"),
-                            icon_special_class: std::sync::Arc::from("folder-icon"),
-                            category: std::sync::Arc::from("Folder"),
+                            icon_class: intern_display("fas fa-folder"),
+                            icon_special_class: intern_display("folder-icon"),
+                            category: intern_display("Folder"),
                             // §14 provenance not selected by the recents query.
                             created_by: None,
                             updated_by: None,
@@ -263,15 +264,15 @@ pub async fn list_recent_resources(
                             name: row.name.clone(),
                             path,
                             size: size_bytes,
-                            mime_type: std::sync::Arc::from(mime),
+                            mime_type: intern_mime(mime),
                             folder_id: row.parent_id.map(|u| u.to_string()),
                             created_at: row.resource_created_at.timestamp() as u64,
                             modified_at: modified_at_u,
-                            icon_class: std::sync::Arc::from(icon_class_for(&row.name, mime)),
-                            icon_special_class: std::sync::Arc::from(icon_special_class_for(
+                            icon_class: intern_display(icon_class_for(&row.name, mime)),
+                            icon_special_class: intern_display(icon_special_class_for(
                                 &row.name, mime,
                             )),
-                            category: std::sync::Arc::from(category_for(&row.name, mime)),
+                            category: intern_display(category_for(&row.name, mime)),
                             size_formatted: format_file_size(size_bytes),
                             sort_date: None,
                             content_hash,

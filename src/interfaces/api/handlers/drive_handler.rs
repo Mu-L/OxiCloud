@@ -50,7 +50,7 @@ pub async fn list_drives(
 
     match state.drive_repo.list_readable_by(caller_id).await {
         Ok(drives) => {
-            let dtos: Vec<DriveDto> = drives.into_iter().map(DriveDto::from).collect();
+            let dtos: Vec<DriveDto> = drives.iter().cloned().map(DriveDto::from).collect();
             (StatusCode::OK, Json(dtos)).into_response()
         }
         Err(e) => {

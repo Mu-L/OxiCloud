@@ -1536,6 +1536,19 @@ fn build_nc_streaming_propfind(
 
         // ── Children (only if Depth != 0) ────────────────────────────
         if depth != "0" {
+            // Encoded href prefix for every child: username + parent
+            // path encode ONCE here — the old per-row `nc_href` call
+            // re-split and re-encoded the constant prefix for each of
+            // the up-to-500 children of every page.
+            let child_href_prefix = {
+                let base = nc_href(&username, &subpath);
+                if base.ends_with('/') {
+                    base
+                } else {
+                    format!("{base}/")
+                }
+            };
+
             // Files in pages (keyset cursor — O(page) per page instead of
             // the quadratic LIMIT/OFFSET walk).
             let mut after_name: Option<String> = None;
@@ -1573,12 +1586,12 @@ fn build_nc_streaming_propfind(
                     let mut xml = Writer::new(&mut chunk);
                     for file in batch.iter() {
                         let dead = dead_props_for(&file.id, &file_deads);
-                        let child_sub = if subpath.is_empty() {
-                            file.name.clone()
-                        } else {
-                            format!("{}/{}", subpath.trim_end_matches('/'), file.name)
-                        };
-                        let href = nc_href(&username, &child_sub);
+                        // Only the name varies per row — the encoded
+                        // username + parent prefix is computed once
+                        // outside the loops (the old `nc_href` call
+                        // re-encoded both for every child).
+                        let href =
+                            format!("{}{}", child_href_prefix, urlencoding::encode(&file.name));
                         let fid = file_id_map.get(&file.id).copied();
                         let oc_id = fid.map(|id| format_oc_id(id, file_id_svc));
                         write_file_response(&mut xml, file, &href, (fid, oc_id.as_deref()), &username, &favs, dead)
@@ -1630,12 +1643,10 @@ fn build_nc_streaming_propfind(
                     let mut xml = Writer::new(&mut chunk);
                     for sf in batch.iter() {
                         let dead = dead_props_for(&sf.id, &sub_deads);
-                        let child_sub = if subpath.is_empty() {
-                            sf.name.clone()
-                        } else {
-                            format!("{}/{}", subpath.trim_end_matches('/'), sf.name)
-                        };
-                        let href = nc_collection_href(&username, &child_sub);
+                        // Collections carry the trailing slash; prefix
+                        // precomputed once like the file loop above.
+                        let href =
+                            format!("{}{}/", child_href_prefix, urlencoding::encode(&sf.name));
                         let fid = sub_id_map.get(&sf.id).copied();
                         let oc_id = fid.map(|id| format_oc_id(id, file_id_svc));
                         write_folder_response(&mut xml, sf, &href, (fid, oc_id.as_deref()), &username, &favs, quota, dead)

@@ -663,17 +663,27 @@ impl CardDavAdapter {
             ]),
         ))?;
 
+        // Borrowed straight out of the request — the old `clone()` copied
+        // the whole Vec of owned QualifiedName strings per REPORT (same
+        // fix the CalDAV surface got in ROUND4).
         let props = match report {
-            CardDavReportType::AddressbookQuery { props } => props.clone(),
-            CardDavReportType::AddressbookMultiget { props, .. } => props.clone(),
-            CardDavReportType::SyncCollection { props, .. } => props.clone(),
+            CardDavReportType::AddressbookQuery { props } => props,
+            CardDavReportType::AddressbookMultiget { props, .. } => props,
+            CardDavReportType::SyncCollection { props, .. } => props,
         };
 
+        // One reused href buffer for the whole listing instead of a
+        // fresh String per contact.
+        let mut href = String::with_capacity(base_href.len() + 48);
         for contact in contacts {
-            let href = format!("{}{}.vcf", base_href, contact.uid);
+            href.clear();
+            let _ = std::fmt::Write::write_fmt(
+                &mut href,
+                format_args!("{}{}.vcf", base_href, contact.uid),
+            );
             // `write_contact_response` generates the vCard on demand when (and
             // only when) address-data is actually requested.
-            Self::write_contact_response(&mut xml_writer, contact, &props, &href)?;
+            Self::write_contact_response(&mut xml_writer, contact, props, &href)?;
         }
 
         xml_writer.write_event(Event::End(BytesEnd::new("D:multistatus")))?;
@@ -701,10 +711,11 @@ impl CardDavAdapter {
             xml_writer.write_event(Event::Empty(BytesStart::new("D:resourcetype")))?;
 
             xml_writer.write_event(Event::Start(BytesStart::new("D:getetag")))?;
-            xml_writer.write_event(Event::Text(BytesText::new(&format!(
-                "\"{}\"",
-                contact.etag
-            ))))?;
+            let mut quoted = String::with_capacity(contact.etag.len() + 2);
+            quoted.push('"');
+            quoted.push_str(&contact.etag);
+            quoted.push('"');
+            xml_writer.write_event(Event::Text(BytesText::new(&quoted)))?;
             xml_writer.write_event(Event::End(BytesEnd::new("D:getetag")))?;
 
             xml_writer.write_event(Event::Start(BytesStart::new("D:getcontenttype")))?;
@@ -724,10 +735,11 @@ impl CardDavAdapter {
                     }
                     ("DAV:", "getetag") => {
                         xml_writer.write_event(Event::Start(BytesStart::new("D:getetag")))?;
-                        xml_writer.write_event(Event::Text(BytesText::new(&format!(
-                            "\"{}\"",
-                            contact.etag
-                        ))))?;
+                        let mut quoted = String::with_capacity(contact.etag.len() + 2);
+                        quoted.push('"');
+                        quoted.push_str(&contact.etag);
+                        quoted.push('"');
+                        xml_writer.write_event(Event::Text(BytesText::new(&quoted)))?;
                         xml_writer.write_event(Event::End(BytesEnd::new("D:getetag")))?;
                     }
                     ("DAV:", "getcontenttype") => {

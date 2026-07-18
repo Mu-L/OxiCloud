@@ -21,8 +21,9 @@ use axum::{
     http::{HeaderName, Request, StatusCode, header},
     response::Response,
 };
-use bytes::Buf;
+use bytes::{Buf, Bytes};
 use percent_encoding::percent_decode_str;
+use quick_xml::Writer;
 use std::fmt::Write;
 use std::sync::Arc;
 
@@ -33,7 +34,7 @@ use crate::application::adapters::caldav_adapter::{
 use crate::application::adapters::uid_from_multiget_href;
 use crate::application::adapters::webdav_adapter::{PropFindRequest, PropFindType};
 use crate::application::dtos::calendar_dto::{
-    CreateCalendarDto, CreateEventICalDto, UpdateCalendarDto,
+    CalendarEventDto, CreateCalendarDto, CreateEventICalDto, UpdateCalendarDto,
 };
 use crate::application::ports::calendar_ports::CalendarUseCase;
 use crate::application::services::calendar_service::CalendarService;
@@ -46,6 +47,249 @@ const HEADER_DAV: HeaderName = HeaderName::from_static("dav");
 /// Maximum allowed request body size for CalDAV XML/iCal endpoints (1 MB).
 /// Prevents OOM/DoS via unbounded body buffering.
 const MAX_CALDAV_BODY: usize = 1_048_576;
+
+/// Minimum rows per emitted page for the streaming CalDAV emitters.
+/// Pages only cut at UID boundaries (the cursor delivers same-UID rows
+/// adjacent), so a master + its exception overrides always land in one
+/// chunk and peak memory is one page of DTOs + its XML instead of the
+/// whole calendar twice.
+const CALDAV_STREAM_PAGE_EVENTS: usize = 500;
+
+/// Streamed multistatus REPORT: header chunk, one chunk per hydrated
+/// UID page, footer chunk. Byte-compatible with the buffered
+/// `generate_calendar_events_response` output (same bundle order:
+/// `(MIN(start_time), uid)` = first appearance in the start_time
+/// listing). TTFB becomes the first page instead of the full
+/// generation; the whole-calendar DTO Vec is never materialised.
+fn build_streaming_report_response(
+    calendar_service: Arc<CalendarService>,
+    calendar_id: String,
+    report: CalDavReportType,
+    base_href: String,
+    user_id: uuid::Uuid,
+) -> Response<Body> {
+    let stream = async_stream::try_stream! {
+        let mut buf = Vec::with_capacity(256);
+        {
+            let mut w = Writer::new(&mut buf);
+            CalDavAdapter::write_caldav_multistatus_start(&mut w)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+        }
+        yield Bytes::from(buf);
+
+        // ONE server-side scan+sort in bundle order streamed through a
+        // cursor — the same aggregate work the buffered path paid, but
+        // only a page of rows resident. Pages cut at UID boundaries.
+        {
+            use futures::TryStreamExt;
+            let mut rows = calendar_service
+                .stream_events_uid_order(&calendar_id, user_id)
+                .await
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            let mut page: Vec<CalendarEventDto> =
+                Vec::with_capacity(CALDAV_STREAM_PAGE_EVENTS + 32);
+            loop {
+                let next = rows
+                    .try_next()
+                    .await
+                    .map_err(|e| std::io::Error::other(e.to_string()))?;
+                let flush = match &next {
+                    Some(ev) => {
+                        page.len() >= CALDAV_STREAM_PAGE_EVENTS
+                            && page.last().is_some_and(|p| p.ical_uid != ev.ical_uid)
+                    }
+                    None => !page.is_empty(),
+                };
+                if flush {
+                    let mut chunk = Vec::with_capacity(page.len() * 1024 + 128);
+                    {
+                        let mut w = Writer::new(&mut chunk);
+                        CalDavAdapter::write_report_page(&mut w, &page, &report, &base_href)
+                            .map_err(|e| std::io::Error::other(e.to_string()))?;
+                    }
+                    page.clear();
+                    yield Bytes::from(chunk);
+                }
+                match next {
+                    Some(ev) => page.push(ev),
+                    None => break,
+                }
+            }
+        }
+
+        let mut buf = Vec::with_capacity(32);
+        {
+            let mut w = Writer::new(&mut buf);
+            CalDavAdapter::write_caldav_multistatus_end(&mut w)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+        }
+        yield Bytes::from(buf);
+    };
+
+    use futures::TryStreamExt;
+    let stream = stream
+        .map_err(|e: std::io::Error| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) });
+
+    Response::builder()
+        .status(StatusCode::MULTI_STATUS)
+        .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+        .body(Body::from_stream(stream))
+        .unwrap()
+}
+
+/// Streamed depth-1 collection PROPFIND: head (multistatus + the
+/// calendar's own response), one chunk per hydrated UID page, footer.
+#[allow(clippy::too_many_arguments)]
+fn build_streaming_collection_propfind(
+    calendar_service: Arc<CalendarService>,
+    calendar: crate::application::dtos::calendar_dto::CalendarDto,
+    propfind_request: PropFindRequest,
+    calendar_id: String,
+    base_href: String,
+    caller_id: String,
+    user_id: uuid::Uuid,
+) -> Response<Body> {
+    let stream = async_stream::try_stream! {
+        let mut buf = Vec::with_capacity(2048);
+        {
+            let mut w = Writer::new(&mut buf);
+            CalDavAdapter::write_collection_head(&mut w, &calendar, &propfind_request, &base_href, &caller_id)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+        }
+        yield Bytes::from(buf);
+
+        {
+            use futures::TryStreamExt;
+            let mut rows = calendar_service
+                .stream_events_uid_order(&calendar_id, user_id)
+                .await
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            let mut page: Vec<CalendarEventDto> =
+                Vec::with_capacity(CALDAV_STREAM_PAGE_EVENTS + 32);
+            loop {
+                let next = rows
+                    .try_next()
+                    .await
+                    .map_err(|e| std::io::Error::other(e.to_string()))?;
+                let flush = match &next {
+                    Some(ev) => {
+                        page.len() >= CALDAV_STREAM_PAGE_EVENTS
+                            && page.last().is_some_and(|p| p.ical_uid != ev.ical_uid)
+                    }
+                    None => !page.is_empty(),
+                };
+                if flush {
+                    let mut chunk = Vec::with_capacity(page.len() * 512 + 128);
+                    {
+                        let mut w = Writer::new(&mut chunk);
+                        CalDavAdapter::write_collection_event_page(&mut w, &page, &base_href)
+                            .map_err(|e| std::io::Error::other(e.to_string()))?;
+                    }
+                    page.clear();
+                    yield Bytes::from(chunk);
+                }
+                match next {
+                    Some(ev) => page.push(ev),
+                    None => break,
+                }
+            }
+        }
+
+        let mut buf = Vec::with_capacity(32);
+        {
+            let mut w = Writer::new(&mut buf);
+            CalDavAdapter::write_caldav_multistatus_end(&mut w)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+        }
+        yield Bytes::from(buf);
+    };
+
+    use futures::TryStreamExt;
+    let stream = stream
+        .map_err(|e: std::io::Error| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) });
+
+    Response::builder()
+        .status(StatusCode::MULTI_STATUS)
+        .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+        .body(Body::from_stream(stream))
+        .unwrap()
+}
+
+/// Streamed whole-calendar `.ics` GET: VCALENDAR header, one chunk per
+/// hydrated UID page (each row's stored VEVENT chunk served verbatim),
+/// `END:VCALENDAR` footer.
+fn build_streaming_calendar_ics(
+    calendar_service: Arc<CalendarService>,
+    calendar_id: String,
+    calendar_name: String,
+    calendar_etag: String,
+    user_id: uuid::Uuid,
+) -> Response<Body> {
+    let stream = async_stream::try_stream! {
+        let mut head = String::with_capacity(128);
+        let _ = write!(
+            head,
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//OxiCloud//NONSGML Calendar//EN\r\nX-WR-CALNAME:{}\r\n",
+            calendar_name
+        );
+        yield Bytes::from(head);
+
+        {
+            use futures::TryStreamExt;
+            let mut rows = calendar_service
+                .stream_events_uid_order(&calendar_id, user_id)
+                .await
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            let mut page: Vec<CalendarEventDto> =
+                Vec::with_capacity(CALDAV_STREAM_PAGE_EVENTS + 32);
+            loop {
+                let next = rows
+                    .try_next()
+                    .await
+                    .map_err(|e| std::io::Error::other(e.to_string()))?;
+                let flush = match &next {
+                    Some(ev) => {
+                        page.len() >= CALDAV_STREAM_PAGE_EVENTS
+                            && page.last().is_some_and(|p| p.ical_uid != ev.ical_uid)
+                    }
+                    None => !page.is_empty(),
+                };
+                if flush {
+                    let mut chunk = String::with_capacity(page.len() * 384);
+                    for group in group_events_by_uid(&page) {
+                        for event in group {
+                            if let Some(vevent) = extract_vevent_chunk(&event.ical_data) {
+                                chunk.push_str(vevent);
+                                if !chunk.ends_with('\n') {
+                                    chunk.push_str("\r\n");
+                                }
+                            }
+                        }
+                    }
+                    page.clear();
+                    yield Bytes::from(chunk);
+                }
+                match next {
+                    Some(ev) => page.push(ev),
+                    None => break,
+                }
+            }
+        }
+
+        yield Bytes::from_static(b"END:VCALENDAR\r\n");
+    };
+
+    use futures::TryStreamExt;
+    let stream = stream
+        .map_err(|e: std::io::Error| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) });
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/calendar; charset=utf-8")
+        .header(header::ETAG, format!("\"{}\"", calendar_etag))
+        .body(Body::from_stream(stream))
+        .unwrap()
+}
 
 /// Creates CalDAV routes with full path prefixes.
 ///
@@ -320,15 +564,23 @@ async fn handle_propfind(
             };
 
             if let Ok(calendar) = calendar_result {
-                // Valid calendar ID — return calendar collection
-                let events = if depth != "0" {
-                    calendar_service
-                        .list_events(first_segment, None, None, user.id)
-                        .await
-                        .unwrap_or_default()
-                } else {
-                    vec![]
-                };
+                // Valid calendar ID — return calendar collection.
+                // Depth-1 streams the event listing page by page
+                // (whole-calendar responses used to materialise every
+                // DTO + the full multistatus in RAM); depth-0 has no
+                // event section and keeps the tiny buffered path.
+                if depth != "0" {
+                    let base_href = format!("/caldav/{}/", first_segment);
+                    return Ok(build_streaming_collection_propfind(
+                        calendar_service.clone(),
+                        calendar,
+                        propfind_request,
+                        first_segment.to_string(),
+                        base_href,
+                        caller_id.clone(),
+                        user.id,
+                    ));
+                }
 
                 let base_href = &format!("/caldav/{}/", first_segment);
                 let mut response_body = Vec::new();
@@ -336,7 +588,7 @@ async fn handle_propfind(
                 CalDavAdapter::generate_calendar_collection_propfind(
                     &mut response_body,
                     &calendar,
-                    &events,
+                    &[],
                     &propfind_request,
                     base_href,
                     &depth,
@@ -407,14 +659,20 @@ async fn handle_propfind(
                         .await
                         .map_err(|e| AppError::not_found(format!("Calendar not found: {}", e)))?;
 
-                    let events = if depth != "0" {
-                        calendar_service
-                            .list_events(sub_parts[0], None, None, user.id)
-                            .await
-                            .unwrap_or_default()
-                    } else {
-                        vec![]
-                    };
+                    // Same streaming/buffered split as the
+                    // single-segment collection branch above.
+                    if depth != "0" {
+                        let base_href = format!("/caldav/{}/{}/", first_segment, sub_parts[0]);
+                        return Ok(build_streaming_collection_propfind(
+                            calendar_service.clone(),
+                            cal,
+                            propfind_request,
+                            sub_parts[0].to_string(),
+                            base_href,
+                            caller_id.clone(),
+                            user.id,
+                        ));
+                    }
 
                     let base_href = &format!("/caldav/{}/{}/", first_segment, sub_parts[0]);
                     let mut response_body = Vec::new();
@@ -422,7 +680,7 @@ async fn handle_propfind(
                     CalDavAdapter::generate_calendar_collection_propfind(
                         &mut response_body,
                         &cal,
-                        &events,
+                        &[],
                         &propfind_request,
                         base_href,
                         &depth,
@@ -500,6 +758,33 @@ async fn handle_report(
         return Err(AppError::bad_request("Calendar ID required in path"));
     }
 
+    // Whole-calendar shapes (no-range calendar-query, sync-collection)
+    // stream: header + one chunk per hydrated UID page + footer, instead
+    // of materialising every DTO AND the full multistatus in RAM with
+    // TTFB = complete generation. Bounded shapes (time-range query,
+    // multiget) keep the buffered path.
+    if matches!(
+        &report,
+        CalDavReportType::CalendarQuery {
+            time_range: None,
+            ..
+        } | CalDavReportType::SyncCollection { .. }
+    ) {
+        // Surface not-found / authz before committing to a 207 stream.
+        calendar_service
+            .get_calendar(calendar_id, user.id)
+            .await
+            .map_err(AppError::from)?;
+        let base_href = format!("/caldav/{}/", calendar_id);
+        return Ok(build_streaming_report_response(
+            calendar_service.clone(),
+            calendar_id.to_string(),
+            report,
+            base_href,
+            user.id,
+        ));
+    }
+
     let events = match &report {
         CalDavReportType::CalendarQuery { time_range, .. } => {
             if let Some((start, end)) = time_range {
@@ -508,10 +793,7 @@ async fn handle_report(
                     .await
                     .map_err(AppError::from)?
             } else {
-                calendar_service
-                    .list_events(calendar_id, None, None, user.id)
-                    .await
-                    .map_err(AppError::from)?
+                unreachable!("no-range calendar-query streams above")
             }
         }
         CalDavReportType::CalendarMultiget { hrefs, .. } => {
@@ -528,10 +810,9 @@ async fn handle_report(
                 .await
                 .map_err(AppError::from)?
         }
-        CalDavReportType::SyncCollection { .. } => calendar_service
-            .list_events(calendar_id, None, None, user.id)
-            .await
-            .map_err(AppError::from)?,
+        CalDavReportType::SyncCollection { .. } => {
+            unreachable!("sync-collection streams above")
+        }
     };
 
     let base_href = &format!("/caldav/{}/", calendar_id);
@@ -686,31 +967,27 @@ async fn handle_get(
     let calendar_id = parts[0];
 
     if parts.len() < 2 {
-        // GET on calendar collection — return all events, folded
+        // GET on calendar collection — stream all events, folded
         // per UID so master + exception overrides live in ONE
         // VCALENDAR body per resource (RFC 4791 §4.1 + RFC 5545
-        // §3.6.1). Serves each row's stored `ical_data` verbatim
-        // via `bundle_to_calendar_body`; VTIMEZONE / VALARM /
-        // ATTENDEE / CATEGORIES / X-* survive because we no
-        // longer regenerate the body from DTO fields.
-        let events = calendar_service
-            .list_events(calendar_id, None, None, user.id)
-            .await
-            .map_err(AppError::from)?;
-
+        // §3.6.1). Each row's stored `ical_data` VEVENT chunk is
+        // served verbatim; VTIMEZONE / VALARM / ATTENDEE /
+        // CATEGORIES / X-* survive because the body is never
+        // regenerated from DTO fields. Streaming (header + one
+        // chunk per hydrated UID page + footer) replaces the old
+        // whole-calendar String build.
         let calendar = calendar_service
             .get_calendar(calendar_id, user.id)
             .await
             .map_err(AppError::from)?;
 
-        let ical = generate_full_calendar_ical(&calendar.name, &events);
-
-        Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "text/calendar; charset=utf-8")
-            .header(header::ETAG, format!("\"{}\"", calendar.id))
-            .body(Body::from(ical))
-            .unwrap())
+        Ok(build_streaming_calendar_ics(
+            calendar_service.clone(),
+            calendar_id.to_string(),
+            calendar.name,
+            calendar.id,
+            user.id,
+        ))
     } else {
         // GET on individual event resource — fetch ALL rows for
         // this UID (master + any exception overrides) and emit
@@ -752,38 +1029,6 @@ async fn handle_get(
             .body(Body::from(ical))
             .unwrap())
     }
-}
-
-/// Emit a full VCALENDAR body for the entire calendar, with rows
-/// grouped by UID so each recurring event's master + exception
-/// overrides live under one iCalendar resource. Each row's stored
-/// `ical_data` VEVENT chunk is served verbatim.
-fn generate_full_calendar_ical(
-    calendar_name: &str,
-    events: &[crate::application::dtos::calendar_dto::CalendarEventDto],
-) -> String {
-    // Pre-estimate: ~200 bytes header + ~320 bytes per event.
-    let mut buf = String::with_capacity(256 + events.len() * 320);
-    let _ = write!(
-        buf,
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//OxiCloud//NONSGML Calendar//EN\r\nX-WR-CALNAME:{}\r\n",
-        calendar_name
-    );
-    // Group + append each row's stored VEVENT chunk. Malformed
-    // rows are silently skipped (defensive) — the bulk-GET body
-    // survives the rest.
-    for group in group_events_by_uid(events) {
-        for event in group {
-            if let Some(chunk) = extract_vevent_chunk(&event.ical_data) {
-                buf.push_str(chunk);
-                if !buf.ends_with('\n') {
-                    buf.push_str("\r\n");
-                }
-            }
-        }
-    }
-    buf.push_str("END:VCALENDAR\r\n");
-    buf
 }
 
 // NOTE: the pre-phase-4 `generate_event_ical` + `write_vevent`

@@ -245,15 +245,15 @@ async fn main() {
         .list_readable_by(user_id)
         .await
         .expect("repo list")
-        .into_iter()
-        .map(|d| (d.drive.id, d.root_folder_name))
+        .iter()
+        .map(|d| (d.drive.id, d.root_folder_name.clone()))
         .collect();
     let warm: Vec<(Uuid, String)> = repo
         .list_readable_by(user_id)
         .await
         .expect("repo list warm")
-        .into_iter()
-        .map(|d| (d.drive.id, d.root_folder_name))
+        .iter()
+        .map(|d| (d.drive.id, d.root_folder_name.clone()))
         .collect();
     if before_rows != cold || cold != warm {
         eprintln!(

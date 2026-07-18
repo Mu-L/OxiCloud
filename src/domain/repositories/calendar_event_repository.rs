@@ -25,6 +25,18 @@ pub trait CalendarEventRepository: Send + Sync + 'static {
     /// Finds a calendar event by its ID
     async fn find_event_by_id(&self, id: &Uuid) -> CalendarEventRepositoryResult<CalendarEvent>;
 
+    /// Cursor stream over every event of `calendar_id` in bundle order:
+    /// rows sorted by `(first occurrence per UID, uid, master-first,
+    /// start_time)` so a recurring master + its exception overrides
+    /// arrive adjacent and bundles appear in the first-appearance order
+    /// the buffered `start_time` listing produced. ONE scan+sort on the
+    /// server; the streaming CalDAV emitters cut pages at UID
+    /// boundaries so only a page of rows is ever resident.
+    fn stream_events_uid_order(
+        &self,
+        calendar_id: Uuid,
+    ) -> futures::stream::BoxStream<'static, CalendarEventRepositoryResult<CalendarEvent>>;
+
     /// Lists all events in a specific calendar
     async fn list_events_by_calendar(
         &self,

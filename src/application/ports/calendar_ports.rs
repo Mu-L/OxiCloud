@@ -116,6 +116,12 @@ pub trait CalendarStoragePort: Send + Sync + 'static {
         &self,
         calendar_id: &str,
     ) -> Result<Vec<CalendarEventDto>, DomainError>;
+    /// Cursor stream over the calendar's events in bundle order (see
+    /// the repository doc) — feeds the streaming CalDAV emitters.
+    fn stream_events_uid_order(
+        &self,
+        calendar_id: &str,
+    ) -> futures::stream::BoxStream<'static, Result<CalendarEventDto, DomainError>>;
     async fn list_events_by_calendar_paginated(
         &self,
         calendar_id: &str,
@@ -218,6 +224,16 @@ pub trait CalendarUseCase: Send + Sync + 'static {
         offset: Option<i64>,
         user_id: Uuid,
     ) -> Result<Vec<CalendarEventDto>, DomainError>;
+    /// Streaming support: cursor over the calendar's events in bundle
+    /// order, behind the same Read authz gate as [`Self::list_events`].
+    async fn stream_events_uid_order(
+        &self,
+        calendar_id: &str,
+        user_id: Uuid,
+    ) -> Result<
+        futures::stream::BoxStream<'static, Result<CalendarEventDto, DomainError>>,
+        DomainError,
+    >;
     async fn get_events_in_range(
         &self,
         calendar_id: &str,

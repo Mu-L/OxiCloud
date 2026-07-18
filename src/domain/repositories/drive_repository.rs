@@ -172,10 +172,14 @@ pub trait DriveRepository: Send + Sync + 'static {
     /// Returns rows in a stable order: default drive first (if any),
     /// then by display name. The `/api/drives` handler relies on that
     /// order for the picker UI without a follow-up sort.
+    /// Returned as `Arc<Vec<…>>`: warm hits are a refcount bump straight
+    /// off the per-user cache instead of a deep clone of every row's
+    /// Strings — this runs per DAV request with an explicit drive
+    /// selector.
     async fn list_readable_by(
         &self,
         caller_id: Uuid,
-    ) -> Result<Vec<DriveWithRootName>, DriveRepositoryError>;
+    ) -> Result<std::sync::Arc<Vec<DriveWithRootName>>, DriveRepositoryError>;
 
     /// `true` when the drive holds no live (non-trashed) folders other
     /// than its own root and no live files at all. Used by
