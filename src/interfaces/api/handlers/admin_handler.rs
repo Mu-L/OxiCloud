@@ -11,7 +11,6 @@ use axum::{
 
 use crate::application::dtos::drive_dto::DriveDto;
 use crate::application::dtos::grant_dto::{GrantDto, RoleDto, SubjectDto, SubjectTypeDto};
-use crate::application::dtos::user_dto::UserDto;
 use crate::application::dtos::plugin_dto::{
     PluginInfoDto, PluginLogEntryDto, PluginLogPageDto, PluginLogQueryDto, PluginRetentionDto,
     SetEnabledDto,
@@ -22,6 +21,7 @@ use crate::application::dtos::settings_dto::{
     SmtpTestResultDto, StartMigrationDto, TestOidcConnectionDto, TestStorageConnectionDto,
     UpdateUserActiveDto, UpdateUserQuotaDto, UpdateUserRoleDto, VerifyMigrationDto,
 };
+use crate::application::dtos::user_dto::UserDto;
 use crate::application::ports::authorization_ports::AuthorizationEngine;
 use crate::application::ports::plugin_ports::{LogQuery, PluginManagementPort, PluginMgmtError};
 use crate::application::ports::storage_ports::StorageUsagePort;
