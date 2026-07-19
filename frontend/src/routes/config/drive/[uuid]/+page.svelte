@@ -14,6 +14,8 @@
 	import ReadOnlyBanner from '$lib/components/ReadOnlyBanner.svelte';
 	import ShareDialog from '$lib/components/ShareDialog.svelte';
 	import UserVignette from '$lib/components/UserVignette.svelte';
+	import GroupVignette from '$lib/components/GroupVignette.svelte';
+	import { ensureResolvers } from '$lib/api/endpoints/recipients';
 	import Icon from '$lib/icons/Icon.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { drives as drivesStore, driveIcon } from '$lib/stores/drives.svelte';
@@ -192,6 +194,10 @@
 
 	onMount(() => {
 		void drivesStore.load();
+		// Preload the recipient caches (users + groups) so the members
+		// list can render group names + user labels synchronously. Both
+		// caches are module-level and shared across surfaces.
+		void ensureResolvers();
 	});
 
 	// SvelteKit reuses this component when navigating between
@@ -368,10 +374,7 @@
 							{#if m.subject.type === 'user'}
 								<UserVignette userId={m.subject.id} />
 							{:else if m.subject.type === 'group'}
-								<span class="members__group">
-									<Icon name="users" />
-									<span class="mono">{m.subject.id}</span>
-								</span>
+								<GroupVignette groupId={m.subject.id} />
 							{:else}
 								<span class="members__token">
 									<Icon name="link" />
