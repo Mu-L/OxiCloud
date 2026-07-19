@@ -21,6 +21,7 @@ use crate::application::dtos::settings_dto::{
     SmtpTestResultDto, StartMigrationDto, TestOidcConnectionDto, TestStorageConnectionDto,
     UpdateUserActiveDto, UpdateUserQuotaDto, UpdateUserRoleDto, VerifyMigrationDto,
 };
+use crate::application::dtos::user_dto::UserDto;
 use crate::application::ports::authorization_ports::AuthorizationEngine;
 use crate::application::ports::plugin_ports::{LogQuery, PluginManagementPort, PluginMgmtError};
 use crate::application::ports::storage_ports::StorageUsagePort;
@@ -68,6 +69,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route("/users/{id}/active", put(update_user_active))
         .route("/users/{id}/quota", put(update_user_quota))
         .route("/users/{id}/password", put(reset_user_password))
+        .route(
+            "/users/{id}/promote-to-internal",
+            post(admin_promote_external_to_internal),
+        )
         // Registration control
         .route("/settings/registration", put(set_registration_setting))
         // Audio metadata
@@ -670,7 +675,16 @@ pub async fn get_dashboard_stats(
         .as_ref()
         .ok_or_else(|| AppError::internal_error("Database not available"))?;
 
-    // Use direct SQL for aggregated stats — more efficient than loading all users
+    // Use direct SQL for aggregated stats — more efficient than loading all users.
+    //
+    // Scope: internal users only (`is_external = false`). External
+    // accounts (grant-only magic-link / OCM recipients) have no
+    // storage envelope by construction (DB CHECK
+    // `users_external_no_storage`) and cannot be admin
+    // (`users_external_not_admin`), so they'd inflate `total_users`
+    // and `active_users` with rows that don't represent operational
+    // seats. The audit list (`/api/admin/users`) still shows every
+    // account; only the dashboard totals filter externals out.
     let stats_row = sqlx::query(
         r#"
         SELECT
@@ -682,6 +696,7 @@ pub async fn get_dashboard_stats(
             COUNT(*) FILTER (WHERE storage_quota_bytes > 0 AND storage_used_bytes > storage_quota_bytes * 0.8)::INT8 as users_over_80,
             COUNT(*) FILTER (WHERE storage_quota_bytes > 0 AND storage_used_bytes > storage_quota_bytes)::INT8 as users_over_quota
         FROM auth.users
+        WHERE is_external = false
         "#
     )
     .fetch_one(db_pool.as_ref())
@@ -754,9 +769,14 @@ pub async fn list_users(
     let limit = query.limit.unwrap_or(100).min(500);
     let offset = query.offset.unwrap_or(0);
 
+    // Admin surface must show *every* account for audit — grant-only
+    // magic-link / OCM recipients (is_external = true) included. The
+    // internal-only variant is used by system address book / sharee
+    // search, where surfacing externals would leak identities. See
+    // `auth_application_service::list_users` doc for the split.
     let users = auth
         .auth_application_service
-        .list_users(limit, offset)
+        .list_users_including_external(limit, offset)
         .await
         .map_err(|e| AppError::internal_error(format!("Failed to list users: {}", e)))?;
 
@@ -1088,6 +1108,48 @@ pub async fn reset_user_password(
             "message": "Password reset successfully"
         })),
     ))
+}
+
+/// POST /api/admin/users/{id}/promote-to-internal — flip an external
+/// (grant-only) account into a normal internal account, provisioning
+/// its personal drive on the way. The deployment MUST have magic-link
+/// login enabled (the admin doesn't set the user's password on their
+/// behalf, so the promoted user needs some way to log in). Refuses
+/// OIDC-linked users and users who are already internal.
+#[utoipa::path(
+    post,
+    path = "/api/admin/users/{id}/promote-to-internal",
+    params(("id" = String, Path, description = "Target user id")),
+    responses(
+        (status = 200, description = "User promoted", body = UserDto),
+        (status = 400, description = "Magic-link login is disabled on this deployment"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin required (or target is OIDC-linked)"),
+        (status = 404, description = "User not found"),
+        (status = 409, description = "User is already internal"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "admin"
+)]
+pub async fn admin_promote_external_to_internal(
+    State(state): State<Arc<AppState>>,
+    auth_user: AuthUser,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    let target_id = Uuid::parse_str(&id).map_err(|_| AppError::bad_request("Invalid UUID"))?;
+
+    let auth = state
+        .auth_service
+        .as_ref()
+        .ok_or_else(|| AppError::internal_error("Auth service not configured"))?;
+
+    let dto = auth
+        .auth_application_service
+        .admin_promote_external_to_internal(auth_user.id, target_id)
+        .await
+        .map_err(AppError::from)?;
+
+    Ok((StatusCode::OK, Json(dto)))
 }
 
 // ============================================================================

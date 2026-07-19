@@ -184,8 +184,8 @@ async fn section_face_boxes(pool: &PgPool) {
     // Equivalence gate: same (id, person_id, bbox) set both ways, all N present.
     let mut b = boxes_before(pool, file_id, user_id).await;
     let mut a = boxes_after(pool, file_id, user_id).await;
-    b.sort_by(|x, y| x.0.cmp(&y.0));
-    a.sort_by(|x, y| x.0.cmp(&y.0));
+    b.sort_by_key(|x| x.0);
+    a.sort_by_key(|x| x.0);
     assert_eq!(b, a, "face-box projections differ");
     assert_eq!(a.len(), n, "expected all faces");
     println!("# [Q1] gate: wide/narrow face-box sets identical ({n} faces) — OK");
