@@ -789,11 +789,9 @@ impl CalDavAdapter {
         xml_writer.write_event(Event::Text(BytesText::new(&calendar.name)))?;
         xml_writer.write_event(Event::End(BytesEnd::new("D:displayname")))?;
 
-        // Last modified
+        // Last modified (stack render, benches/ROUND14.md §A5)
         xml_writer.write_event(Event::Start(BytesStart::new("D:getlastmodified")))?;
-        xml_writer.write_event(Event::Text(BytesText::new(
-            &calendar.updated_at.to_rfc2822(),
-        )))?;
+        Self::write_lastmodified_text(xml_writer, calendar.updated_at)?;
         xml_writer.write_event(Event::End(BytesEnd::new("D:getlastmodified")))?;
 
         // ETag
@@ -920,9 +918,8 @@ impl CalDavAdapter {
                 }
                 ("DAV:", "getlastmodified") => {
                     xml_writer.write_event(Event::Start(BytesStart::new("D:getlastmodified")))?;
-                    xml_writer.write_event(Event::Text(BytesText::new(
-                        &calendar.updated_at.to_rfc2822(),
-                    )))?;
+                    // Stack render (benches/ROUND14.md §A5).
+                    Self::write_lastmodified_text(xml_writer, calendar.updated_at)?;
                     xml_writer.write_event(Event::End(BytesEnd::new("D:getlastmodified")))?;
                 }
                 ("DAV:", "getetag") => {
@@ -1097,11 +1094,34 @@ impl CalDavAdapter {
     /// response per DB row made clients dedupe the shared href and the
     /// exception appeared to vanish. Callers guarantee same-UID rows
     /// arrive within a single page.
+    /// Emit an RFC 2822 `getlastmodified` text node with the allocation-free
+    /// stack renderer (byte-identical to `chrono::to_rfc2822` — the parity
+    /// gate lives in `common::fmt`), falling back to chrono only for
+    /// out-of-4-digit-year timestamps. Mirrors the CardDAV emitter; replaces
+    /// the per-event `updated_at.to_rfc2822()` heap `String`
+    /// (benches/ROUND14.md §A5).
+    fn write_lastmodified_text<W: Write>(
+        xml_writer: &mut Writer<W>,
+        ts: DateTime<Utc>,
+    ) -> Result<()> {
+        let mut buf = [0u8; 31];
+        match crate::common::fmt::rfc2822_utc(&mut buf, ts.timestamp()) {
+            Some(s) => xml_writer.write_event(Event::Text(BytesText::new(s)))?,
+            None => xml_writer.write_event(Event::Text(BytesText::new(&ts.to_rfc2822())))?,
+        }
+        Ok(())
+    }
+
     pub fn write_collection_event_page<W: Write>(
         xml_writer: &mut Writer<W>,
         events: &[CalendarEventDto],
         base_href: &str,
     ) -> Result<()> {
+        // Reused per-event buffers (cleared each iteration) so a whole PROPFIND
+        // page allocates the href/etag storage once instead of twice per event
+        // (benches/ROUND14.md §A6).
+        let mut event_href = String::with_capacity(base_href.len() + 48);
+        let mut etag = String::new();
         for bundle in group_events_by_uid(events) {
             // The master (sorted first by group_events_by_uid)
             // supplies the ETag anchor + getlastmodified. If
@@ -1111,7 +1131,11 @@ impl CalDavAdapter {
                 Some(e) => *e,
                 None => continue,
             };
-            let event_href = format!("{}{}.ics", base_href, anchor.ical_uid);
+            event_href.clear();
+            let _ = std::fmt::Write::write_fmt(
+                &mut event_href,
+                format_args!("{}{}.ics", base_href, anchor.ical_uid),
+            );
 
             xml_writer.write_event(Event::Start(BytesStart::new("D:response")))?;
             xml_writer.write_event(Event::Start(BytesStart::new("D:href")))?;
@@ -1124,9 +1148,11 @@ impl CalDavAdapter {
             // resourcetype (empty for non-collection)
             xml_writer.write_event(Event::Empty(BytesStart::new("D:resourcetype")))?;
 
-            // getetag — anchor row's id
+            // getetag — anchor row's id (reused buffer, benches/ROUND14.md §A6)
             xml_writer.write_event(Event::Start(BytesStart::new("D:getetag")))?;
-            xml_writer.write_event(Event::Text(BytesText::new(&format!("\"{}\"", anchor.id))))?;
+            etag.clear();
+            let _ = std::fmt::Write::write_fmt(&mut etag, format_args!("\"{}\"", anchor.id));
+            xml_writer.write_event(Event::Text(BytesText::new(&etag)))?;
             xml_writer.write_event(Event::End(BytesEnd::new("D:getetag")))?;
 
             // getcontenttype
@@ -1136,9 +1162,9 @@ impl CalDavAdapter {
             )))?;
             xml_writer.write_event(Event::End(BytesEnd::new("D:getcontenttype")))?;
 
-            // getlastmodified — anchor row's updated_at
+            // getlastmodified — anchor row's updated_at (stack render, §A5)
             xml_writer.write_event(Event::Start(BytesStart::new("D:getlastmodified")))?;
-            xml_writer.write_event(Event::Text(BytesText::new(&anchor.updated_at.to_rfc2822())))?;
+            Self::write_lastmodified_text(xml_writer, anchor.updated_at)?;
             xml_writer.write_event(Event::End(BytesEnd::new("D:getlastmodified")))?;
 
             xml_writer.write_event(Event::End(BytesEnd::new("D:prop")))?;
@@ -1189,13 +1215,21 @@ impl CalDavAdapter {
             CalDavReportType::CalendarMultiget { props, .. } => props,
             CalDavReportType::SyncCollection { props, .. } => props,
         };
+        // Reused per-event href + etag buffers for the whole REPORT page
+        // (benches/ROUND14.md §A6).
+        let mut href = String::with_capacity(base_href.len() + 48);
+        let mut etag = String::new();
         for bundle in group_events_by_uid(events) {
             let anchor = match bundle.first() {
                 Some(e) => *e,
                 None => continue,
             };
-            let href = format!("{}{}.ics", base_href, anchor.ical_uid);
-            Self::write_event_response(xml_writer, &bundle, props, &href)?;
+            href.clear();
+            let _ = std::fmt::Write::write_fmt(
+                &mut href,
+                format_args!("{}{}.ics", base_href, anchor.ical_uid),
+            );
+            Self::write_event_response(xml_writer, &bundle, props, &href, &mut etag)?;
         }
         Ok(())
     }
@@ -1232,6 +1266,7 @@ impl CalDavAdapter {
         bundle: &[&CalendarEventDto],
         props: &[QualifiedName],
         href: &str,
+        etag: &mut String,
     ) -> Result<()> {
         let anchor = bundle
             .first()
@@ -1254,10 +1289,10 @@ impl CalDavAdapter {
 
         // If no specific props requested, return all common ones
         if props.is_empty() {
-            Self::write_event_standard_props(xml_writer, anchor, bundle)?;
+            Self::write_event_standard_props(xml_writer, anchor, bundle, etag)?;
         } else {
             // Write specifically requested properties
-            Self::write_event_requested_props(xml_writer, anchor, bundle, props)?;
+            Self::write_event_requested_props(xml_writer, anchor, bundle, props, etag)?;
         }
 
         // End prop
@@ -1285,6 +1320,7 @@ impl CalDavAdapter {
         xml_writer: &mut Writer<W>,
         anchor: &CalendarEventDto,
         bundle: &[&CalendarEventDto],
+        etag: &mut String,
     ) -> Result<()> {
         // Common WebDAV properties
 
@@ -1293,8 +1329,13 @@ impl CalDavAdapter {
 
         // ETag anchored on the master (or first exception in
         // a master-less bundle — pathological state today).
+        // Reused buffer (benches/ROUND14.md §A6).
         xml_writer.write_event(Event::Start(BytesStart::new("D:getetag")))?;
-        xml_writer.write_event(Event::Text(BytesText::new(&format!("\"{}\"", anchor.id))))?;
+        etag.clear();
+        etag.push('"');
+        etag.push_str(&anchor.id);
+        etag.push('"');
+        xml_writer.write_event(Event::Text(BytesText::new(etag.as_str())))?;
         xml_writer.write_event(Event::End(BytesEnd::new("D:getetag")))?;
 
         // Content type
@@ -1304,9 +1345,9 @@ impl CalDavAdapter {
         )))?;
         xml_writer.write_event(Event::End(BytesEnd::new("D:getcontenttype")))?;
 
-        // Last modified
+        // Last modified (stack render, benches/ROUND14.md §A5)
         xml_writer.write_event(Event::Start(BytesStart::new("D:getlastmodified")))?;
-        xml_writer.write_event(Event::Text(BytesText::new(&anchor.updated_at.to_rfc2822())))?;
+        Self::write_lastmodified_text(xml_writer, anchor.updated_at)?;
         xml_writer.write_event(Event::End(BytesEnd::new("D:getlastmodified")))?;
 
         // CalDAV calendar-data — the whole bundle emitted as one
@@ -1329,6 +1370,7 @@ impl CalDavAdapter {
         anchor: &CalendarEventDto,
         bundle: &[&CalendarEventDto],
         props: &[QualifiedName],
+        etag: &mut String,
     ) -> Result<()> {
         for prop in props {
             match (prop.namespace.as_str(), prop.name.as_str()) {
@@ -1338,8 +1380,12 @@ impl CalDavAdapter {
                 }
                 ("DAV:", "getetag") => {
                     xml_writer.write_event(Event::Start(BytesStart::new("D:getetag")))?;
-                    xml_writer
-                        .write_event(Event::Text(BytesText::new(&format!("\"{}\"", anchor.id))))?;
+                    // Reused buffer (benches/ROUND14.md §A6).
+                    etag.clear();
+                    etag.push('"');
+                    etag.push_str(&anchor.id);
+                    etag.push('"');
+                    xml_writer.write_event(Event::Text(BytesText::new(etag.as_str())))?;
                     xml_writer.write_event(Event::End(BytesEnd::new("D:getetag")))?;
                 }
                 ("DAV:", "getcontenttype") => {
@@ -1351,9 +1397,8 @@ impl CalDavAdapter {
                 }
                 ("DAV:", "getlastmodified") => {
                     xml_writer.write_event(Event::Start(BytesStart::new("D:getlastmodified")))?;
-                    xml_writer.write_event(Event::Text(BytesText::new(
-                        &anchor.updated_at.to_rfc2822(),
-                    )))?;
+                    // Stack render (benches/ROUND14.md §A5).
+                    Self::write_lastmodified_text(xml_writer, anchor.updated_at)?;
                     xml_writer.write_event(Event::End(BytesEnd::new("D:getlastmodified")))?;
                 }
 

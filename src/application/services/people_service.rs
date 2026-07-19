@@ -245,10 +245,11 @@ impl PeopleService {
         caller_id: Uuid,
         file_id: Uuid,
     ) -> Result<Vec<FaceBoxDto>, DomainError> {
-        let faces = self.repo.faces_for_file(file_id).await?;
-        Ok(faces
+        // The narrow projection scopes to the caller in SQL (WHERE user_id),
+        // so no post-filter is needed here. See benches/ROUND14.md §Q1.
+        let boxes = self.repo.face_boxes_for_file(file_id, caller_id).await?;
+        Ok(boxes
             .into_iter()
-            .filter(|f| f.user_id == caller_id)
             .map(|f| FaceBoxDto {
                 id: f.id.to_string(),
                 person_id: f.person_id.map(|u| u.to_string()),

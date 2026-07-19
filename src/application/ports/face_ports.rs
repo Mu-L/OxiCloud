@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::common::errors::DomainError;
-use crate::domain::entities::face::{DetectedFace, Face, Person};
+use crate::domain::entities::face::{DetectedFace, Face, FaceBox, Person};
 
 /// Detects faces in an image and produces an aligned, L2-normalized embedding
 /// for each. Takes raw encoded bytes (it decodes internally) so the
@@ -29,7 +29,16 @@ pub trait FaceAnalyzerPort: Send + Sync + 'static {
 pub trait FaceRepository: Send + Sync + 'static {
     // ── faces ──────────────────────────────────────────────────────
     async fn save_faces(&self, faces: &[Face]) -> Result<(), DomainError>;
-    async fn faces_for_file(&self, file_id: Uuid) -> Result<Vec<Face>, DomainError>;
+    /// Face boxes for a photo, caller-scoped — the lightbox tagging overlay
+    /// needs only `(id, person_id, bbox)`, so this narrow projection drops the
+    /// 2 KiB embedding BYTEA (+ det_score/quality/blob_hash/created_at) a full
+    /// `Face` fetch hydrates, and pushes the caller filter into SQL instead of
+    /// filtering in Rust. See benches/ROUND14.md §Q1.
+    async fn face_boxes_for_file(
+        &self,
+        file_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Vec<FaceBox>, DomainError>;
     async fn delete_faces_for_file(&self, file_id: Uuid) -> Result<(), DomainError>;
     async fn faces_for_user(&self, user_id: Uuid) -> Result<Vec<Face>, DomainError>;
     /// Faces previously computed for any file sharing this content hash —

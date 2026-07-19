@@ -1,6 +1,6 @@
 use axum::{
     extract::{FromRequestParts, Request, State},
-    http::{HeaderMap, StatusCode, header, request::Parts},
+    http::{StatusCode, header, request::Parts},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -163,11 +163,17 @@ impl IntoResponse for AuthError {
 /// then the cookie fallback.
 pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     mut request: Request,
     next: Next,
 ) -> Result<Response, AuthError> {
-    let auth_header = headers
+    // Borrow the Authorization header straight from the request instead of
+    // taking axum's `HeaderMap` extractor, which clones the whole map (~2
+    // allocs) on every authenticated request purely to read it
+    // (benches/ROUND14.md §A4). The borrow is dead by the time each arm
+    // reaches `request.extensions_mut()` / `next.run(request)` (NLL), so no
+    // owned copy is needed.
+    let auth_header = request
+        .headers()
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok());
 
@@ -186,9 +192,14 @@ pub async fn auth_middleware(
                                 "Token validated successfully for user: {}",
                                 claims.username
                             );
-                            let user_id = Uuid::parse_str(&claims.sub).map_err(|_| {
-                                AuthError::InvalidToken("Invalid user ID in token".to_string())
-                            })?;
+                            // Pre-parsed at decode time (benches/ROUND14.md §A3);
+                            // nil only for a malformed sub, which we reject as before.
+                            let user_id = claims.sub_id;
+                            if user_id.is_nil() {
+                                return Err(AuthError::InvalidToken(
+                                    "Invalid user ID in token".to_string(),
+                                ));
+                            }
                             // A cryptographically valid token must not outlive the
                             // account: re-check the live record so deactivation,
                             // deletion and demotion take effect within the flags-cache
@@ -296,19 +307,23 @@ pub async fn auth_middleware(
         use crate::interfaces::api::cookie_auth;
 
         if let Some(token_str) =
-            cookie_auth::extract_cookie_value(&headers, cookie_auth::ACCESS_COOKIE)
+            cookie_auth::extract_cookie_str(request.headers(), cookie_auth::ACCESS_COOKIE)
             && !token_str.is_empty()
         {
             tracing::debug!("Processing cookie-based authentication");
 
             if let Some(auth_service) = state.auth_service.as_ref() {
                 let token_service = &auth_service.token_service;
-                match token_service.validate_token(&token_str) {
+                match token_service.validate_token(token_str) {
                     Ok(claims) => {
                         tracing::debug!("Cookie token validated for user: {}", claims.username);
-                        let user_id = Uuid::parse_str(&claims.sub).map_err(|_| {
-                            AuthError::InvalidToken("Invalid user ID in token".to_string())
-                        })?;
+                        // Pre-parsed at decode time (benches/ROUND14.md §A3).
+                        let user_id = claims.sub_id;
+                        if user_id.is_nil() {
+                            return Err(AuthError::InvalidToken(
+                                "Invalid user ID in token".to_string(),
+                            ));
+                        }
                         // Same live-account re-check as the Bearer path. On
                         // revocation we fall through (rather than erroring) so the
                         // browser receives the standard 401 and redirects to

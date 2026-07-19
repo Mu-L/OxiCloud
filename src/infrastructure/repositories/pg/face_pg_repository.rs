@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::application::ports::face_ports::FaceRepository;
 use crate::common::errors::DomainError;
-use crate::domain::entities::face::{BoundingBox, Face, Person};
+use crate::domain::entities::face::{BoundingBox, Face, FaceBox, Person};
 
 /// Row shape for `faces.faces` selects (avoids `clippy::type_complexity`).
 type FaceRow = (
@@ -182,14 +182,31 @@ impl FaceRepository for FacePgRepository {
         Ok(())
     }
 
-    async fn faces_for_file(&self, file_id: Uuid) -> Result<Vec<Face>, DomainError> {
-        let sql = format!("SELECT {FACE_COLS} FROM faces.faces WHERE file_id = $1");
-        let rows: Vec<FaceRow> = sqlx::query_as(&sql)
-            .bind(file_id)
-            .fetch_all(self.pool.as_ref())
-            .await
-            .map_err(|e| db_err("faces_for_file", e))?;
-        Ok(rows.into_iter().map(row_to_face).collect())
+    async fn face_boxes_for_file(
+        &self,
+        file_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Vec<FaceBox>, DomainError> {
+        // Narrow projection: the lightbox needs only (id, person_id, bbox), so
+        // the 2 KiB embedding BYTEA + 6 unused columns stay in the DB and the
+        // caller filter runs in SQL (idx_faces_file drives it) rather than in
+        // Rust after a full-row fetch. See benches/ROUND14.md §Q1.
+        let rows: Vec<(Uuid, Option<Uuid>, Vec<f32>)> = sqlx::query_as(
+            "SELECT id, person_id, bbox FROM faces.faces WHERE file_id = $1 AND user_id = $2",
+        )
+        .bind(file_id)
+        .bind(user_id)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| db_err("face_boxes_for_file", e))?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, person_id, bbox)| FaceBox {
+                id,
+                person_id,
+                bbox: BoundingBox::from_slice(&bbox),
+            })
+            .collect())
     }
 
     async fn delete_faces_for_file(&self, file_id: Uuid) -> Result<(), DomainError> {

@@ -201,6 +201,12 @@ async function loadDict(locale: string): Promise<Dict> {
 	return dicts[locale];
 }
 
+/** Shared frozen empty params for the no-interpolation call forms, so the
+ * ubiquitous `t(key)` / `t(key, 'fallback')` don't each allocate a throwaway
+ * `{}` (t() is the hottest UI function — ~10× per row). Never mutated, so a
+ * single shared instance is safe. See benches/ROUND14.md §F1. */
+const EMPTY_PARAMS: Record<string, unknown> = Object.freeze({});
+
 /**
  * Translate a key.
  *  - `t(key)` / `t(key, params)` — interpolation params object.
@@ -209,11 +215,11 @@ async function loadDict(locale: string): Promise<Dict> {
  */
 export function t(
 	key: string,
-	paramsOrFallback: string | Record<string, unknown> = {},
+	paramsOrFallback: string | Record<string, unknown> = EMPTY_PARAMS,
 	fallbackArg?: string
 ): string {
 	const isStringForm = typeof paramsOrFallback === 'string';
-	const params = isStringForm ? {} : paramsOrFallback;
+	const params = isStringForm ? EMPTY_PARAMS : paramsOrFallback;
 	const fallback = isStringForm ? paramsOrFallback : (fallbackArg ?? null);
 
 	const localeData = dicts[store.locale];

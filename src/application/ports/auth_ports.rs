@@ -37,6 +37,13 @@ pub trait PasswordHasherPort: Send + Sync + 'static {
 pub struct TokenClaims {
     /// Subject identifier (user ID)
     pub sub: String,
+    /// `sub` pre-parsed to a `Uuid` at decode time so the auth middleware
+    /// reads it as a `Copy` on every request instead of re-parsing the
+    /// 36-char string per request — even on validation-cache hits, which
+    /// return the same `Arc<TokenClaims>` (benches/ROUND14.md §A3). Nil only
+    /// if a verified token somehow carried a non-UUID `sub` (unreachable for
+    /// tokens we sign); the middleware rejects nil defensively.
+    pub sub_id: Uuid,
     /// Expiration timestamp (seconds since Unix epoch)
     pub exp: i64,
     /// Issued at timestamp (seconds since Unix epoch)

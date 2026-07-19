@@ -57,7 +57,14 @@
 			raw.map((it) => [it.resource.id, { date: it.favorited_at } satisfies ItemContext])
 		)
 	);
-	const favoriteIds = $derived(new SvelteSet(items.map((i) => i.id)));
+	// Persistent reactive set, updated in place per page (add the fresh page's
+	// ids; clear on reset) instead of rebuilding a brand-new SvelteSet over the
+	// whole accumulated list on every infinite-scroll page — that was O(N²)
+	// across a drain and, being a new instance each page, invalidated every
+	// mounted star reader. Every item on this page is a favorite, and removed
+	// items are no longer rendered, so the set only needs to be a superset of
+	// the displayed ids (benches/ROUND14.md §F2, mirrors recent's shipped shape).
+	const favoriteIds = new SvelteSet<string>();
 
 	const groupBys: GroupByDef[] = [
 		{ key: '', label: t('files.name', 'Name'), orderBy: 'name', icon: 'arrow-up-a-z' },
@@ -106,6 +113,10 @@
 				resourceTypes: ['file', 'folder']
 			});
 			raw = reset ? page.items : [...raw, ...page.items];
+			// Keep the persistent favoriteIds set in sync incrementally: clear on
+			// reset, then add only this page's ids (benches/ROUND14.md §F2).
+			if (reset) favoriteIds.clear();
+			for (const it of page.items) favoriteIds.add(it.resource.id);
 			cursor = page.next_cursor;
 			void owners.resolve(page.items.map((i) => i.resource.created_by));
 		} catch (e) {
@@ -148,6 +159,7 @@
 		try {
 			await removeFavorite(kind, item.id);
 			raw = raw.filter((i) => i.resource.id !== item.id);
+			favoriteIds.delete(item.id);
 		} catch (e) {
 			errorToast(e);
 		}

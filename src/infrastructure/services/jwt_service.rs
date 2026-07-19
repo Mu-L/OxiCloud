@@ -49,7 +49,14 @@ struct JwtClaims {
 
 impl From<JwtClaims> for TokenClaims {
     fn from(claims: JwtClaims) -> Self {
+        // Pre-parse the subject once at decode time (amortized over the
+        // validation-cache TTL) so the auth middleware reads a `Copy` instead
+        // of re-parsing the 36-char string per request. A verified token we
+        // signed always carries a UUID `sub`; nil is a safe sentinel the
+        // middleware rejects. See benches/ROUND14.md §A3.
+        let sub_id = uuid::Uuid::parse_str(&claims.sub).unwrap_or_else(|_| uuid::Uuid::nil());
         TokenClaims {
+            sub_id,
             sub: claims.sub,
             exp: claims.exp,
             iat: claims.iat,

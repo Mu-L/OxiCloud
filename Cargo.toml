@@ -354,6 +354,24 @@ name = "bench_micro_allocs"
 path = "examples/bench_micro_allocs.rs"
 required-features = ["bench"]
 
+# Round-14 battery ────────────────────────────────────────────────────────────
+
+# Round-14 query-shape pack — lightbox face-box narrow projection (drop the
+# 2 KiB embedding BYTEA + 6 unused columns; push the caller filter into SQL),
+# music public-playlist N+1 fold, contact-listing vcard over-fetch (needs Postgres).
+[[example]]
+name = "bench_round14_queries"
+path = "examples/bench_round14_queries.rs"
+required-features = ["bench"]
+
+# Round-14 CPU/alloc micro-pack — cookie borrow-only extract, auth HeaderMap
+# clone removal, sub→Uuid pre-parse, CalDAV per-event emit (rfc2822 stack
+# render + reused href/etag buffers), search ASCII case-fold. No Postgres.
+[[example]]
+name = "bench_round14_micro"
+path = "examples/bench_round14_micro.rs"
+required-features = ["bench"]
+
 # Round-13 battery ────────────────────────────────────────────────────────────
 
 # Round-13 HTTP micro-pack — duplicate /api TraceLayer removal, borrow-only

@@ -151,6 +151,7 @@ fn section_identity(iters: u64) {
     });
     let new_claims = Arc::new(TokenClaims {
         sub: "6a11f8a2-14a5-4f8a-9d55-3e3c8a2b9a01".into(),
+        sub_id: uuid::Uuid::parse_str("6a11f8a2-14a5-4f8a-9d55-3e3c8a2b9a01").unwrap(),
         exp: 4_102_444_800,
         iat: 1_700_000_000,
         jti: uuid::Uuid::nil().to_string(),

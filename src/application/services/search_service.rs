@@ -146,20 +146,55 @@ pub fn build_search_results_cache(
 ///
 /// `query_lower` **must** already be lowercased by the caller so that the
 /// allocation happens once per search, not once per result.
+///
+/// The overwhelmingly common all-ASCII filename takes an allocation-free
+/// ASCII case-fold fast path — `name.to_lowercase()` (full Unicode) is pure
+/// waste there, and it ran once *per result row* (and per keystroke on the
+/// suggest path). Non-ASCII names fall back to the exact Unicode-lowercase
+/// comparison, so behavior is unchanged (for ASCII, lowercasing preserves
+/// length, so the `contains` length ratio is identical). See benches/ROUND14.md §A2.
 fn compute_relevance(name: &str, query_lower: &str) -> u32 {
-    let name_lower = name.to_lowercase();
-
-    if name_lower == query_lower {
-        100
-    } else if name_lower.starts_with(query_lower) {
-        80
-    } else if name_lower.contains(query_lower) {
-        // Bonus for shorter names (more specific match)
-        let ratio = query_lower.len() as f64 / name_lower.len() as f64;
-        50 + (ratio * 20.0) as u32
+    if name.is_ascii() {
+        let (nb, qb) = (name.as_bytes(), query_lower.as_bytes());
+        if nb.eq_ignore_ascii_case(qb) {
+            100
+        } else if nb.len() >= qb.len() && nb[..qb.len()].eq_ignore_ascii_case(qb) {
+            80
+        } else if ascii_ci_contains(nb, qb) {
+            // Bonus for shorter names (more specific match). ASCII lowercase
+            // preserves length, so `name.len()` == the old `name_lower.len()`.
+            let ratio = query_lower.len() as f64 / name.len() as f64;
+            50 + (ratio * 20.0) as u32
+        } else {
+            0
+        }
     } else {
-        0
+        let name_lower = name.to_lowercase();
+        if name_lower == query_lower {
+            100
+        } else if name_lower.starts_with(query_lower) {
+            80
+        } else if name_lower.contains(query_lower) {
+            let ratio = query_lower.len() as f64 / name_lower.len() as f64;
+            50 + (ratio * 20.0) as u32
+        } else {
+            0
+        }
     }
+}
+
+/// ASCII case-insensitive substring test — the allocation-free equivalent of
+/// `haystack_lower.contains(needle_lower)` when both are ASCII.
+fn ascii_ci_contains(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle))
 }
 
 /// Max content-index candidates fetched per search. Hydration re-filters

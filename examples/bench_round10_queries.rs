@@ -707,15 +707,22 @@ async fn section_save_faces(pool: &Arc<PgPool>, passes: usize) {
     })
     .await;
 
-    // Gate: batch write round-trips identically (row content check).
+    // Gate: batch write round-trips identically (row content check). Read the
+    // probe row back with a direct full-column SELECT — the repo's narrow
+    // `face_boxes_for_file` (ROUND14 §Q1) no longer returns embedding/quality/
+    // blob_hash, so this section fetches them itself to keep the gate intact.
     let probe = make_faces(3);
     repo.save_faces(&probe).await.unwrap();
-    let stored = repo.faces_for_file(s.file).await.unwrap();
-    let got = stored.iter().find(|f| f.id == probe[1].id).expect("stored");
-    assert_eq!(got.bbox.to_array(), probe[1].bbox.to_array());
-    assert_eq!(got.embedding.len(), probe[1].embedding.len());
-    assert_eq!(got.quality, probe[1].quality);
-    assert_eq!(got.blob_hash, probe[1].blob_hash);
+    let (bbox, embedding, quality, blob_hash): (Vec<f32>, Vec<u8>, Option<f32>, Option<String>) =
+        sqlx::query_as("SELECT bbox, embedding, quality, blob_hash FROM faces.faces WHERE id = $1")
+            .bind(probe[1].id)
+            .fetch_one(pool.as_ref())
+            .await
+            .expect("stored");
+    assert_eq!(bbox, probe[1].bbox.to_array());
+    assert_eq!(embedding.len() / 4, probe[1].embedding.len());
+    assert_eq!(quality, probe[1].quality);
+    assert_eq!(blob_hash, probe[1].blob_hash);
 
     println!(
         "    30-face image: BEFORE loop {before_ms:.3} ms → AFTER UNNEST {after_ms:.3} ms  ({:.1}x)",

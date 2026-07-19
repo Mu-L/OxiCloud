@@ -1,6 +1,6 @@
 use axum::{
     extract::{Request, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -70,13 +70,16 @@ impl IntoResponse for NextcloudAuthError {
 
 pub async fn basic_auth_middleware(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     mut request: Request,
     next: Next,
 ) -> Result<Response, NextcloudAuthError> {
     tracing::debug!("[NC] {} {}", request.method(), request.uri());
 
-    let auth_header = headers
+    // Borrow the Authorization header directly rather than cloning the whole
+    // HeaderMap per NC sync request; the borrow ends at `parse_basic_auth`
+    // below, before any request mutation (benches/ROUND14.md §A4).
+    let auth_header = request
+        .headers()
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| {
