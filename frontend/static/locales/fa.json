@@ -1153,7 +1153,8 @@
     "save": "ذخیره",
     "search": "جست‌و‌جو",
     "yes": "بله",
-    "saving": "در حال ذخیره…"
+    "saving": "در حال ذخیره…",
+    "deleting": "در حال حذف…"
   },
   "device": {
     "continue": "ادامه",
@@ -1206,10 +1207,51 @@
   },
   "drive": {
     "read_only_banner": {
-      "title": "This drive is read-only",
-      "title_named": "Drive \"{{name}}\" is read-only",
-      "body": "Uploads, edits, deletes, renames, sharing and membership changes are refused. Reads and downloads keep working. Contact an administrator to un-freeze the drive.",
-      "aria": "This drive is read-only"
-    }
+      "title": "این دیسک فقط‌خواندنی است",
+      "title_named": "دیسک «{{name}}» فقط‌خواندنی است",
+      "body": "بارگذاری، ویرایش، حذف، تغییر نام، اشتراک‌گذاری و تغییرات عضویت رد می‌شوند. خواندن و دانلود همچنان کار می‌کنند. برای رفع انجماد دیسک با مدیر تماس بگیرید.",
+      "aria": "این دیسک فقط‌خواندنی است"
+    },
+    "back_to_files": "بازگشت به فایل‌ها",
+    "danger_zone": "منطقه خطر",
+    "delete": "حذف دیسک",
+    "delete_confirm": "دیسک «{{name}}» حذف شود؟ این عمل قابل بازگشت نیست — دیسک باید خالی باشد وگرنه سرور رد می‌کند.",
+    "delete_hint": "حذف دیسک آن را برای همیشه حذف می‌کند. دیسک باید خالی باشد (بدون فایل یا پوشه فعال) قبل از حذف.",
+    "deleted": "دیسک حذف شد.",
+    "field": {
+      "created": "ایجاد شده در",
+      "default": "پیش‌فرض",
+      "default_yes": "این دیسک اصلی شماست",
+      "id": "شناسه",
+      "kind": "نوع",
+      "updated": "آخرین به‌روزرسانی"
+    },
+    "info": "اطلاعات دیسک",
+    "kind_personal": "دیسک شخصی",
+    "kind_shared": "دیسک اشتراکی",
+    "manage_members": "مدیریت اعضا",
+    "members": "اعضا",
+    "members_empty": "بدون عضو.",
+    "not_found_body": "این دیسک وجود ندارد یا دسترسی به آن ندارید.",
+    "not_found_title": "دیسک یافت نشد",
+    "policies": "قوانین",
+    "policies_help": "قوانینی که مدیر OxiCloud برای این دیسک تنظیم کرده است. فقط مدیران می‌توانند آن‌ها را تغییر دهند؛ شما وضعیت فعلی را می‌بینید.",
+    "quota": "سهمیه",
+    "rename": "تغییر نام دیسک",
+    "role": {
+      "commenter": "مفسر",
+      "contributor": "مشارکت‌کننده",
+      "editor": "ویرایشگر",
+      "owner": "مالک",
+      "viewer": "بیننده"
+    },
+    "storage": "ذخیره‌سازی",
+    "usage": "مصرف",
+    "used": "استفاده‌شده",
+    "members_personal_immutable": "دیسک‌های شخصی عضویت ثابتی با یک مالک واحد دارند."
+  },
+  "group": {
+    "members_empty": "بدون عضو",
+    "member_count": "{{n}} عضو"
   }
 }

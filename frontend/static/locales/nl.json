@@ -1153,7 +1153,8 @@
     "save": "Opslaan",
     "search": "Zoeken",
     "yes": "Ja",
-    "saving": "Opslaan…"
+    "saving": "Opslaan…",
+    "deleting": "Verwijderen…"
   },
   "device": {
     "continue": "Doorgaan",
@@ -1206,10 +1207,51 @@
   },
   "drive": {
     "read_only_banner": {
-      "title": "Deze Drive is alleen-lezen",
-      "title_named": "Drive \"{{name}}\" is alleen-lezen",
-      "body": "Uploads, bewerkingen, verwijderingen, hernoemingen, delen en lidmaatschapswijzigingen worden geweigerd. Lezen en downloaden blijven werken. Neem contact op met een beheerder om de Drive te ontdooien.",
-      "aria": "Deze Drive is alleen-lezen"
-    }
+      "title": "Deze schijf is alleen-lezen",
+      "title_named": "Schijf \"{{name}}\" is alleen-lezen",
+      "body": "Uploads, bewerkingen, verwijderingen, hernoemingen, delen en lidmaatschapswijzigingen worden geweigerd. Lezen en downloaden blijven werken. Neem contact op met een beheerder om de schijf te ontdooien.",
+      "aria": "Deze schijf is alleen-lezen"
+    },
+    "back_to_files": "Terug naar Bestanden",
+    "danger_zone": "Gevarenzone",
+    "delete": "Schijf verwijderen",
+    "delete_confirm": "Schijf \"{{name}}\" verwijderen? Dit kan niet ongedaan worden gemaakt — de schijf moet leeg zijn, anders weigert de server.",
+    "delete_hint": "Een schijf verwijderen is definitief. De schijf moet leeg zijn (geen actieve bestanden of mappen) voordat verwijderen is toegestaan.",
+    "deleted": "Schijf verwijderd.",
+    "field": {
+      "created": "Aangemaakt",
+      "default": "Standaard",
+      "default_yes": "Dit is je hoofdschijf",
+      "id": "Identificatie",
+      "kind": "Type",
+      "updated": "Laatst bijgewerkt"
+    },
+    "info": "Schijfinfo",
+    "kind_personal": "Persoonlijke schijf",
+    "kind_shared": "Gedeelde schijf",
+    "manage_members": "Leden beheren",
+    "members": "Leden",
+    "members_empty": "Geen leden.",
+    "not_found_body": "Deze schijf bestaat niet of je hebt er geen toegang toe.",
+    "not_found_title": "Schijf niet gevonden",
+    "policies": "Regels",
+    "policies_help": "Regels die een OxiCloud-beheerder voor deze schijf heeft ingesteld. Alleen beheerders kunnen ze wijzigen; je ziet de huidige status.",
+    "quota": "Quota",
+    "rename": "Schijf hernoemen",
+    "role": {
+      "commenter": "Reageerder",
+      "contributor": "Bijdrager",
+      "editor": "Bewerker",
+      "owner": "Eigenaar",
+      "viewer": "Kijker"
+    },
+    "storage": "Opslag",
+    "usage": "Gebruik",
+    "used": "Gebruikt",
+    "members_personal_immutable": "Persoonlijke schijven hebben een vaste eigenaarsstructuur met één eigenaar."
+  },
+  "group": {
+    "members_empty": "Geen leden",
+    "member_count": "{{n}} leden"
   }
 }

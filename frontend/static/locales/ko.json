@@ -1449,7 +1449,8 @@
     "retry": "다시 시도",
     "select": "선택",
     "select_all": "전체 선택",
-    "dismiss": "닫기"
+    "dismiss": "닫기",
+    "deleting": "삭제 중…"
   },
   "device": {
     "continue": "계속",
@@ -1607,6 +1608,47 @@
       "title_named": "드라이브 \"{{name}}\"은(는) 읽기 전용입니다",
       "body": "업로드, 편집, 삭제, 이름 바꾸기, 공유 및 멤버십 변경이 거부됩니다. 읽기와 다운로드는 계속 작동합니다. 드라이브 동결을 해제하려면 관리자에게 문의하세요.",
       "aria": "이 드라이브는 읽기 전용입니다"
-    }
+    },
+    "back_to_files": "파일로 돌아가기",
+    "danger_zone": "위험 구역",
+    "delete": "드라이브 삭제",
+    "delete_confirm": "드라이브 \"{{name}}\"을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다 — 드라이브가 비어 있어야 하며, 그렇지 않으면 서버가 거부합니다.",
+    "delete_hint": "드라이브를 삭제하면 영구적으로 제거됩니다. 삭제하려면 드라이브가 비어 있어야 합니다(활성 파일이나 폴더 없음).",
+    "deleted": "드라이브가 삭제되었습니다.",
+    "field": {
+      "created": "생성일",
+      "default": "기본",
+      "default_yes": "내 기본 드라이브입니다",
+      "id": "식별자",
+      "kind": "종류",
+      "updated": "최근 업데이트"
+    },
+    "info": "드라이브 정보",
+    "kind_personal": "개인 드라이브",
+    "kind_shared": "공유 드라이브",
+    "manage_members": "구성원 관리",
+    "members": "구성원",
+    "members_empty": "구성원 없음.",
+    "not_found_body": "이 드라이브는 존재하지 않거나 접근 권한이 없습니다.",
+    "not_found_title": "드라이브를 찾을 수 없음",
+    "policies": "정책",
+    "policies_help": "OxiCloud 관리자가 이 드라이브에 설정한 규칙입니다. 관리자만 변경할 수 있으며, 현재 상태가 표시됩니다.",
+    "quota": "할당량",
+    "rename": "드라이브 이름 변경",
+    "role": {
+      "commenter": "댓글 작성자",
+      "contributor": "기여자",
+      "editor": "편집자",
+      "owner": "소유자",
+      "viewer": "뷰어"
+    },
+    "storage": "저장소",
+    "usage": "사용량",
+    "used": "사용됨",
+    "members_personal_immutable": "개인 드라이브는 단일 소유자로 고정된 구성원 구조를 가집니다."
+  },
+  "group": {
+    "members_empty": "구성원 없음",
+    "member_count": "구성원 {{n}}명"
   }
 }

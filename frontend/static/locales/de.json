@@ -1153,7 +1153,8 @@
     "save": "Speichern",
     "search": "Suchen",
     "yes": "Ja",
-    "saving": "Speichern…"
+    "saving": "Speichern…",
+    "deleting": "Löschen…"
   },
   "device": {
     "continue": "Weiter",
@@ -1206,10 +1207,51 @@
   },
   "drive": {
     "read_only_banner": {
-      "title": "Dieses Drive ist schreibgeschützt",
-      "title_named": "Das Drive „{{name}}\" ist schreibgeschützt",
+      "title": "Dieses Laufwerk ist schreibgeschützt",
+      "title_named": "Das Laufwerk „{{name}}\" ist schreibgeschützt",
       "body": "Uploads, Bearbeitungen, Löschungen, Umbenennungen, Freigaben und Mitgliedschaftsänderungen werden abgelehnt. Lesen und Herunterladen funktionieren weiterhin. Wende dich an einen Administrator, um die Sperre aufzuheben.",
-      "aria": "Dieses Drive ist schreibgeschützt"
-    }
+      "aria": "Dieses Laufwerk ist schreibgeschützt"
+    },
+    "back_to_files": "Zurück zu Dateien",
+    "danger_zone": "Gefahrenzone",
+    "delete": "Laufwerk löschen",
+    "delete_confirm": "Laufwerk „{{name}}“ löschen? Dies kann nicht rückgängig gemacht werden — das Laufwerk muss leer sein, sonst weist der Server es zurück.",
+    "delete_hint": "Ein Laufwerk zu löschen ist endgültig. Das Laufwerk muss leer sein (keine aktiven Dateien oder Ordner), bevor gelöscht werden kann.",
+    "deleted": "Laufwerk gelöscht.",
+    "field": {
+      "created": "Erstellt",
+      "default": "Standard",
+      "default_yes": "Dies ist dein Standard-Laufwerk",
+      "id": "Kennung",
+      "kind": "Typ",
+      "updated": "Zuletzt aktualisiert"
+    },
+    "info": "Laufwerksinfo",
+    "kind_personal": "Persönliches Laufwerk",
+    "kind_shared": "Gemeinsames Laufwerk",
+    "manage_members": "Mitglieder verwalten",
+    "members": "Mitglieder",
+    "members_empty": "Keine Mitglieder.",
+    "not_found_body": "Dieses Laufwerk existiert nicht oder du hast keinen Zugriff.",
+    "not_found_title": "Laufwerk nicht gefunden",
+    "policies": "Regeln",
+    "policies_help": "Regeln, die ein OxiCloud-Administrator für dieses Laufwerk gesetzt hat. Nur Administratoren können sie ändern; du siehst den aktuellen Stand.",
+    "quota": "Kontingent",
+    "rename": "Laufwerk umbenennen",
+    "role": {
+      "commenter": "Kommentator",
+      "contributor": "Mitwirkender",
+      "editor": "Bearbeiter",
+      "owner": "Eigentümer",
+      "viewer": "Betrachter"
+    },
+    "storage": "Speicher",
+    "usage": "Nutzung",
+    "used": "Belegt",
+    "members_personal_immutable": "Persönliche Laufwerke haben eine feste Einzeleigentümer-Mitgliedschaft."
+  },
+  "group": {
+    "members_empty": "Keine Mitglieder",
+    "member_count": "{{n}} Mitglieder"
   }
 }

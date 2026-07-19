@@ -1153,7 +1153,8 @@
     "save": "حفظ",
     "search": "بحث",
     "yes": "نعم",
-    "saving": "جارٍ الحفظ…"
+    "saving": "جارٍ الحفظ…",
+    "deleting": "جارٍ الحذف…"
   },
   "device": {
     "continue": "متابعة",
@@ -1206,10 +1207,51 @@
   },
   "drive": {
     "read_only_banner": {
-      "title": "This drive is read-only",
-      "title_named": "Drive \"{{name}}\" is read-only",
-      "body": "Uploads, edits, deletes, renames, sharing and membership changes are refused. Reads and downloads keep working. Contact an administrator to un-freeze the drive.",
-      "aria": "This drive is read-only"
-    }
+      "title": "هذا القرص للقراءة فقط",
+      "title_named": "القرص «{{name}}» للقراءة فقط",
+      "body": "يُرفض الرفع والتحرير والحذف وإعادة التسمية والمشاركة وتغييرات العضوية. القراءة والتنزيل يعملان بشكل طبيعي. تواصل مع مسؤول لإلغاء تجميد القرص.",
+      "aria": "هذا القرص للقراءة فقط"
+    },
+    "back_to_files": "العودة إلى الملفات",
+    "danger_zone": "منطقة الخطر",
+    "delete": "حذف القرص",
+    "delete_confirm": "حذف القرص «{{name}}»؟ لا يمكن التراجع عن هذا الإجراء — يجب أن يكون القرص فارغًا، وإلا سيرفض الخادم.",
+    "delete_hint": "حذف القرص يزيله بشكل دائم. يجب أن يكون القرص فارغًا (بدون ملفات أو مجلدات نشطة) قبل السماح بالحذف.",
+    "deleted": "تم حذف القرص.",
+    "field": {
+      "created": "أُنشئ في",
+      "default": "افتراضي",
+      "default_yes": "هذا هو قرصك الرئيسي",
+      "id": "المُعرِّف",
+      "kind": "النوع",
+      "updated": "آخر تحديث"
+    },
+    "info": "معلومات القرص",
+    "kind_personal": "قرص شخصي",
+    "kind_shared": "قرص مشترك",
+    "manage_members": "إدارة الأعضاء",
+    "members": "الأعضاء",
+    "members_empty": "لا يوجد أعضاء.",
+    "not_found_body": "هذا القرص غير موجود أو ليس لديك صلاحية الوصول إليه.",
+    "not_found_title": "القرص غير موجود",
+    "policies": "القواعد",
+    "policies_help": "قواعد ضبطها مسؤول OxiCloud لهذا القرص. المسؤولون فقط يمكنهم تغييرها؛ أنت ترى الحالة الحالية.",
+    "quota": "الحصة",
+    "rename": "إعادة تسمية القرص",
+    "role": {
+      "commenter": "معلّق",
+      "contributor": "مساهم",
+      "editor": "محرّر",
+      "owner": "المالك",
+      "viewer": "مشاهد"
+    },
+    "storage": "التخزين",
+    "usage": "الاستخدام",
+    "used": "المُستخدَم",
+    "members_personal_immutable": "الأقراص الشخصية لها عضوية ثابتة بمالك واحد."
+  },
+  "group": {
+    "members_empty": "لا يوجد أعضاء",
+    "member_count": "{{n}} أعضاء"
   }
 }

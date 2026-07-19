@@ -1468,7 +1468,8 @@
     "select_all": "Select all",
     "yes": "Yes",
     "dismiss": "Dismiss",
-    "saving": "Saving…"
+    "saving": "Saving…",
+    "deleting": "Deleting…"
   },
   "device": {
     "approve": "Approve",
@@ -1611,6 +1612,47 @@
       "title_named": "Drive \"{{name}}\" is read-only",
       "body": "Uploads, edits, deletes, renames, sharing and membership changes are refused. Reads and downloads keep working. Contact an administrator to un-freeze the drive.",
       "aria": "This drive is read-only"
-    }
+    },
+    "back_to_files": "Back to Files",
+    "danger_zone": "Danger zone",
+    "delete": "Delete drive",
+    "delete_confirm": "Delete drive \"{{name}}\"? This cannot be undone — the drive must be empty first or the server will refuse.",
+    "delete_hint": "Deleting a drive removes it permanently. The drive must be empty (no live files or folders) before delete is allowed.",
+    "deleted": "Drive deleted.",
+    "field": {
+      "created": "Created",
+      "default": "Default",
+      "default_yes": "This is your home drive",
+      "id": "Identifier",
+      "kind": "Kind",
+      "updated": "Last updated"
+    },
+    "info": "Drive info",
+    "kind_personal": "Personal drive",
+    "kind_shared": "Shared drive",
+    "manage_members": "Manage members",
+    "members": "Members",
+    "members_empty": "No members.",
+    "not_found_body": "This drive doesn't exist or you don't have access to it.",
+    "not_found_title": "Drive not found",
+    "policies": "Policies",
+    "policies_help": "Rules an OxiCloud admin has set for this drive. Only admins can change them; you're seeing the current state.",
+    "quota": "Quota",
+    "rename": "Rename drive",
+    "role": {
+      "commenter": "Commenter",
+      "contributor": "Contributor",
+      "editor": "Editor",
+      "owner": "Owner",
+      "viewer": "Viewer"
+    },
+    "storage": "Storage",
+    "usage": "Usage",
+    "used": "Used",
+    "members_personal_immutable": "Personal drives have a fixed single-owner membership."
+  },
+  "group": {
+    "members_empty": "No members",
+    "member_count": "{{n}} members"
   }
 }

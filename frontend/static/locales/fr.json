@@ -1153,7 +1153,8 @@
     "save": "Enregistrer",
     "search": "Rechercher",
     "yes": "Oui",
-    "saving": "Enregistrement…"
+    "saving": "Enregistrement…",
+    "deleting": "Suppression…"
   },
   "device": {
     "continue": "Continuer",
@@ -1206,10 +1207,51 @@
   },
   "drive": {
     "read_only_banner": {
-      "title": "Ce Drive est en lecture seule",
-      "title_named": "Le Drive « {{name}} » est en lecture seule",
-      "body": "Les téléversements, éditions, suppressions, renommages, partages et changements d'appartenance sont refusés. La lecture et le téléchargement continuent de fonctionner. Contactez un administrateur pour lever le gel du Drive.",
-      "aria": "Ce Drive est en lecture seule"
-    }
+      "title": "Ce disque est en lecture seule",
+      "title_named": "Le disque « {{name}} » est en lecture seule",
+      "body": "Les téléversements, éditions, suppressions, renommages, partages et changements d'appartenance sont refusés. La lecture et le téléchargement continuent de fonctionner. Contactez un administrateur pour lever le gel du disque.",
+      "aria": "Ce disque est en lecture seule"
+    },
+    "back_to_files": "Retour aux fichiers",
+    "danger_zone": "Zone dangereuse",
+    "delete": "Supprimer le disque",
+    "delete_confirm": "Supprimer le disque « {{name}} » ? Cette action est irréversible — le disque doit être vide, sinon le serveur refusera.",
+    "delete_hint": "La suppression d’un disque est définitive. Le disque doit être vide (aucun fichier ni dossier actif) avant la suppression.",
+    "deleted": "Disque supprimé.",
+    "field": {
+      "created": "Créé le",
+      "default": "Par défaut",
+      "default_yes": "C’est votre disque principal",
+      "id": "Identifiant",
+      "kind": "Type",
+      "updated": "Dernière mise à jour"
+    },
+    "info": "Informations du disque",
+    "kind_personal": "Disque personnel",
+    "kind_shared": "Disque partagé",
+    "manage_members": "Gérer les membres",
+    "members": "Membres",
+    "members_empty": "Aucun membre.",
+    "not_found_body": "Ce disque n’existe pas ou vous n’y avez pas accès.",
+    "not_found_title": "Disque introuvable",
+    "policies": "Règles",
+    "policies_help": "Règles définies par un administrateur d’OxiCloud pour ce disque. Seuls les administrateurs peuvent les modifier ; vous voyez l’état actuel.",
+    "quota": "Quota",
+    "rename": "Renommer le disque",
+    "role": {
+      "commenter": "Commentateur",
+      "contributor": "Contributeur",
+      "editor": "Éditeur",
+      "owner": "Propriétaire",
+      "viewer": "Lecteur"
+    },
+    "storage": "Stockage",
+    "usage": "Utilisation",
+    "used": "Utilisé",
+    "members_personal_immutable": "Les disques personnels ont une appartenance figée à un unique propriétaire."
+  },
+  "group": {
+    "members_empty": "Aucun membre",
+    "member_count": "{{n}} membres"
   }
 }

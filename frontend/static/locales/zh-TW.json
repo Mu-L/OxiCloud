@@ -1153,7 +1153,8 @@
     "save": "儲存",
     "search": "搜尋",
     "yes": "有",
-    "saving": "儲存中…"
+    "saving": "儲存中…",
+    "deleting": "刪除中…"
   },
   "device": {
     "continue": "繼續",
@@ -1210,6 +1211,47 @@
       "title_named": "雲端硬碟「{{name}}」為唯讀",
       "body": "上傳、編輯、刪除、重新命名、分享和成員變更均被拒絕。讀取和下載仍可正常使用。請聯絡管理員解凍此雲端硬碟。",
       "aria": "此雲端硬碟為唯讀"
-    }
+    },
+    "back_to_files": "返回檔案",
+    "danger_zone": "危險操作",
+    "delete": "刪除雲端硬碟",
+    "delete_confirm": "刪除雲端硬碟「{{name}}」?此操作無法復原 — 雲端硬碟必須為空,否則伺服器將拒絕。",
+    "delete_hint": "刪除雲端硬碟會永久移除。刪除前雲端硬碟必須為空(沒有作用中的檔案或資料夾)。",
+    "deleted": "雲端硬碟已刪除。",
+    "field": {
+      "created": "建立時間",
+      "default": "預設",
+      "default_yes": "這是您的主要雲端硬碟",
+      "id": "識別碼",
+      "kind": "類型",
+      "updated": "最後更新"
+    },
+    "info": "雲端硬碟資訊",
+    "kind_personal": "個人雲端硬碟",
+    "kind_shared": "共用雲端硬碟",
+    "manage_members": "管理成員",
+    "members": "成員",
+    "members_empty": "尚無成員。",
+    "not_found_body": "此雲端硬碟不存在或您無權存取。",
+    "not_found_title": "找不到雲端硬碟",
+    "policies": "規則",
+    "policies_help": "OxiCloud 管理員為此雲端硬碟設定的規則。只有管理員可以變更;您看到的是目前狀態。",
+    "quota": "配額",
+    "rename": "重新命名雲端硬碟",
+    "role": {
+      "commenter": "評論者",
+      "contributor": "貢獻者",
+      "editor": "編輯者",
+      "owner": "擁有者",
+      "viewer": "檢視者"
+    },
+    "storage": "儲存",
+    "usage": "使用量",
+    "used": "已使用",
+    "members_personal_immutable": "個人雲端硬碟的成員關係固定為單一擁有者。"
+  },
+  "group": {
+    "members_empty": "無成員",
+    "member_count": "{{n}} 位成員"
   }
 }

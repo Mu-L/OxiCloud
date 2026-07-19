@@ -1153,7 +1153,8 @@
     "save": "保存",
     "search": "搜索",
     "yes": "有",
-    "saving": "保存中…"
+    "saving": "保存中…",
+    "deleting": "删除中…"
   },
   "device": {
     "continue": "继续",
@@ -1210,6 +1211,47 @@
       "title_named": "云盘 \"{{name}}\" 为只读",
       "body": "上传、编辑、删除、重命名、分享和成员变更均被拒绝。读取和下载仍可正常使用。请联系管理员解冻此云盘。",
       "aria": "此云盘为只读"
-    }
+    },
+    "back_to_files": "返回文件",
+    "danger_zone": "危险操作",
+    "delete": "删除云盘",
+    "delete_confirm": "删除云盘\"{{name}}\"?此操作无法撤销 — 云盘必须为空,否则服务器将拒绝。",
+    "delete_hint": "删除云盘会永久移除。删除前云盘必须为空(没有活动的文件或文件夹)。",
+    "deleted": "云盘已删除。",
+    "field": {
+      "created": "创建时间",
+      "default": "默认",
+      "default_yes": "这是你的主云盘",
+      "id": "标识符",
+      "kind": "类型",
+      "updated": "最近更新"
+    },
+    "info": "云盘信息",
+    "kind_personal": "个人云盘",
+    "kind_shared": "共享云盘",
+    "manage_members": "管理成员",
+    "members": "成员",
+    "members_empty": "暂无成员。",
+    "not_found_body": "此云盘不存在或你无权访问。",
+    "not_found_title": "未找到云盘",
+    "policies": "策略",
+    "policies_help": "OxiCloud 管理员为此云盘设置的规则。只有管理员可以更改;你看到的是当前状态。",
+    "quota": "配额",
+    "rename": "重命名云盘",
+    "role": {
+      "commenter": "评论者",
+      "contributor": "贡献者",
+      "editor": "编辑者",
+      "owner": "所有者",
+      "viewer": "查看者"
+    },
+    "storage": "存储",
+    "usage": "使用情况",
+    "used": "已用",
+    "members_personal_immutable": "个人云盘的成员关系固定为单一所有者。"
+  },
+  "group": {
+    "members_empty": "无成员",
+    "member_count": "{{n}} 名成员"
   }
 }

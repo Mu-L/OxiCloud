@@ -594,13 +594,51 @@ sweep interval (default 10 min).
 
 Changing `drives.quota_bytes` (shared drives only) is **not** in
 the drive `owner` role bundle (§4). It requires the tenant-level
-OxiCloud admin role (`auth.users.role = 'admin'`), checked at
-`PATCH /api/admin/drives/{id}/quota`. Drive owners can rename,
-edit policies, and manage members; they cannot self-grant
-capacity.
+OxiCloud admin role (`auth.users.role = 'admin'`), checked in the
+handler for `PATCH /api/drives/{id}/quota` (the admin gate lives
+on the endpoint even though the URL follows the `/api/drives/`
+prefix — the taxonomy split is by capability, not by URL depth).
+Drive owners can rename, edit policies, and manage members; they
+cannot self-grant capacity.
 
 Changing `auth.users.storage_quota_bytes` (the personal envelope)
 is likewise admin-only — same surface and audit pattern as today.
+
+Shape of the mutation:
+
+- **Request** — `PATCH /api/drives/{id}/quota` with body
+  `{ "quota_bytes": <int|null> }`. `null` (and defensively `0` or
+  any negative value the service normalises via `filter(|&q| q > 0)`)
+  means unlimited on the wire; the DB persists NULL and the
+  write-time gate short-circuits accordingly.
+- **Response** — `200 { "quota_bytes": <persisted_int|null> }`,
+  read back from the `RETURNING` clause so the admin sees the
+  authoritative value without a follow-up GET.
+- **Personal drives refuse with `400`** and a hint pointing the
+  operator at the user-envelope endpoint — the per-drive column
+  is always NULL for personal drives (§7 sum-of-personal invariant).
+- **Non-admin callers see `404`** (anti-enumeration; a `403` would
+  leak the endpoint's existence).
+- **Soft-shrink** — a new cap **may be set below the drive's
+  current `used_bytes`**. Existing content is untouched; the
+  write-time gate simply keeps refusing new writes until usage
+  drops back under. Matches xfs/ext4 `xfs_quota` and `edquota`
+  semantics. Owners can still delete files under an over-quota
+  state.
+- **Cache invalidation** mirrors `update_policies`:
+  `default_drive_cache.invalidate_all()` +
+  `invalidate_readable_all()` — both caches embed the full
+  drive row (including `quota_bytes`) and would otherwise serve a
+  stale cap for the 30 s TTL. Blow-the-whole-cache is fine because
+  quota mutation is admin-rare.
+- **Frontend** — admin UI at `/admin` drives tab renders a
+  gauge-icon button on shared-drive rows (personal rows show a
+  placeholder). The button opens the shared `<QuotaEditor>`
+  component (`frontend/src/lib/components/QuotaEditor.svelte`),
+  which the user-envelope modal also reuses. Endpoint-specific
+  wire encoding (`0` for users, `null` for drives) stays in the
+  parent `onsave` callback so the shared component never leaks
+  the magic value.
 
 Why this seam matters:
 
@@ -617,8 +655,18 @@ Why this seam matters:
   through the admin, not the drive's group owners.
 
 Audit log emits `drive.quota_changed` (shared drives) and
-`user.quota_changed` (envelope) with `granted_by=<admin_user_id>`
-and the old/new values.
+`user.quota_changed` (envelope) with `by=<admin_user_id>`,
+`new_quota_bytes`, `used_bytes`, and an `over_quota` boolean
+that flags the soft-shrink case. Personal-drive rejections emit
+`drive.quota_change_rejected` with `reason =
+"personal_drive_uses_user_envelope"`.
+
+Regression coverage — `tests/api/drive_quota.hurl` Steps 12–26
+pin the endpoint end-to-end: admin raise/lower, `null`/`0`
+unlimited normalisation, non-admin 404, personal-drive 400 with
+"envelope" hint, and the soft-shrink cycle (quota < used → new
+uploads 507, delete succeeds, sweep drops used_bytes, still 507
+until admin raises the cap).
 
 #### Multiple personal drives — schema-ready, no public surface
 

@@ -1153,7 +1153,8 @@
     "save": "Salvar",
     "search": "Pesquisar",
     "yes": "Sim",
-    "saving": "Salvando…"
+    "saving": "Salvando…",
+    "deleting": "A eliminar…"
   },
   "device": {
     "continue": "Continuar",
@@ -1206,10 +1207,51 @@
   },
   "drive": {
     "read_only_banner": {
-      "title": "Este Drive é somente leitura",
-      "title_named": "O Drive \"{{name}}\" é somente leitura",
-      "body": "Envios, edições, exclusões, renomeações, compartilhamentos e mudanças de membros são recusados. Leitura e download continuam funcionando. Contate um administrador para descongelar o Drive.",
-      "aria": "Este Drive é somente leitura"
-    }
+      "title": "Esta unidade é somente leitura",
+      "title_named": "A unidade \"{{name}}\" é somente leitura",
+      "body": "Envios, edições, exclusões, renomeações, compartilhamentos e mudanças de membros são recusados. Leitura e download continuam funcionando. Contate um administrador para descongelar o unidade.",
+      "aria": "Este unidade é somente leitura"
+    },
+    "back_to_files": "Voltar aos Ficheiros",
+    "danger_zone": "Zona de perigo",
+    "delete": "Eliminar unidade",
+    "delete_confirm": "Eliminar a unidade «{{name}}»? Esta ação é irreversível — a unidade tem de estar vazia, ou o servidor recusará.",
+    "delete_hint": "Eliminar uma unidade remove-a permanentemente. A unidade tem de estar vazia (sem ficheiros nem pastas ativos) antes de poder ser eliminada.",
+    "deleted": "Unidade eliminada.",
+    "field": {
+      "created": "Criada",
+      "default": "Predefinida",
+      "default_yes": "Esta é a sua unidade principal",
+      "id": "Identificador",
+      "kind": "Tipo",
+      "updated": "Última atualização"
+    },
+    "info": "Informação da unidade",
+    "kind_personal": "Unidade pessoal",
+    "kind_shared": "Unidade partilhada",
+    "manage_members": "Gerir membros",
+    "members": "Membros",
+    "members_empty": "Sem membros.",
+    "not_found_body": "Esta unidade não existe ou não tem acesso a ela.",
+    "not_found_title": "Unidade não encontrada",
+    "policies": "Regras",
+    "policies_help": "Regras que um administrador do OxiCloud definiu para esta unidade. Apenas administradores podem alterá-las; está a ver o estado atual.",
+    "quota": "Quota",
+    "rename": "Renomear unidade",
+    "role": {
+      "commenter": "Comentador",
+      "contributor": "Contribuidor",
+      "editor": "Editor",
+      "owner": "Proprietário",
+      "viewer": "Leitor"
+    },
+    "storage": "Armazenamento",
+    "usage": "Utilização",
+    "used": "Utilizado",
+    "members_personal_immutable": "As unidades pessoais têm uma associação fixa a um único proprietário."
+  },
+  "group": {
+    "members_empty": "Sem membros",
+    "member_count": "{{n}} membros"
   }
 }

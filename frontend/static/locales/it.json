@@ -1153,7 +1153,8 @@
     "save": "Salva",
     "search": "Cerca",
     "yes": "Sì",
-    "saving": "Salvataggio…"
+    "saving": "Salvataggio…",
+    "deleting": "Eliminazione…"
   },
   "device": {
     "continue": "Continua",
@@ -1206,10 +1207,51 @@
   },
   "drive": {
     "read_only_banner": {
-      "title": "Questo Drive è in sola lettura",
-      "title_named": "Il Drive «{{name}}» è in sola lettura",
-      "body": "Caricamenti, modifiche, eliminazioni, rinominazioni, condivisioni e cambi di appartenenza sono rifiutati. Lettura e download continuano a funzionare. Contatta un amministratore per sbloccare il Drive.",
-      "aria": "Questo Drive è in sola lettura"
-    }
+      "title": "Questa unità è in sola lettura",
+      "title_named": "L'unità «{{name}}» è in sola lettura",
+      "body": "Caricamenti, modifiche, eliminazioni, rinominazioni, condivisioni e cambi di appartenenza sono rifiutati. Lettura e download continuano a funzionare. Contatta un amministratore per sbloccare il unità.",
+      "aria": "Questo unità è in sola lettura"
+    },
+    "back_to_files": "Torna a File",
+    "danger_zone": "Zona pericolosa",
+    "delete": "Elimina unità",
+    "delete_confirm": "Eliminare l'unità «{{name}}»? Operazione irreversibile — l'unità deve essere vuota, altrimenti il server la rifiuterà.",
+    "delete_hint": "Eliminare un'unità la rimuove definitivamente. L'unità deve essere vuota (nessun file o cartella attivo) prima dell'eliminazione.",
+    "deleted": "Unità eliminata.",
+    "field": {
+      "created": "Creata",
+      "default": "Predefinita",
+      "default_yes": "Questa è la tua unità principale",
+      "id": "Identificativo",
+      "kind": "Tipo",
+      "updated": "Ultimo aggiornamento"
+    },
+    "info": "Informazioni unità",
+    "kind_personal": "Unità personale",
+    "kind_shared": "Unità condivisa",
+    "manage_members": "Gestisci membri",
+    "members": "Membri",
+    "members_empty": "Nessun membro.",
+    "not_found_body": "Questa unità non esiste o non hai accesso ad essa.",
+    "not_found_title": "Unità non trovata",
+    "policies": "Regole",
+    "policies_help": "Regole impostate da un amministratore di OxiCloud per questa unità. Solo gli amministratori possono modificarle; stai vedendo lo stato attuale.",
+    "quota": "Quota",
+    "rename": "Rinomina unità",
+    "role": {
+      "commenter": "Commentatore",
+      "contributor": "Contributore",
+      "editor": "Editor",
+      "owner": "Proprietario",
+      "viewer": "Lettore"
+    },
+    "storage": "Archiviazione",
+    "usage": "Utilizzo",
+    "used": "Utilizzato",
+    "members_personal_immutable": "Le unità personali hanno un'appartenenza fissa con un unico proprietario."
+  },
+  "group": {
+    "members_empty": "Nessun membro",
+    "member_count": "{{n}} membri"
   }
 }

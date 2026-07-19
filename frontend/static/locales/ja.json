@@ -1153,7 +1153,8 @@
     "save": "保存",
     "search": "検索",
     "yes": "あり",
-    "saving": "保存中…"
+    "saving": "保存中…",
+    "deleting": "削除中…"
   },
   "device": {
     "continue": "続行",
@@ -1210,6 +1211,47 @@
       "title_named": "ドライブ「{{name}}」は読み取り専用です",
       "body": "アップロード、編集、削除、名前変更、共有、メンバーシップの変更は拒否されます。読み取りとダウンロードは引き続き機能します。ドライブの凍結を解除するには管理者にお問い合わせください。",
       "aria": "このドライブは読み取り専用です"
-    }
+    },
+    "back_to_files": "ファイルに戻る",
+    "danger_zone": "危険な操作",
+    "delete": "ドライブを削除",
+    "delete_confirm": "ドライブ「{{name}}」を削除しますか?この操作は取り消せません — ドライブが空でない場合、サーバーは拒否します。",
+    "delete_hint": "ドライブを削除すると完全に削除されます。削除するにはドライブが空(有効なファイルやフォルダーがない状態)である必要があります。",
+    "deleted": "ドライブを削除しました。",
+    "field": {
+      "created": "作成日",
+      "default": "デフォルト",
+      "default_yes": "これはあなたのホームドライブです",
+      "id": "識別子",
+      "kind": "種類",
+      "updated": "最終更新"
+    },
+    "info": "ドライブ情報",
+    "kind_personal": "個人ドライブ",
+    "kind_shared": "共有ドライブ",
+    "manage_members": "メンバーを管理",
+    "members": "メンバー",
+    "members_empty": "メンバーはいません。",
+    "not_found_body": "このドライブは存在しないか、アクセス権がありません。",
+    "not_found_title": "ドライブが見つかりません",
+    "policies": "ポリシー",
+    "policies_help": "OxiCloud 管理者がこのドライブに設定したルールです。変更できるのは管理者のみで、現在の状態を表示しています。",
+    "quota": "クォータ",
+    "rename": "ドライブ名を変更",
+    "role": {
+      "commenter": "コメンター",
+      "contributor": "投稿者",
+      "editor": "編集者",
+      "owner": "所有者",
+      "viewer": "閲覧者"
+    },
+    "storage": "ストレージ",
+    "usage": "使用量",
+    "used": "使用済み",
+    "members_personal_immutable": "個人ドライブは所有者が固定された単独メンバーシップです。"
+  },
+  "group": {
+    "members_empty": "メンバーなし",
+    "member_count": "{{n}} 人のメンバー"
   }
 }

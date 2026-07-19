@@ -388,7 +388,7 @@
 				{#if !canManageMembers && drive.kind === 'personal'}
 					<p class="muted members__personal-note">
 						{t(
-							'drive.members.personal_immutable',
+							'drive.members_personal_immutable',
 							'Personal drives have a fixed single-owner membership.'
 						)}
 					</p>

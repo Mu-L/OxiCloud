@@ -1153,7 +1153,8 @@
     "save": "Zapisz",
     "search": "Szukaj",
     "yes": "Tak",
-    "saving": "Zapisywanie…"
+    "saving": "Zapisywanie…",
+    "deleting": "Usuwanie…"
   },
   "device": {
     "continue": "Kontynuuj",
@@ -1210,6 +1211,47 @@
       "title_named": "Dysk \"{{name}}\" jest tylko do odczytu",
       "body": "Wysyłki, edycje, usunięcia, zmiany nazw, udostępnianie i zmiany członkostwa są odrzucane. Odczyt i pobieranie nadal działają. Skontaktuj się z administratorem, aby odblokować Dysk.",
       "aria": "Ten Dysk jest tylko do odczytu"
-    }
+    },
+    "back_to_files": "Powrót do plików",
+    "danger_zone": "Strefa niebezpieczna",
+    "delete": "Usuń dysk",
+    "delete_confirm": "Usunąć dysk „{{name}}\"? Tej operacji nie można cofnąć — dysk musi być pusty, w przeciwnym razie serwer odmówi.",
+    "delete_hint": "Usunięcie dysku jest trwałe. Dysk musi być pusty (bez aktywnych plików ani folderów) przed usunięciem.",
+    "deleted": "Dysk usunięty.",
+    "field": {
+      "created": "Utworzono",
+      "default": "Domyślny",
+      "default_yes": "To jest twój dysk domowy",
+      "id": "Identyfikator",
+      "kind": "Typ",
+      "updated": "Ostatnia aktualizacja"
+    },
+    "info": "Informacje o dysku",
+    "kind_personal": "Dysk osobisty",
+    "kind_shared": "Dysk współdzielony",
+    "manage_members": "Zarządzaj członkami",
+    "members": "Członkowie",
+    "members_empty": "Brak członków.",
+    "not_found_body": "Ten dysk nie istnieje lub nie masz do niego dostępu.",
+    "not_found_title": "Dysk nie znaleziony",
+    "policies": "Reguły",
+    "policies_help": "Reguły ustawione przez administratora OxiCloud dla tego dysku. Tylko administratorzy mogą je zmieniać; widzisz obecny stan.",
+    "quota": "Limit",
+    "rename": "Zmień nazwę dysku",
+    "role": {
+      "commenter": "Komentujący",
+      "contributor": "Współpracownik",
+      "editor": "Edytor",
+      "owner": "Właściciel",
+      "viewer": "Obserwator"
+    },
+    "storage": "Pamięć",
+    "usage": "Użycie",
+    "used": "Wykorzystano",
+    "members_personal_immutable": "Osobiste dyski mają stałe członkostwo z jednym właścicielem."
+  },
+  "group": {
+    "members_empty": "Brak członków",
+    "member_count": "{{n}} członków"
   }
 }

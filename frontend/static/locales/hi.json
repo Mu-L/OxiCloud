@@ -1153,7 +1153,8 @@
     "save": "सहेजें",
     "search": "खोजें",
     "yes": "हाँ",
-    "saving": "सहेजा जा रहा है…"
+    "saving": "सहेजा जा रहा है…",
+    "deleting": "हटाया जा रहा है…"
   },
   "device": {
     "continue": "आगे बढ़ें",
@@ -1206,10 +1207,51 @@
   },
   "drive": {
     "read_only_banner": {
-      "title": "This drive is read-only",
-      "title_named": "Drive \"{{name}}\" is read-only",
-      "body": "Uploads, edits, deletes, renames, sharing and membership changes are refused. Reads and downloads keep working. Contact an administrator to un-freeze the drive.",
-      "aria": "This drive is read-only"
-    }
+      "title": "यह ड्राइव केवल पढ़ने योग्य है",
+      "title_named": "ड्राइव \"{{name}}\" केवल पढ़ने योग्य है",
+      "body": "अपलोड, संपादन, हटाना, नाम बदलना, साझा करना और सदस्यता परिवर्तन अस्वीकार कर दिए जाते हैं। पढ़ना और डाउनलोड करना काम करते रहते हैं। ड्राइव को अनफ़्रीज़ करने के लिए किसी व्यवस्थापक से संपर्क करें।",
+      "aria": "यह ड्राइव केवल पढ़ने योग्य है"
+    },
+    "back_to_files": "फ़ाइलों पर वापस जाएँ",
+    "danger_zone": "खतरे का क्षेत्र",
+    "delete": "ड्राइव हटाएँ",
+    "delete_confirm": "ड्राइव \"{{name}}\" हटाएँ? यह क्रिया वापस नहीं की जा सकती — ड्राइव खाली होनी चाहिए, अन्यथा सर्वर मना कर देगा।",
+    "delete_hint": "ड्राइव हटाने से वह स्थायी रूप से हट जाती है। हटाने से पहले ड्राइव खाली होनी चाहिए (कोई सक्रिय फ़ाइल या फ़ोल्डर नहीं)।",
+    "deleted": "ड्राइव हटा दी गई।",
+    "field": {
+      "created": "बनाया गया",
+      "default": "डिफ़ॉल्ट",
+      "default_yes": "यह आपकी होम ड्राइव है",
+      "id": "पहचानकर्ता",
+      "kind": "प्रकार",
+      "updated": "अंतिम अद्यतन"
+    },
+    "info": "ड्राइव जानकारी",
+    "kind_personal": "व्यक्तिगत ड्राइव",
+    "kind_shared": "साझा ड्राइव",
+    "manage_members": "सदस्य प्रबंधित करें",
+    "members": "सदस्य",
+    "members_empty": "कोई सदस्य नहीं।",
+    "not_found_body": "यह ड्राइव मौजूद नहीं है या आपके पास इसका एक्सेस नहीं है।",
+    "not_found_title": "ड्राइव नहीं मिली",
+    "policies": "नीतियाँ",
+    "policies_help": "OxiCloud व्यवस्थापक ने इस ड्राइव के लिए जो नियम सेट किए हैं। केवल व्यवस्थापक ही उन्हें बदल सकते हैं; आप वर्तमान स्थिति देख रहे हैं।",
+    "quota": "कोटा",
+    "rename": "ड्राइव का नाम बदलें",
+    "role": {
+      "commenter": "टिप्पणीकर्ता",
+      "contributor": "योगदानकर्ता",
+      "editor": "संपादक",
+      "owner": "स्वामी",
+      "viewer": "दर्शक"
+    },
+    "storage": "स्टोरेज",
+    "usage": "उपयोग",
+    "used": "उपयोग किया गया",
+    "members_personal_immutable": "व्यक्तिगत ड्राइव में एकल स्वामी वाली स्थायी सदस्यता होती है।"
+  },
+  "group": {
+    "members_empty": "कोई सदस्य नहीं",
+    "member_count": "{{n}} सदस्य"
   }
 }
