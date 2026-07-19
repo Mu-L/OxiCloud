@@ -592,6 +592,121 @@
 		e.preventDefault();
 		toggleSelectAll();
 	}
+
+	// ── Rubberband (marquee) selection ────────────────────────────────────────
+	//
+	// Click-and-drag on empty space draws a translucent rectangle; every row
+	// whose bounding box intersects the rectangle joins the selection. Behavior:
+	//   * Plain drag → replace the current selection with what the box covers.
+	//   * Shift+drag → add to the current selection (union).
+	//   * ⌘/Ctrl+drag → toggle: rows inside the box flip their state relative
+	//     to the pre-drag baseline.
+	//
+	// The gesture only starts when the mousedown lands on truly empty space —
+	// mousedowns on `.file-item`, links, buttons, or the checkbox pass through
+	// to their own handlers. This keeps row-drag (files browser) uncontested.
+	//
+	// Intersections are computed via `getBoundingClientRect()` on every mouse
+	// move, so this only sees VISIBLE rows — which is what a user in a
+	// virtualized list expects anyway ("I can't rubberband something I can't
+	// see"). No auto-scroll during drag today; the user can release, scroll,
+	// then start another gesture with Shift held.
+	let rlRoot = $state<HTMLElement | null>(null);
+	let rubberband = $state<{
+		startX: number;
+		startY: number;
+		x: number;
+		y: number;
+		w: number;
+		h: number;
+		mode: 'replace' | 'add' | 'toggle';
+		baseline: Set<string>;
+	} | null>(null);
+
+	function onRootPointerDown(e: PointerEvent) {
+		if (!selectable) return;
+		if (e.button !== 0) return; // Left button only
+		const target = e.target as HTMLElement | null;
+		if (!target || !rlRoot) return;
+		// Ignore mousedowns on interactive descendants or on a row.
+		if (
+			target.closest('.file-item') ||
+			target.closest('a, button, input, select, textarea, [role="menuitem"]')
+		) {
+			return;
+		}
+		// Ignore when the click landed on the sticky header (bar + breadcrumb).
+		if (target.closest('.page-sticky-header')) return;
+
+		const rect = rlRoot.getBoundingClientRect();
+		const startX = e.clientX - rect.left;
+		const startY = e.clientY - rect.top;
+		const mode: 'replace' | 'add' | 'toggle' = e.shiftKey
+			? 'add'
+			: isToggleModifier(e)
+				? 'toggle'
+				: 'replace';
+		const baseline = mode === 'replace' ? new Set<string>() : new Set(selected);
+
+		rubberband = { startX, startY, x: startX, y: startY, w: 0, h: 0, mode, baseline };
+
+		if (mode === 'replace') selected.clear();
+
+		// preventDefault so text under the drag doesn't get selected as we drag.
+		e.preventDefault();
+		window.addEventListener('pointermove', onRubberbandMove);
+		window.addEventListener('pointerup', onRubberbandUp, { once: true });
+	}
+
+	function onRubberbandMove(e: PointerEvent) {
+		if (!rubberband || !rlRoot) return;
+		const rect = rlRoot.getBoundingClientRect();
+		const curX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+		const curY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+		rubberband.x = Math.min(rubberband.startX, curX);
+		rubberband.y = Math.min(rubberband.startY, curY);
+		rubberband.w = Math.abs(curX - rubberband.startX);
+		rubberband.h = Math.abs(curY - rubberband.startY);
+		applyRubberbandSelection();
+	}
+
+	function onRubberbandUp() {
+		window.removeEventListener('pointermove', onRubberbandMove);
+		rubberband = null;
+	}
+
+	function applyRubberbandSelection() {
+		if (!rubberband || !rlRoot) return;
+		const rootRect = rlRoot.getBoundingClientRect();
+		// Absolute viewport rect of the current band.
+		const bandLeft = rootRect.left + rubberband.x;
+		const bandTop = rootRect.top + rubberband.y;
+		const bandRight = bandLeft + rubberband.w;
+		const bandBottom = bandTop + rubberband.h;
+
+		const rows = rlRoot.querySelectorAll<HTMLElement>('.file-item[data-item-id]');
+		const nextSelection = new Set(rubberband.baseline);
+		for (const row of rows) {
+			const id = row.dataset.itemId;
+			if (!id) continue;
+			const b = row.getBoundingClientRect();
+			const overlaps =
+				b.left < bandRight && b.right > bandLeft && b.top < bandBottom && b.bottom > bandTop;
+			if (overlaps) {
+				if (rubberband.mode === 'toggle') {
+					if (rubberband.baseline.has(id)) nextSelection.delete(id);
+					else nextSelection.add(id);
+				} else {
+					nextSelection.add(id);
+				}
+			}
+		}
+		// Rewrite the `selected` set in place — SvelteSet is reactive on
+		// per-key operations, so we only mutate the diff.
+		for (const id of selected) if (!nextSelection.has(id)) selected.delete(id);
+		for (const id of nextSelection) if (!selected.has(id)) selected.add(id);
+		onselectionchange?.(selected);
+	}
 	// `selectedItems` and the reap-stale effect below stay on the RAW
 	// items — selection persists across a display-filter toggle, and
 	// stale-selection cleanup only fires when items truly leave the
@@ -769,6 +884,7 @@
 		tabindex={onopen ? 0 : undefined}
 		aria-label={onopen ? item.name : undefined}
 		data-testid={item.name}
+		data-item-id={item.id}
 		title={showOwner ? ownerTitle(item) : undefined}
 		{draggable}
 		ondragstart={draggable && onitemdragstart ? (e) => onitemdragstart(e, item) : undefined}
@@ -948,6 +1064,9 @@
 <div
 	class="rl-root"
 	class:rl-root--drop-over={systemDropOver && enableSystemDrop}
+	class:rl-root--rubberbanding={rubberband !== null}
+	bind:this={rlRoot}
+	onpointerdown={onRootPointerDown}
 	ondragenter={onSystemDragEnter}
 	ondragover={onSystemDragOver}
 	ondragleave={onSystemDragLeave}
@@ -1103,6 +1222,19 @@
 		<div bind:this={sentinel} class="rl-sentinel" aria-hidden="true"></div>
 	</div>
 {/if}
+{#if rubberband}
+	<!-- Marquee selection rectangle. Positioned relative to `.rl-root`
+	     (which is `position: relative`); pointer-events off so the
+	     live pointermove handler on window still sees the drag. -->
+	<div
+		class="rl-rubberband"
+		style:left="{rubberband.x}px"
+		style:top="{rubberband.y}px"
+		style:width="{rubberband.w}px"
+		style:height="{rubberband.h}px"
+		aria-hidden="true"
+	></div>
+{/if}
 </div><!-- /.rl-root -->
 
 {#snippet listHeader()}
@@ -1187,6 +1319,25 @@
 		inset: 0;
 		border: 2px dashed var(--color-accent);
 		border-radius: var(--radius-md);
+		pointer-events: none;
+	}
+
+	/* ── Rubberband (marquee) selection ────────────────────────────
+	   Absolute overlay drawn while the user drags. Positioned inside
+	   `.rl-root`; the pointer events go to the window listener, so
+	   the rectangle itself is inert. `.rl-root--rubberbanding`
+	   suppresses text selection under the cursor so dragging over row
+	   text doesn't leave a highlighted mess behind. */
+	.rl-root--rubberbanding {
+		user-select: none;
+	}
+
+	.rl-rubberband {
+		position: absolute;
+		z-index: 5;
+		background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+		border: 1px solid var(--color-accent);
+		border-radius: var(--radius-sm);
 		pointer-events: none;
 	}
 
