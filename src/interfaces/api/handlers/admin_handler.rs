@@ -675,7 +675,16 @@ pub async fn get_dashboard_stats(
         .as_ref()
         .ok_or_else(|| AppError::internal_error("Database not available"))?;
 
-    // Use direct SQL for aggregated stats — more efficient than loading all users
+    // Use direct SQL for aggregated stats — more efficient than loading all users.
+    //
+    // Scope: internal users only (`is_external = false`). External
+    // accounts (grant-only magic-link / OCM recipients) have no
+    // storage envelope by construction (DB CHECK
+    // `users_external_no_storage`) and cannot be admin
+    // (`users_external_not_admin`), so they'd inflate `total_users`
+    // and `active_users` with rows that don't represent operational
+    // seats. The audit list (`/api/admin/users`) still shows every
+    // account; only the dashboard totals filter externals out.
     let stats_row = sqlx::query(
         r#"
         SELECT
@@ -687,6 +696,7 @@ pub async fn get_dashboard_stats(
             COUNT(*) FILTER (WHERE storage_quota_bytes > 0 AND storage_used_bytes > storage_quota_bytes * 0.8)::INT8 as users_over_80,
             COUNT(*) FILTER (WHERE storage_quota_bytes > 0 AND storage_used_bytes > storage_quota_bytes)::INT8 as users_over_quota
         FROM auth.users
+        WHERE is_external = false
         "#
     )
     .fetch_one(db_pool.as_ref())
