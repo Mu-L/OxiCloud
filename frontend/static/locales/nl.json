@@ -583,7 +583,8 @@
     "empty_hint": "Bestanden die je opent verschijnen hier",
     "empty_hidden_state": "{{n}} recent(e) item(s) verborgen door je voorkeur",
     "empty_hidden_hint": "Schakel \"Verborgen bestanden verbergen\" uit in je profiel om ze te zien.",
-    "loadMore": "Meer laden"
+    "loadMore": "Meer laden",
+    "remove_item": "Uit recent verwijderen"
   },
   "notifications": {
     "file_renamed": "Bestand hernoemd",

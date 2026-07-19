@@ -753,6 +753,11 @@
     position: static;
     width: 30px;
     height: 30px;
+    /* `margin: 0` overrides the legacy `.files-grid-view .file-item
+       .btn-action { margin-top: var(--space-1) }` rule further down —
+       inside the corner cluster the parent's `gap` handles spacing
+       and any per-child margin would misalign the pills. */
+    margin: 0;
     padding: 0;
     border: none;
     border-radius: var(--radius-full);
@@ -1188,6 +1193,11 @@
     color: var(--color-text-dark);
 }
 
+/* Legacy: a margin-top on `.btn-action` in grid view for the era when
+   these buttons flowed at the bottom of the card. Kept for any
+   free-standing use outside the corner cluster; reset inside
+   `.action-cell` (line ~745) so the broom / restore / delete pills
+   align with the kebab and star. */
 .files-grid-view .file-item .btn-action {
     margin-top: var(--space-1);
 }

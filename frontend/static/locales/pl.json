@@ -583,7 +583,8 @@
     "empty_hint": "Otwarte pliki pojawią się tutaj",
     "empty_hidden_state": "{{n}} ostatnich elementów ukrytych zgodnie z Twoją preferencją",
     "empty_hidden_hint": "Wyłącz \"Ukryj ukryte pliki\" w swoim profilu, aby je zobaczyć.",
-    "loadMore": "Załaduj więcej"
+    "loadMore": "Załaduj więcej",
+    "remove_item": "Usuń z ostatnich"
   },
   "notifications": {
     "file_renamed": "Zmieniono nazwę pliku",

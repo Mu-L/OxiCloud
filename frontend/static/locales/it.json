@@ -583,7 +583,8 @@
     "empty_hint": "I file che apri appariranno qui",
     "empty_hidden_state": "{{n}} elemento/i recente/i nascosto/i dalla tua preferenza",
     "empty_hidden_hint": "Disattiva \"Nascondi i file nascosti\" nel tuo profilo per vederli.",
-    "loadMore": "Carica altri"
+    "loadMore": "Carica altri",
+    "remove_item": "Rimuovi dai recenti"
   },
   "notifications": {
     "file_renamed": "File rinominato",

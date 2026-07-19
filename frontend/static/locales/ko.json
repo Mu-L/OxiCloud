@@ -717,7 +717,8 @@
     "empty_hidden_state": "설정에 따라 숨겨진 최근 항목 {{n}}개",
     "empty_hidden_hint": "프로필에서 \"숨겨진 파일 숨기기\"를 끄면 볼 수 있습니다.",
     "loadMore": "더 불러오기",
-    "confirm_clear": "최근 항목을 지우시겠습니까?"
+    "confirm_clear": "최근 항목을 지우시겠습니까?",
+    "remove_item": "최근에서 제거"
   },
   "notifications": {
     "file_renamed": "파일 이름이 변경되었습니다",

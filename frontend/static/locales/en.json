@@ -754,7 +754,8 @@
     "empty_hidden_state": "{{n}} recent item(s) hidden by your dotfile preference",
     "empty_hidden_hint": "Turn off \"Hide dotfiles\" in your profile to see them.",
     "loadMore": "Load more",
-    "confirm_clear": "Clear your recent items?"
+    "confirm_clear": "Clear your recent items?",
+    "remove_item": "Remove from recent"
   },
   "notifications": {
     "file_renamed": "File renamed",

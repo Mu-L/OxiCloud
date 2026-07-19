@@ -583,7 +583,8 @@
     "empty_hint": "Les fichiers que vous ouvrez apparaîtront ici",
     "empty_hidden_state": "{{n}} élément(s) récent(s) masqué(s) par votre préférence",
     "empty_hidden_hint": "Désactivez \"Masquer les fichiers\" dans votre profil pour les voir.",
-    "loadMore": "Charger plus"
+    "loadMore": "Charger plus",
+    "remove_item": "Retirer des récents"
   },
   "notifications": {
     "file_renamed": "Fichier renommé",

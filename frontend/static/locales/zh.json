@@ -583,7 +583,8 @@
     "empty_hint": "您打开的文件将显示在这里",
     "empty_hidden_state": "根据您的偏好隐藏了 {{n}} 个最近项目",
     "empty_hidden_hint": "在个人资料中关闭「隐藏隐藏文件」即可查看。",
-    "loadMore": "加载更多"
+    "loadMore": "加载更多",
+    "remove_item": "从最近使用中移除"
   },
   "batch": {
     "one_selected": "已选择 1 个项目",

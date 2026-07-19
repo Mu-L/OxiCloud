@@ -5,14 +5,16 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
-	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { primeContextPage } from '$lib/utils/listContext';
-	import { clearRecent, fetchRecentPage, type RecentResourceItem } from '$lib/api/endpoints/recent';
 	import {
-		addFavorite,
+		clearRecent,
+		fetchRecentPage,
+		removeFromRecent,
+		type RecentResourceItem
+	} from '$lib/api/endpoints/recent';
+	import {
 		dateBucket,
-		fetchFavoritesPage,
-		removeFavorite,
 		resolveOwnerName,
 		sizeBucket,
 		typeLabel
@@ -31,12 +33,10 @@
 	// `preferences.hideDotfiles` + `isDotfile` are read here only to
 	// derive `hiddenCount` for the empty-state message — the actual
 	// filter is inside ResourceList (gated on `showDotfileToggle`).
-	// `replaceSet` is from perf-round-6: `loadFavoriteIds` mutates
-	// the reactive SvelteSet in place instead of re-creating it.
 	import { preferences } from '$lib/stores/preferences.svelte';
 	import { isDotfile } from '$lib/utils/dotfileFilter';
-	import { replaceSet } from '$lib/utils/sets';
 	import { t } from '$lib/i18n/index.svelte';
+	import Icon from '$lib/icons/Icon.svelte';
 
 	let raw = $state<RecentResourceItem[]>([]);
 	let cursor = $state<string | undefined>(undefined);
@@ -45,9 +45,6 @@
 	let groupBy = $state('');
 	let reversed = $state(false);
 	const owners = useOwnerCache(resolveOwnerName);
-	// In-place reactive set — a star toggle skips the full-set copy and
-	// spares the other favorited rows' readers.
-	const favoriteIds = new SvelteSet<string>();
 
 	// Envelope shape: `accessed_at` → `ctx.date`, `updated_by` → `ctx.ownerId`
 	// (Recent's provenance semantic — "who touched this recently" — differs
@@ -62,7 +59,7 @@
 	const items = $derived(raw.map((it) => it.resource as FileItem | FolderItem));
 	// Persistent reactive map, primed per page in `load()` (benches/ROUND16.md §F2)
 	// instead of rebuilding a fresh Map that re-hashes the whole accumulated list
-	// on every infinite-scroll page. Mirrors the sibling `favoriteIds` SvelteSet.
+	// on every infinite-scroll page.
 	const contextMap = new SvelteMap<string, ItemContext>();
 	const hiddenCount = $derived(
 		preferences.hideDotfiles ? items.filter((i) => isDotfile(i.name)).length : 0
@@ -103,18 +100,6 @@
 			bucketOf: (item) => dateBucket(item.modified_at)
 		}
 	];
-
-	async function loadFavoriteIds() {
-		try {
-			const favs = await fetchFavoritesPage({ resourceTypes: ['file', 'folder'] });
-			replaceSet(
-				favoriteIds,
-				favs.items.map((f) => f.resource.id)
-			);
-		} catch {
-			// non-fatal — stars just default to off
-		}
-	}
 
 	// Recent defaults to most-recently-accessed first (accessed_at DESC).
 	async function load(reset = false, orderBy = 'accessed_at', rev = reversed) {
@@ -173,24 +158,32 @@
 		viewerOpen = true;
 	}
 
-	// Callback signature is `FileItem | FolderItem` (ResourceList
-	// hands raw items to `onfavorite` — the pre-migration
-	// `ResourceEntry` shape is gone). Set mutation is in-place per
-	// perf-round-6: 1 000 toggles @ N=5 000 dropped from 771.9 ms
-	// to 1.9 ms by skipping the full-set copy that every reader of
-	// `favoriteIds` used to see.
-	async function toggleFavorite(item: FileItem | FolderItem) {
-		const isFav = favoriteIds.has(item.id);
+	/**
+	 * Remove a single item from the caller's recent history. The
+	 * per-row "broom" affordance replaces the favorite-star that
+	 * existed here before — /recent is a history view, so surfacing
+	 * "forget this one" is more useful than "favorite this one"
+	 * (users go to the item's real home to favorite it).
+	 *
+	 * Optimistic: the row disappears immediately; if the DELETE
+	 * fails, we re-add it at its original position and toast the
+	 * error so the state stays honest.
+	 */
+	async function removeItem(item: FileItem | FolderItem) {
 		const kind = kindOf(item);
-		// Optimistic in-place toggle, reverted on failure.
-		if (isFav) favoriteIds.delete(item.id);
-		else favoriteIds.add(item.id);
+		const idx = raw.findIndex((it) => it.resource.id === item.id);
+		if (idx < 0) return;
+		const snapshot = raw[idx];
+		raw = raw.filter((it) => it.resource.id !== item.id);
+		contextMap.delete(item.id);
 		try {
-			if (isFav) await removeFavorite(kind, item.id);
-			else await addFavorite(kind, item.id);
+			await removeFromRecent(kind, item.id);
 		} catch (e) {
-			if (isFav) favoriteIds.add(item.id);
-			else favoriteIds.delete(item.id);
+			raw = [...raw.slice(0, idx), snapshot, ...raw.slice(idx)];
+			contextMap.set(item.id, {
+				date: snapshot.accessed_at,
+				ownerId: snapshot.resource.updated_by ?? null
+			});
 			errorToast(e);
 		}
 	}
@@ -325,7 +318,6 @@
 	}
 
 	onMount(() => {
-		void loadFavoriteIds();
 		void load(true);
 	});
 </script>
@@ -336,7 +328,6 @@
 	title={t('nav.recent', 'Recent')}
 	{items}
 	{contextMap}
-	{favoriteIds}
 	resolveOwnerName={(id) => owners.name(id)}
 	{loading}
 	{error}
@@ -354,7 +345,6 @@
 	hasMore={!!cursor}
 	onloadmore={() => load(false, orderByForGroup())}
 	onopen={open}
-	onfavorite={toggleFavorite}
 	showOwner
 	showPath
 	showDotfileToggle
@@ -396,6 +386,30 @@
 			data-testid="recent-batch-delete-btn"
 			onclick={() => batchDelete(sel)}>{t('common.delete', 'Delete')}</Button
 		>
+	{/snippet}
+	{#snippet itemActions(item)}
+		<!--
+			Per-row "broom" — remove this single item from the recent
+			history. Replaces the favorite star; on a history view a
+			"forget this one" affordance is more useful than a
+			favorite gesture. Grid view: the shared corner-cluster
+			CSS turns this into a 30x30 scrim pill sitting next to
+			the kebab in the top-right of the card. List view: same
+			`.btn-action` treatment as trash's Restore / Delete
+			buttons at the row's action-cell.
+		-->
+		<button
+			class="btn-action"
+			data-testid={`recent-remove-btn-${item.id}`}
+			title={t('recent.remove_item', 'Remove from recent')}
+			aria-label={t('recent.remove_item', 'Remove from recent')}
+			onclick={(e) => {
+				e.stopPropagation();
+				void removeItem(item);
+			}}
+		>
+			<Icon name="broom" />
+		</button>
 	{/snippet}
 </ResourceList>
 

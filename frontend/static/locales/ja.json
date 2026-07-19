@@ -583,7 +583,8 @@
     "empty_hint": "開いたファイルがここに表示されます",
     "empty_hidden_state": "設定により非表示になっている最近の項目が {{n}} 件あります",
     "empty_hidden_hint": "プロフィールで「非表示ファイルを隠す」をオフにすると表示されます。",
-    "loadMore": "さらに読み込む"
+    "loadMore": "さらに読み込む",
+    "remove_item": "最近使用したものから削除"
   },
   "notifications": {
     "file_renamed": "ファイル名を変更しました",
