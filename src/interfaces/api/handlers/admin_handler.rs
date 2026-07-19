@@ -754,9 +754,14 @@ pub async fn list_users(
     let limit = query.limit.unwrap_or(100).min(500);
     let offset = query.offset.unwrap_or(0);
 
+    // Admin surface must show *every* account for audit — grant-only
+    // magic-link / OCM recipients (is_external = true) included. The
+    // internal-only variant is used by system address book / sharee
+    // search, where surfacing externals would leak identities. See
+    // `auth_application_service::list_users` doc for the split.
     let users = auth
         .auth_application_service
-        .list_users(limit, offset)
+        .list_users_including_external(limit, offset)
         .await
         .map_err(|e| AppError::internal_error(format!("Failed to list users: {}", e)))?;
 

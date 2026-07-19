@@ -869,7 +869,9 @@
     "drive_error_name_required": "O nome da unidade é obrigatório.",
     "drive_error_owner_required": "Escolha um utilizador ou grupo como proprietário da unidade.",
     "create_drive": "Criar unidade partilhada",
-    "no_drives": "Ainda não existem unidades."
+    "no_drives": "Ainda não existem unidades.",
+    "external_user": "externo",
+    "external_user_hint": "Conta apenas por convite (magic-link ou OCM). Não pode ser administrador e não tem quota de armazenamento."
   },
   "profile": {
     "page_title": "Perfil",

@@ -852,7 +852,9 @@
     "drive_error_name_required": "云盘名称为必填项。",
     "drive_error_owner_required": "请选择用户或群组作为云盘所有者。",
     "create_drive": "创建共享云盘",
-    "no_drives": "暂无云盘。"
+    "no_drives": "暂无云盘。",
+    "external_user": "外部",
+    "external_user_hint": "仅邀请账户(magic-link 或 OCM)。不能作为管理员,也没有存储配额。"
   },
   "profile": {
     "page_title": "个人资料",

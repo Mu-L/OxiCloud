@@ -869,7 +869,9 @@
     "drive_error_name_required": "Имя диска обязательно.",
     "drive_error_owner_required": "Выберите пользователя или группу как владельца диска.",
     "create_drive": "Создать общий диск",
-    "no_drives": "Пока нет дисков."
+    "no_drives": "Пока нет дисков.",
+    "external_user": "внешний",
+    "external_user_hint": "Аккаунт только по приглашению (magic-link или OCM). Не может быть администратором и не имеет квоты хранилища."
   },
   "profile": {
     "page_title": "Профиль",

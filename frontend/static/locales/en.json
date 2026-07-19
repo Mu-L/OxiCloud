@@ -1166,7 +1166,9 @@
     "drive_error_name_required": "Drive name is required.",
     "drive_error_owner_required": "Pick a user or group as the drive owner.",
     "create_drive": "Create shared drive",
-    "no_drives": "No drives yet."
+    "no_drives": "No drives yet.",
+    "external_user": "external",
+    "external_user_hint": "Grant-only account (magic-link or OCM). Cannot be admin and has no storage envelope."
   },
   "profile": {
     "page_title": "Profile",

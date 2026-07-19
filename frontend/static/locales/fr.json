@@ -869,7 +869,9 @@
     "drive_error_name_required": "Le nom du disque est requis.",
     "drive_error_owner_required": "Choisissez un utilisateur ou un groupe comme propriétaire du disque.",
     "create_drive": "Créer un disque partagé",
-    "no_drives": "Aucun disque pour le moment."
+    "no_drives": "Aucun disque pour le moment.",
+    "external_user": "externe",
+    "external_user_hint": "Compte à accès par invitation (magic-link ou OCM). Ne peut pas être admin et n’a pas de quota de stockage."
   },
   "profile": {
     "page_title": "Profil",

@@ -869,7 +869,9 @@
     "drive_error_name_required": "اسم قرص مطلوب.",
     "drive_error_owner_required": "اختر مستخدمًا أو مجموعة كمالك للقرص.",
     "create_drive": "إنشاء قرص مشترك",
-    "no_drives": "لا توجد أقراص بعد."
+    "no_drives": "لا توجد أقراص بعد.",
+    "external_user": "خارجي",
+    "external_user_hint": "حساب بالدعوة فقط (magic-link أو OCM). لا يمكن أن يكون مسؤولًا ولا يمتلك حصة تخزين."
   },
   "profile": {
     "page_title": "الملف الشخصي",

@@ -869,7 +869,9 @@
     "drive_error_name_required": "ドライブ名は必須です。",
     "drive_error_owner_required": "ドライブの所有者としてユーザーまたはグループを選択してください。",
     "create_drive": "共有ドライブを作成",
-    "no_drives": "ドライブはまだありません。"
+    "no_drives": "ドライブはまだありません。",
+    "external_user": "外部",
+    "external_user_hint": "招待専用アカウント(マジックリンクまたは OCM)。管理者にはなれず、ストレージ枠を持ちません。"
   },
   "profile": {
     "page_title": "プロフィール",

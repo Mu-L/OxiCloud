@@ -869,7 +869,9 @@
     "drive_error_name_required": "Il nome dell'unità è obbligatorio.",
     "drive_error_owner_required": "Scegli un utente o un gruppo come proprietario dell'unità.",
     "create_drive": "Crea unità condivisa",
-    "no_drives": "Ancora nessuna unità."
+    "no_drives": "Ancora nessuna unità.",
+    "external_user": "esterno",
+    "external_user_hint": "Account solo su invito (magic-link o OCM). Non può essere amministratore e non ha un limite di archiviazione."
   },
   "profile": {
     "page_title": "Profilo",

@@ -2222,6 +2222,24 @@
 									{#if u.role === 'admin'}<Icon name="shield-alt" />{/if}
 									{u.role}
 								</span>
+								{#if u.is_external}
+									<!-- Origin flag, orthogonal to `role`. Grant-only
+									     accounts (magic-link / OCM) can never be admin
+									     (DB CHECK `users_external_not_admin`) so the two
+									     badges never collide in practice — but the
+									     "External" badge stacks after the role badge so a
+									     future rules change wouldn't hide either signal. -->
+									<span
+										class="badge badge--external"
+										title={t(
+											'admin.external_user_hint',
+											'Grant-only account (magic-link or OCM). Cannot be admin and has no storage envelope.'
+										)}
+									>
+										<Icon name="building-circle-xmark" />
+										{t('admin.external_user', 'external')}
+									</span>
+								{/if}
 							</td>
 							<td>
 								{#if isOidcUser(u)}
@@ -3447,6 +3465,17 @@
 	}
 
 	.badge--self {
+		margin-left: var(--space-1);
+		background: var(--color-warning-bg);
+		color: var(--color-warning-text);
+		text-transform: uppercase;
+	}
+
+	/* External / grant-only account marker. Sibling of `.badge--user`
+	   in the same cell so the two stack horizontally; the accent
+	   colour reuses `--color-warning-*` because "external" is the
+	   same "attention needed" family as "you". */
+	.badge--external {
 		margin-left: var(--space-1);
 		background: var(--color-warning-bg);
 		color: var(--color-warning-text);

@@ -869,7 +869,9 @@
     "drive_error_name_required": "Laufwerk-Name ist erforderlich.",
     "drive_error_owner_required": "Wähle einen Benutzer oder eine Gruppe als Eigentümer des Laufwerks.",
     "create_drive": "Gemeinsames Laufwerk erstellen",
-    "no_drives": "Noch keine Laufwerke."
+    "no_drives": "Noch keine Laufwerke.",
+    "external_user": "extern",
+    "external_user_hint": "Nur-Einladung-Konto (Magic-Link oder OCM). Kann kein Administrator sein und hat keinen Speicherumfang."
   },
   "profile": {
     "page_title": "Profil",

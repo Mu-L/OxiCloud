@@ -869,7 +869,9 @@
     "drive_error_name_required": "ड्राइव का नाम आवश्यक है।",
     "drive_error_owner_required": "ड्राइव के स्वामी के रूप में एक उपयोगकर्ता या समूह चुनें।",
     "create_drive": "साझा ड्राइव बनाएँ",
-    "no_drives": "अभी तक कोई ड्राइव नहीं।"
+    "no_drives": "अभी तक कोई ड्राइव नहीं।",
+    "external_user": "बाहरी",
+    "external_user_hint": "केवल-आमंत्रण खाता (magic-link या OCM). व्यवस्थापक नहीं हो सकता और कोई भंडारण कोटा नहीं है।"
   },
   "profile": {
     "page_title": "प्रोफ़ाइल",

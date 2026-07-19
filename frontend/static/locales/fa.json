@@ -852,7 +852,9 @@
     "drive_error_name_required": "نام دیسک الزامی است.",
     "drive_error_owner_required": "یک کاربر یا گروه به عنوان مالک دیسک انتخاب کنید.",
     "create_drive": "ایجاد دیسک اشتراکی",
-    "no_drives": "هنوز دیسکی وجود ندارد."
+    "no_drives": "هنوز دیسکی وجود ندارد.",
+    "external_user": "خارجی",
+    "external_user_hint": "حساب فقط با دعوت (magic-link یا OCM). نمی‌تواند مدیر باشد و سهمیه ذخیره‌سازی ندارد."
   },
   "profile": {
     "page_title": "پروفایل",

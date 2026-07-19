@@ -869,7 +869,9 @@
     "drive_error_name_required": "Schijfnaam is vereist.",
     "drive_error_owner_required": "Kies een gebruiker of groep als eigenaar van de schijf.",
     "create_drive": "Gedeelde schijf aanmaken",
-    "no_drives": "Nog geen schijven."
+    "no_drives": "Nog geen schijven.",
+    "external_user": "extern",
+    "external_user_hint": "Alleen-uitnodiging account (magic-link of OCM). Kan geen beheerder zijn en heeft geen opslagenveloppe."
   },
   "profile": {
     "page_title": "Profiel",

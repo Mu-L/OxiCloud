@@ -852,7 +852,9 @@
     "drive_error_name_required": "雲端硬碟名稱為必填。",
     "drive_error_owner_required": "請選擇一位使用者或群組作為雲端硬碟擁有者。",
     "create_drive": "建立共用雲端硬碟",
-    "no_drives": "尚無雲端硬碟。"
+    "no_drives": "尚無雲端硬碟。",
+    "external_user": "外部",
+    "external_user_hint": "僅邀請帳戶(magic-link 或 OCM)。無法作為管理員,亦無儲存配額。"
   },
   "profile": {
     "page_title": "個人資料",
