@@ -400,4 +400,14 @@
 		color: var(--color-danger-text);
 		font-weight: var(--weight-semibold);
 	}
+
+	/* Grid-corner action-cell layout + chip visuals now live in the
+	   shared `ported/resourceList.css`; every section using ResourceList
+	   picks them up. What stays here is only the trash-specific danger
+	   red on the "Delete permanently" button — `--color-error-text` is
+	   the right red-text token (the shared `.file-actions:hover` accent
+	   colour still lands on the plain `.btn-action` restore button). */
+	:global(.files-grid-view .file-item .action-cell .btn-action--delete:hover) {
+		color: var(--color-error-text);
+	}
 </style>
