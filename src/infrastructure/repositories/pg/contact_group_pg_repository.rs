@@ -218,7 +218,7 @@ impl ContactGroupRepository for ContactGroupPgRepository {
             )
         })?;
 
-        let mut contacts = Vec::new();
+        let mut contacts = Vec::with_capacity(rows.len());
         for row in &rows {
             let email_json: JsonValue = row.get("email");
             let phone_json: JsonValue = row.get("phone");

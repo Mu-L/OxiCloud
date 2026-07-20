@@ -465,11 +465,13 @@ fn write_trash_item_response<W: std::io::Write>(
             .map_err(|e| e.to_string())?;
     }
 
-    // d:getcontenttype
-    let content_type = if item.item_type == "folder" {
-        "httpd/unix-directory".to_string()
+    // d:getcontenttype — the folder constant is borrowed (`Cow::Borrowed`, 0
+    // allocs per trashed folder row); only the file branch (mime_guess) still
+    // allocates its owned String (ROUND16 §M1 `Cow<'static, str>` pattern).
+    let content_type: std::borrow::Cow<'static, str> = if item.item_type == "folder" {
+        std::borrow::Cow::Borrowed("httpd/unix-directory")
     } else {
-        mime_from_name(&item.name)
+        std::borrow::Cow::Owned(mime_from_name(&item.name))
     };
     write_text_element(xml, "d:getcontenttype", &content_type)?;
 

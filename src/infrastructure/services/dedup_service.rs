@@ -860,7 +860,12 @@ impl DedupService {
 
         let mut received: Vec<(String, u64)> = Vec::new();
         let mut new_rows: Vec<(String, i64)> = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
+        // Intra-request dedup set keyed on the raw 32-byte BLAKE3 digest
+        // (`[u8; 32]`, `Copy` — no per-distinct-chunk 64-byte `String` heap
+        // key), mirroring the streaming ingest loop (benches/ROUND17.md §D2).
+        // hex ↔ digest is bijective, so membership is identical to the old
+        // `HashSet<String>`.
+        let mut seen: HashSet<[u8; 32]> = HashSet::new();
 
         while let Some(frame) = frames.next().await {
             let data = frame?;
@@ -870,14 +875,21 @@ impl DedupService {
                     data.len()
                 )));
             }
-            let hash = blake3::hash(&data).to_hex().to_string();
-            received.push((hash.clone(), data.len() as u64));
-            if seen.insert(hash.clone()) {
-                let len = data.len() as i64;
+            let digest = blake3::hash(&data);
+            let hash = digest.to_hex().to_string();
+            let len = data.len();
+            if seen.insert(*digest.as_bytes()) {
                 self.backend
                     .put_blob_from_bytes_unsynced(&hash, data)
                     .await?;
-                new_rows.push((hash, len));
+                // First occurrence: `received` needs a copy, `new_rows` moves it.
+                received.push((hash.clone(), len as u64));
+                new_rows.push((hash, len as i64));
+            } else {
+                // Duplicate within this request — move the hex into `received`
+                // (no clone; the blob is already registered by its first
+                // occurrence). Same `received` sequence, input order preserved.
+                received.push((hash, len as u64));
             }
         }
 
@@ -1216,24 +1228,30 @@ impl DedupService {
             return Ok(());
         }
         let mut guard = state.lock().await;
-        let hashes: Vec<String> = batch.iter().map(|(h, _)| h.clone()).collect();
 
         // Pin-or-classify in one statement: rows that exist take this
         // session's reference NOW; hashes not returned don't exist and are
-        // ours to write.
-        let pinned: HashSet<String> = sqlx::query_scalar::<_, String>(
-            "UPDATE storage.blobs SET ref_count = ref_count + 1, orphaned_at = NULL
-              WHERE hash = ANY($1)
-              RETURNING hash",
-        )
-        .bind(&hashes)
-        .fetch_all(pool.as_ref())
-        .await
-        .map_err(|e| {
-            DomainError::internal_error("Dedup", format!("Failed to pin existing chunks: {e}"))
-        })?
-        .into_iter()
-        .collect();
+        // ours to write. Bind borrowed `&str`s — sqlx encodes `&[&str]` to
+        // `text[]` identically to the owned Strings the old `.clone()` built,
+        // so no per-chunk hash String is allocated just to run the query
+        // (the pattern favorites_pg_repository.rs:271 already uses). The
+        // borrow is scoped so it ends before `batch` is moved below.
+        let pinned: HashSet<String> = {
+            let hashes: Vec<&str> = batch.iter().map(|(h, _)| h.as_str()).collect();
+            sqlx::query_scalar::<_, String>(
+                "UPDATE storage.blobs SET ref_count = ref_count + 1, orphaned_at = NULL
+                  WHERE hash = ANY($1)
+                  RETURNING hash",
+            )
+            .bind(&hashes)
+            .fetch_all(pool.as_ref())
+            .await
+            .map_err(|e| {
+                DomainError::internal_error("Dedup", format!("Failed to pin existing chunks: {e}"))
+            })?
+            .into_iter()
+            .collect()
+        };
 
         let mut to_write: Vec<(String, Bytes)> = Vec::with_capacity(batch.len());
         for (hash, data) in batch {

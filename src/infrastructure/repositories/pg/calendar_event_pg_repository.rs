@@ -182,7 +182,7 @@ impl CalendarEventRepository for CalendarEventPgRepository {
             DomainError::database_error(format!("Failed to get events in time range: {}", e))
         })?;
 
-        let mut events = Vec::new();
+        let mut events = Vec::with_capacity(rows.len());
         for row in rows {
             let mut event = CalendarEvent::with_id(
                 row.get("id"),
@@ -288,7 +288,7 @@ impl CalendarEventRepository for CalendarEventPgRepository {
             DomainError::database_error(format!("Failed to get events by calendar: {}", e))
         })?;
 
-        let mut events = Vec::new();
+        let mut events = Vec::with_capacity(rows.len());
         for row in rows {
             let mut event = CalendarEvent::with_id(
                 row.get("id"),
@@ -341,7 +341,7 @@ impl CalendarEventRepository for CalendarEventPgRepository {
             DomainError::database_error(format!("Failed to find events by summary: {}", e))
         })?;
 
-        let mut events = Vec::new();
+        let mut events = Vec::with_capacity(rows.len());
         for row in rows {
             let mut event = CalendarEvent::with_id(
                 row.get("id"),
@@ -515,7 +515,7 @@ impl CalendarEventRepository for CalendarEventPgRepository {
             DomainError::database_error(format!("Failed to get calendar events by UIDs: {}", e))
         })?;
 
-        let mut events = Vec::new();
+        let mut events = Vec::with_capacity(rows.len());
         for row in rows {
             let mut event = CalendarEvent::with_id(
                 row.get("id"),
@@ -664,7 +664,7 @@ impl CalendarEventRepository for CalendarEventPgRepository {
             ))
         })?;
 
-        let mut events = Vec::new();
+        let mut events = Vec::with_capacity(rows.len());
         for row in rows {
             let event = CalendarEvent::with_id(
                 row.get("id"),
@@ -719,7 +719,7 @@ impl CalendarEventRepository for CalendarEventPgRepository {
             DomainError::database_error(format!("Failed to find recurring events in range: {}", e))
         })?;
 
-        let mut events = Vec::new();
+        let mut events = Vec::with_capacity(rows.len());
         for row in rows {
             let event = CalendarEvent::with_id(
                 row.get("id"),

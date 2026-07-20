@@ -17,6 +17,21 @@ use crate::application::adapters::webdav_adapter::{
 use crate::application::dtos::address_book_dto::AddressBookDto;
 use crate::application::dtos::contact_dto::ContactDto;
 
+/// Emit a WebDAV `getetag` value as `"…"` with the surrounding quotes written
+/// as borrowed pre-escaped `&quot;` text events around the escaped etag body.
+///
+/// Byte-identical to escaping the whole `"{etag}"` String — `quick_xml` escapes
+/// a literal `"` to `&quot;`, so the one-String form re-allocated an owned `Cow`
+/// on write — but with **0 heap allocs per contact** (the NextCloud
+/// `write_etag_element` pattern, benches/ROUND20.md §C1). Called per contact on
+/// the CardDAV multiget/PROPFIND emit path.
+fn write_quoted_etag<W: Write>(xml_writer: &mut Writer<W>, etag: &str) -> Result<()> {
+    xml_writer.write_event(Event::Text(BytesText::from_escaped("&quot;")))?;
+    xml_writer.write_event(Event::Text(BytesText::new(etag)))?;
+    xml_writer.write_event(Event::Text(BytesText::from_escaped("&quot;")))?;
+    Ok(())
+}
+
 /// Render a requested property as a namespaced response element name, mapping
 /// the known namespaces to their response prefixes (`D:` for DAV, `CR:` for
 /// CardDAV). Used for the catch-all arms of the requested-property writers so
@@ -386,7 +401,7 @@ impl CardDavAdapter {
 
         // getetag
         xml_writer.write_event(Event::Start(BytesStart::new("D:getetag")))?;
-        xml_writer.write_event(Event::Text(BytesText::new(&format!("\"{}\"", book.id))))?;
+        write_quoted_etag(xml_writer, &book.id)?;
         xml_writer.write_event(Event::End(BytesEnd::new("D:getetag")))?;
 
         // getcontenttype
@@ -468,8 +483,7 @@ impl CardDavAdapter {
                 }
                 ("DAV:", "getetag") => {
                     xml_writer.write_event(Event::Start(BytesStart::new("D:getetag")))?;
-                    xml_writer
-                        .write_event(Event::Text(BytesText::new(&format!("\"{}\"", book.id))))?;
+                    write_quoted_etag(xml_writer, &book.id)?;
                     xml_writer.write_event(Event::End(BytesEnd::new("D:getetag")))?;
                 }
                 ("DAV:", "getcontenttype") => {
@@ -755,11 +769,7 @@ impl CardDavAdapter {
             xml_writer.write_event(Event::Empty(BytesStart::new("D:resourcetype")))?;
 
             xml_writer.write_event(Event::Start(BytesStart::new("D:getetag")))?;
-            let mut quoted = String::with_capacity(contact.etag.len() + 2);
-            quoted.push('"');
-            quoted.push_str(&contact.etag);
-            quoted.push('"');
-            xml_writer.write_event(Event::Text(BytesText::new(&quoted)))?;
+            write_quoted_etag(xml_writer, &contact.etag)?;
             xml_writer.write_event(Event::End(BytesEnd::new("D:getetag")))?;
 
             xml_writer.write_event(Event::Start(BytesStart::new("D:getcontenttype")))?;
@@ -779,11 +789,7 @@ impl CardDavAdapter {
                     }
                     ("DAV:", "getetag") => {
                         xml_writer.write_event(Event::Start(BytesStart::new("D:getetag")))?;
-                        let mut quoted = String::with_capacity(contact.etag.len() + 2);
-                        quoted.push('"');
-                        quoted.push_str(&contact.etag);
-                        quoted.push('"');
-                        xml_writer.write_event(Event::Text(BytesText::new(&quoted)))?;
+                        write_quoted_etag(xml_writer, &contact.etag)?;
                         xml_writer.write_event(Event::End(BytesEnd::new("D:getetag")))?;
                     }
                     ("DAV:", "getcontenttype") => {
@@ -1017,7 +1023,23 @@ pub fn contact_to_vcard(contact: &ContactDto) -> String {
         }
     }
     if let Some(bday) = &contact.birthday {
-        let _ = write!(vcard, "BDAY:{}\r\n", bday.format("%Y-%m-%d"));
+        // Stack render (byte-identical to chrono's `%Y-%m-%d`) with the chrono
+        // fallback for out-of-range years — drops the strftime interpreter + a
+        // heap alloc per contact-with-birthday (fmt::compact_date is the
+        // date-only companion to the §V2 REV renderer above).
+        use chrono::Datelike as _;
+        let mut bday_buf = [0u8; 10];
+        match crate::common::fmt::compact_date(&mut bday_buf, bday.year(), bday.month(), bday.day())
+        {
+            Some(s) => {
+                vcard.push_str("BDAY:");
+                vcard.push_str(s);
+                vcard.push_str("\r\n");
+            }
+            None => {
+                let _ = write!(vcard, "BDAY:{}\r\n", bday.format("%Y-%m-%d"));
+            }
+        }
     }
     if let Some(photo) = &contact.photo_url {
         let _ = write!(vcard, "PHOTO;VALUE=URI:{}\r\n", photo);

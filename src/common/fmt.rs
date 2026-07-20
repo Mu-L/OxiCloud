@@ -241,6 +241,31 @@ pub fn compact_ical_utc(buf: &mut [u8; 16], secs: i64) -> Option<&str> {
     Some(std::str::from_utf8(&buf[..]).expect("ascii"))
 }
 
+/// `chrono::NaiveDate::format("%Y-%m-%d")` for a calendar date: the vCard
+/// `BDAY` / ISO date form `2026-07-17` (10 bytes) written into `buf`.
+///
+/// The vCard emit path (`contact_to_vcard`) stamps `BDAY` per
+/// contact-with-birthday, and `write!(…, "{}", date.format("%Y-%m-%d"))` runs
+/// chrono's strftime interpreter and heap-allocates — the same interpreter cost
+/// [`compact_ical_utc`] removed for the `REV` stamp (benches/ROUND19.md §V2:
+/// 3→0 allocs). This is the date-only companion to that helper.
+///
+/// Takes the pre-split `year`/`month`/`day` (so `fmt` stays chrono-free off the
+/// test path); callers read them via `chrono::Datelike`. Returns `None` when
+/// `year` is outside the fixed-width 4-digit range — where chrono widens or
+/// sign-prefixes `%Y` — so callers keep the chrono path as fallback.
+pub fn compact_date(buf: &mut [u8; 10], year: i32, month: u32, day: u32) -> Option<&str> {
+    if !(0..=9999).contains(&year) {
+        return None;
+    }
+    push4(buf, 0, year as i64);
+    buf[4] = b'-';
+    push2(buf, 5, month);
+    buf[7] = b'-';
+    push2(buf, 8, day);
+    Some(std::str::from_utf8(&buf[..]).expect("ascii"))
+}
+
 /// Append the upper-cased form of `s` to `buf` without a temporary `String`.
 ///
 /// Byte-identical to `buf.push_str(&s.to_uppercase())` — same
@@ -350,13 +375,41 @@ mod tests {
     }
 
     #[test]
+    fn compact_date_matches_chrono() {
+        use chrono::{Datelike, NaiveDate};
+        // Padding (day/month < 10), leap day, min/max in-range 4-digit year,
+        // 3-digit year (chrono zero-pads %Y to 4).
+        let cases = [
+            (2026, 7, 17),
+            (2000, 2, 29),
+            (2005, 7, 1),
+            (1970, 1, 1),
+            (9999, 12, 31),
+            (1, 1, 1),
+            (876, 5, 9),
+        ];
+        for (y, m, d) in cases {
+            let date = NaiveDate::from_ymd_opt(y, m, d).unwrap();
+            let mut buf = [0u8; 10];
+            assert_eq!(
+                compact_date(&mut buf, date.year(), date.month(), date.day()).expect("in range"),
+                date.format("%Y-%m-%d").to_string(),
+                "date={y}-{m}-{d}"
+            );
+        }
+    }
+
+    #[test]
     fn out_of_range_falls_back() {
         let mut b3 = [0u8; 25];
         let mut b2 = [0u8; 31];
         let mut bc = [0u8; 16];
+        let mut bd = [0u8; 10];
         assert!(rfc3339_utc(&mut b3, -1).is_none());
         assert!(rfc2822_utc(&mut b2, -1).is_none());
         assert!(compact_ical_utc(&mut bc, -1).is_none());
+        assert!(compact_date(&mut bd, -1, 1, 1).is_none());
+        assert!(compact_date(&mut bd, 10000, 1, 1).is_none());
         assert!(rfc3339_utc(&mut b3, MAX_4DIGIT_YEAR_SECS + 1).is_none());
         assert!(compact_ical_utc(&mut bc, MAX_4DIGIT_YEAR_SECS + 1).is_none());
     }

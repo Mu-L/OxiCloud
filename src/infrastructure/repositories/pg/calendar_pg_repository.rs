@@ -211,7 +211,7 @@ impl CalendarRepository for CalendarPgRepository {
             DomainError::database_error(format!("Failed to get calendars by owner: {}", e))
         })?;
 
-        let mut calendars = Vec::new();
+        let mut calendars = Vec::with_capacity(rows.len());
         for row in rows {
             let calendar = Calendar::with_id(
                 row.get("id"),
@@ -292,7 +292,7 @@ impl CalendarRepository for CalendarPgRepository {
             DomainError::database_error(format!("Failed to get public calendars: {}", e))
         })?;
 
-        let mut calendars = Vec::new();
+        let mut calendars = Vec::with_capacity(rows.len());
         for row in rows {
             let calendar = Calendar::with_id(
                 row.get("id"),
@@ -400,7 +400,7 @@ impl CalendarRepository for CalendarPgRepository {
             DomainError::database_error(format!("Failed to get calendar properties: {}", e))
         })?;
 
-        let mut properties = std::collections::HashMap::new();
+        let mut properties = std::collections::HashMap::with_capacity(rows.len());
         for row in rows {
             properties.insert(row.get("name"), row.get("value"));
         }

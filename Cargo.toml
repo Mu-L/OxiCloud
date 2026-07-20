@@ -354,6 +354,21 @@ name = "bench_micro_allocs"
 path = "examples/bench_micro_allocs.rs"
 required-features = ["bench"]
 
+# Round-21 battery ────────────────────────────────────────────────────────────
+
+# Round-21 CPU/alloc micro-pack — CalDAV/CardDAV row-mapper container pre-size
+# (the ROUND20 §I1 sibling the calendar/contact repos deferred); dedup
+# `settle_batch` hash bind Vec<String>→Vec<&str> borrow; `store_loose_chunks`
+# intra-request dedup set keyed on the raw [u8;32] digest + move-on-dup (the
+# ROUND17 §D2 pattern applied to the delta-upload sibling); CardDAV `getetag`
+# borrowed pre-escaped quotes (the ROUND20 §C1 NextCloud pattern); `BDAY`
+# stamp via fmt::compact_date stack render; NC trashbin folder content-type
+# Cow::Borrowed. No Postgres.
+[[example]]
+name = "bench_round21_micro"
+path = "examples/bench_round21_micro.rs"
+required-features = ["bench"]
+
 # Round-20 battery ────────────────────────────────────────────────────────────
 
 # Round-20 CPU/alloc micro-pack — CalendarEvent `prop_with_params` throwaway

@@ -271,7 +271,7 @@ impl ContactRepository for ContactPgRepository {
             DomainError::database_error(format!("Failed to get contacts by uids: {}", e))
         })?;
 
-        let mut contacts = Vec::new();
+        let mut contacts = Vec::with_capacity(rows.len());
         for row in &rows {
             contacts.push(Self::row_to_contact(row)?);
         }
@@ -339,7 +339,7 @@ impl ContactRepository for ContactPgRepository {
             DomainError::database_error(format!("Failed to get contacts by address book: {}", e))
         })?;
 
-        let mut contacts = Vec::new();
+        let mut contacts = Vec::with_capacity(rows.len());
         for row in &rows {
             contacts.push(Self::row_to_contact(row)?);
         }
@@ -376,7 +376,7 @@ impl ContactRepository for ContactPgRepository {
             ))
         })?;
 
-        let mut contacts = Vec::new();
+        let mut contacts = Vec::with_capacity(rows.len());
         for row in &rows {
             contacts.push(Self::row_to_contact(row)?);
         }
@@ -404,7 +404,7 @@ impl ContactRepository for ContactPgRepository {
             DomainError::database_error(format!("Failed to get contacts by email: {}", e))
         })?;
 
-        let mut contacts = Vec::new();
+        let mut contacts = Vec::with_capacity(rows.len());
         for row in &rows {
             contacts.push(Self::row_to_contact(row)?);
         }
@@ -434,7 +434,7 @@ impl ContactRepository for ContactPgRepository {
             DomainError::database_error(format!("Failed to get contacts by group: {}", e))
         })?;
 
-        let mut contacts = Vec::new();
+        let mut contacts = Vec::with_capacity(rows.len());
         for row in &rows {
             contacts.push(Self::row_to_contact(row)?);
         }
@@ -474,7 +474,7 @@ impl ContactRepository for ContactPgRepository {
         .await
         .map_err(|e| DomainError::database_error(format!("Failed to search contacts: {}", e)))?;
 
-        let mut contacts = Vec::new();
+        let mut contacts = Vec::with_capacity(rows.len());
         for row in &rows {
             contacts.push(Self::row_to_contact(row)?);
         }
