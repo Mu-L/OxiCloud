@@ -234,7 +234,9 @@
     "link_name": "Link name (optional)",
     "notifyByEmail": "إشعار عبر البريد الإلكتروني",
     "revoke": "Remove",
-    "role_label": "الدور"
+    "role_label": "الدور",
+    "col_shared_by": "شورك بواسطة",
+    "col_shared": "مشترك"
   },
   "share_dialogTitle": "رابط المشاركة",
   "share_linkLabel": "رابط المشاركة:",
@@ -375,7 +377,12 @@
     "rename_dotfile_hidden": "تمت إعادة التسمية إلى \"{{name}}\" — أصبحت الآن مخفية وفقاً لتفضيلاتك.",
     "new_folder_dotfile_hidden": "تم إنشاء المجلد \"{{name}}\" — مخفي وفقاً لتفضيلاتك.",
     "dotfiles_hidden_toast": "تم إخفاء الملفات المخفية",
-    "dotfiles_shown_toast": "تم إظهار الملفات المخفية"
+    "dotfiles_shown_toast": "تم إظهار الملفات المخفية",
+    "col_modified": "معدل",
+    "col_added": "أضيف",
+    "col_created_by": "أنشئ بواسطة",
+    "col_opened": "افتُح",
+    "col_path": "الموقع"
   },
   "dialogs": {
     "rename_folder": "إعادة تسمية المجلد",

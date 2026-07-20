@@ -183,7 +183,9 @@
     "link_name": "Nombre del enlace (opcional)",
     "notifyByEmail": "Notificar por correo",
     "revoke": "Eliminar",
-    "role_label": "Rol"
+    "role_label": "Rol",
+    "col_shared_by": "Compartido por",
+    "col_shared": "Compartido"
   },
   "share_dialogTitle": "Compartir Enlace",
   "share_linkLabel": "Enlace compartido:",
@@ -380,7 +382,12 @@
     "rename_dotfile_hidden": "Renombrado a \"{{name}}\" — ahora oculto por tu preferencia.",
     "new_folder_dotfile_hidden": "Carpeta \"{{name}}\" creada — oculta por tu preferencia.",
     "dotfiles_hidden_toast": "Archivos ocultos ocultados",
-    "dotfiles_shown_toast": "Archivos ocultos mostrados"
+    "dotfiles_shown_toast": "Archivos ocultos mostrados",
+    "col_modified": "Modificado",
+    "col_added": "Añadido",
+    "col_created_by": "Creado por",
+    "col_opened": "Abierto",
+    "col_path": "Ubicación"
   },
   "dialogs": {
     "rename_folder": "Renombrar carpeta",

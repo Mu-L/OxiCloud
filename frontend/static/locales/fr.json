@@ -234,7 +234,9 @@
     "link_name": "Link name (optional)",
     "notifyByEmail": "Notifier par e-mail",
     "revoke": "Remove",
-    "role_label": "Rôle"
+    "role_label": "Rôle",
+    "col_shared_by": "Partagé par",
+    "col_shared": "Partagé"
   },
   "share_dialogTitle": "Lien de partage",
   "share_linkLabel": "Lien partagé :",
@@ -375,7 +377,12 @@
     "rename_dotfile_hidden": "Renommé en \"{{name}}\" — désormais masqué par votre préférence.",
     "new_folder_dotfile_hidden": "Dossier \"{{name}}\" créé — masqué par votre préférence.",
     "dotfiles_hidden_toast": "Fichiers masqués",
-    "dotfiles_shown_toast": "Fichiers affichés"
+    "dotfiles_shown_toast": "Fichiers affichés",
+    "col_modified": "Modifié",
+    "col_added": "Ajouté",
+    "col_created_by": "Créé par",
+    "col_opened": "Ouvert",
+    "col_path": "Emplacement"
   },
   "dialogs": {
     "rename_folder": "Renommer le dossier",

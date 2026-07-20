@@ -374,6 +374,7 @@
 	onopen={open}
 	showOwner
 	showPath
+	dateLabel={t('files.col_opened', 'Opened')}
 	showDotfileToggle
 	selectable
 	{contextActions}

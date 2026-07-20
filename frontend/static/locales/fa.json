@@ -234,7 +234,9 @@
     "link_name": "Link name (optional)",
     "notifyByEmail": "اطلاع‌رسانی از طریق ایمیل",
     "revoke": "Remove",
-    "role_label": "نقش"
+    "role_label": "نقش",
+    "col_shared_by": "به اشتراک گذاشته شده توسط",
+    "col_shared": "به اشتراک گذاشته شده"
   },
   "share_dialogTitle": "پیوند هم‌رسانی",
   "share_linkLabel": "پیوند هم‌رسانی:",
@@ -375,7 +377,12 @@
     "rename_dotfile_hidden": "نام به \"{{name}}\" تغییر کرد — اکنون طبق تنظیمات شما پنهان است.",
     "new_folder_dotfile_hidden": "پوشه \"{{name}}\" ایجاد شد — طبق تنظیمات شما پنهان است.",
     "dotfiles_hidden_toast": "پرونده‌های پنهان مخفی شد",
-    "dotfiles_shown_toast": "پرونده‌های پنهان نمایش داده شد"
+    "dotfiles_shown_toast": "پرونده‌های پنهان نمایش داده شد",
+    "col_modified": "تغییر یافته",
+    "col_added": "افزوده شده",
+    "col_created_by": "ایجاد شده توسط",
+    "col_opened": "باز شده",
+    "col_path": "مکان"
   },
   "dialogs": {
     "rename_folder": "تغییر نام پوشه",

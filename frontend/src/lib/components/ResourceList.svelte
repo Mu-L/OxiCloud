@@ -170,6 +170,14 @@
 		bucketAction?: Snippet<[string]>;
 		/** Show the owner column + vignette (list view) and hover tooltip. */
 		showOwner?: boolean;
+		/**
+		 * Override the owner column header (and the hover-tooltip prefix). The
+		 * default reads "Created by", matching the semantic of `created_by` used
+		 * on /files, /favorites, /recent. /shared-with-me overrides to
+		 * "Shared by" since the column there actually renders `granted_by`
+		 * (the sharer, not the resource author).
+		 */
+		ownerLabel?: string;
 		/** Allow grid/list toggle (shares the app-wide view mode). */
 		showViewToggle?: boolean;
 		/** Show the dotfile-visibility eye toggle in the toolbar AND
@@ -362,6 +370,7 @@
 		dateCell,
 		bucketAction,
 		showOwner = false,
+		ownerLabel,
 		showViewToggle = true,
 		showDotfileToggle = false,
 		selectable = false,
@@ -865,7 +874,7 @@
 		const owner = ownerId ? (resolveOwnerName?.(ownerId) ?? ownerId) : '';
 		const path = item.path ?? '';
 		return [
-			owner && `${t('files.col_owner', 'Owner')}: ${owner}`,
+			owner && `${ownerLabel ?? t('files.col_created_by', 'Created by')}: ${owner}`,
 			path && `${t('files.col_path', 'Location')}: ${path}`
 		]
 			.filter(Boolean)
@@ -1333,13 +1342,15 @@
 				/>
 			</div>
 		{/if}
-		<div>{t('files.col_name', 'Name')}</div>
-		{#if showOwner}<div>{t('files.col_owner', 'Owner')}</div>{/if}
-		{#if showPath}<div>{pathLabel ?? t('files.col_path', 'Location')}</div>{/if}
-		{#if showType}<div>{t('files.col_type', 'Type')}</div>{/if}
-		{#if showSize}<div>{t('files.col_size', 'Size')}</div>{/if}
-		{#if showDate}<div>{dateLabel ?? t('files.col_modified', 'Date')}</div>{/if}
-		{#if hasActionCell}<div></div>{/if}
+		<div class="name-cell">{t('files.col_name', 'Name')}</div>
+		{#if showOwner}<div class="owner-cell">
+				{ownerLabel ?? t('files.col_created_by', 'Created by')}
+			</div>{/if}
+		{#if showPath}<div class="path-cell">{pathLabel ?? t('files.col_path', 'Location')}</div>{/if}
+		{#if showType}<div class="type-cell">{t('files.col_type', 'Type')}</div>{/if}
+		{#if showSize}<div class="size-cell">{t('files.col_size', 'Size')}</div>{/if}
+		{#if showDate}<div class="date-cell">{dateLabel ?? t('files.col_modified', 'Date')}</div>{/if}
+		{#if hasActionCell}<div class="action-cell"></div>{/if}
 	</div>
 {/snippet}
 

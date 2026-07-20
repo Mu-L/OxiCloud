@@ -234,7 +234,9 @@
     "link_name": "Link name (optional)",
     "notifyByEmail": "透過郵件通知",
     "revoke": "移除",
-    "role_label": "角色"
+    "role_label": "角色",
+    "col_shared_by": "分享者",
+    "col_shared": "分享日期"
   },
   "share_dialogTitle": "共享連結",
   "share_linkLabel": "共享連結：",
@@ -375,7 +377,12 @@
     "rename_dotfile_hidden": "已重新命名為「{{name}}」——現已根據您的偏好隱藏。",
     "new_folder_dotfile_hidden": "已建立資料夾「{{name}}」——根據您的偏好隱藏。",
     "dotfiles_hidden_toast": "已隱藏隱藏檔案",
-    "dotfiles_shown_toast": "已顯示隱藏檔案"
+    "dotfiles_shown_toast": "已顯示隱藏檔案",
+    "col_modified": "修改日期",
+    "col_added": "新增日期",
+    "col_created_by": "建立者",
+    "col_opened": "開啟日期",
+    "col_path": "位置"
   },
   "dialogs": {
     "rename_folder": "重新命名資料夾",

@@ -339,7 +339,9 @@
     "set_expiry": "Set expiry",
     "title": "Shared",
     "unlock": "Unlock",
-    "role_label": "Role"
+    "role_label": "Role",
+    "col_shared_by": "Shared by",
+    "col_shared": "Shared"
   },
   "share_dialogTitle": "Share Link",
   "share_linkLabel": "Share Link:",
@@ -466,7 +468,10 @@
     "batch_delete": "Delete selected",
     "breadcrumb": "Breadcrumb",
     "cancel_selection": "Cancel selection",
-    "col_modified": "Date",
+    "col_modified": "Modified",
+    "col_added": "Added",
+    "col_created_by": "Created by",
+    "col_opened": "Opened",
     "col_name": "Name",
     "col_owner": "Owner",
     "col_path": "Location",

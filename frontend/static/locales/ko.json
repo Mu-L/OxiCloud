@@ -304,7 +304,9 @@
     "public_link": "공개 링크",
     "set_expiry": "만료일 설정",
     "title": "공유됨",
-    "unlock": "잠금 해제"
+    "unlock": "잠금 해제",
+    "col_shared_by": "공유한 사람",
+    "col_shared": "공유일"
   },
   "share_dialogTitle": "공유 링크",
   "share_linkLabel": "공유 링크:",
@@ -442,7 +444,10 @@
     "batch_delete": "선택 항목 삭제",
     "breadcrumb": "경로",
     "cancel_selection": "선택 취소",
-    "col_modified": "날짜",
+    "col_modified": "수정일",
+    "col_added": "추가일",
+    "col_created_by": "만든 사람",
+    "col_opened": "열어본 날짜",
     "col_path": "위치",
     "confirm_batch_delete": "{{n}}개 항목을 휴지통으로 이동하시겠습니까?",
     "confirm_delete": "\"{{name}}\"을(를) 휴지통으로 이동하시겠습니까?",

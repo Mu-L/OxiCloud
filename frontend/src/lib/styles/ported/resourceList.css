@@ -266,9 +266,12 @@
     min-width: 0;
 }
 
-/* Size column: always nth-child(5) because .owner-cell is always in the DOM
-   (even when hidden via display:none, it still occupies a child slot). */
-.list-header > div:nth-child(5),
+/* Column alignment — targets classes on BOTH the header divs AND the value
+   cells, so the header label always matches its column's value alignment
+   regardless of which optional columns (path/type/owner/…) are on. The
+   previous shape keyed off `nth-child(N)` and drifted the moment a
+   ResourceList caller toggled a `show*` prop. */
+.list-header > .size-cell,
 .files-list-view .file-item .size-cell {
     justify-self: end;
     text-align: right;
@@ -325,7 +328,12 @@
    vignette sized to its content and the cell clipped it flat with
    no ellipsis. The cell's own `text-overflow` still ellipses
    plain-text fallback content (cells without a vignette child). */
-.owner-cell {
+/* Scoped to `.file-item` so the header div — which also carries the
+   `.owner-cell` class now (so column-alignment CSS keys off classes
+   instead of brittle nth-child indices) — doesn't inherit the muted
+   cell colour / cell font size. Header keeps `.list-header`'s
+   semibold + text colour. */
+.file-item .owner-cell {
     color: var(--color-text-secondary);
     font-size: var(--text-base);
     display: flex;
@@ -427,7 +435,7 @@
     flex-shrink: 0;
 }
 
-.list-header > div:nth-child(5),
+.list-header > .date-cell,
 .files-list-view .file-item .date-cell {
     justify-self: center;
     text-align: center;

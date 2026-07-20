@@ -228,6 +228,8 @@
 	emptyText={t('shared_with_me.empty', 'Nothing has been shared with you yet.')}
 	hasMore={!!cursor}
 	showOwner={true}
+	ownerLabel={t('share.col_shared_by', 'Shared by')}
+	dateLabel={t('share.col_shared', 'Shared')}
 	{groupBys}
 	bind:groupBy
 	bind:reversed

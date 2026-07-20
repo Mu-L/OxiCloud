@@ -234,7 +234,9 @@
     "link_name": "Link name (optional)",
     "notifyByEmail": "Notificar por e-mail",
     "revoke": "Remove",
-    "role_label": "Função"
+    "role_label": "Função",
+    "col_shared_by": "Compartilhado por",
+    "col_shared": "Compartilhado"
   },
   "share_dialogTitle": "Link de compartilhamento",
   "share_linkLabel": "Link compartilhado:",
@@ -375,7 +377,12 @@
     "rename_dotfile_hidden": "Renomeado para \"{{name}}\" — agora oculto pela sua preferência.",
     "new_folder_dotfile_hidden": "Pasta \"{{name}}\" criada — oculta pela sua preferência.",
     "dotfiles_hidden_toast": "Arquivos ocultos ocultados",
-    "dotfiles_shown_toast": "Arquivos ocultos exibidos"
+    "dotfiles_shown_toast": "Arquivos ocultos exibidos",
+    "col_modified": "Modificado",
+    "col_added": "Adicionado",
+    "col_created_by": "Criado por",
+    "col_opened": "Aberto",
+    "col_path": "Localização"
   },
   "dialogs": {
     "rename_folder": "Renomear pasta",

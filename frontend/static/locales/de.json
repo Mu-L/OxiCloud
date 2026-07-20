@@ -234,7 +234,9 @@
     "link_name": "Link name (optional)",
     "notifyByEmail": "Per E-Mail benachrichtigen",
     "revoke": "Remove",
-    "role_label": "Rolle"
+    "role_label": "Rolle",
+    "col_shared_by": "Geteilt von",
+    "col_shared": "Geteilt"
   },
   "share_dialogTitle": "Link teilen",
   "share_linkLabel": "Geteilter Link:",
@@ -375,7 +377,12 @@
     "rename_dotfile_hidden": "In \"{{name}}\" umbenannt — jetzt durch Ihre Einstellung ausgeblendet.",
     "new_folder_dotfile_hidden": "Ordner \"{{name}}\" erstellt — durch Ihre Einstellung ausgeblendet.",
     "dotfiles_hidden_toast": "Verborgene Dateien ausgeblendet",
-    "dotfiles_shown_toast": "Verborgene Dateien angezeigt"
+    "dotfiles_shown_toast": "Verborgene Dateien angezeigt",
+    "col_modified": "Geändert",
+    "col_added": "Hinzugefügt",
+    "col_created_by": "Erstellt von",
+    "col_opened": "Geöffnet",
+    "col_path": "Speicherort"
   },
   "dialogs": {
     "rename_folder": "Ordner umbenennen",

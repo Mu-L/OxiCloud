@@ -1594,6 +1594,8 @@
 		showOwner
 		showType
 		showDate
+		dateLabel={t('files.col_modified', 'Modified')}
+		showPath={false}
 		showDotfileToggle
 		enableSystemDrop
 		onsystemdrop={onDrop}

@@ -330,6 +330,7 @@
 	onfavorite={unfavorite}
 	showOwner
 	showPath
+	dateLabel={t('files.col_added', 'Added')}
 	selectable
 	{contextActions}
 	menuPrepare={async (item) => {

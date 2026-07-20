@@ -234,7 +234,9 @@
     "link_name": "Link name (optional)",
     "notifyByEmail": "メールで通知",
     "revoke": "Remove",
-    "role_label": "役割"
+    "role_label": "役割",
+    "col_shared_by": "共有者",
+    "col_shared": "共有日時"
   },
   "share_dialogTitle": "共有リンク",
   "share_linkLabel": "共有リンク:",
@@ -375,7 +377,12 @@
     "rename_dotfile_hidden": "「{{name}}」に名前を変更しました — 設定により非表示になりました。",
     "new_folder_dotfile_hidden": "フォルダ「{{name}}」を作成しました — 設定により非表示になっています。",
     "dotfiles_hidden_toast": "非表示ファイルを隠しました",
-    "dotfiles_shown_toast": "非表示ファイルを表示しました"
+    "dotfiles_shown_toast": "非表示ファイルを表示しました",
+    "col_modified": "更新日時",
+    "col_added": "追加日",
+    "col_created_by": "作成者",
+    "col_opened": "アクセス日時",
+    "col_path": "場所"
   },
   "dialogs": {
     "rename_folder": "フォルダ名を変更",

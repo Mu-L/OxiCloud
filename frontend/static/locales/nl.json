@@ -234,7 +234,9 @@
     "link_name": "Link name (optional)",
     "notifyByEmail": "Per e-mail notificeren",
     "revoke": "Remove",
-    "role_label": "Rol"
+    "role_label": "Rol",
+    "col_shared_by": "Gedeeld door",
+    "col_shared": "Gedeeld"
   },
   "share_dialogTitle": "Deellink",
   "share_linkLabel": "Deellink:",
@@ -375,7 +377,12 @@
     "rename_dotfile_hidden": "Hernoemd naar \"{{name}}\" — nu verborgen door je voorkeur.",
     "new_folder_dotfile_hidden": "Map \"{{name}}\" aangemaakt — verborgen door je voorkeur.",
     "dotfiles_hidden_toast": "Verborgen bestanden verborgen",
-    "dotfiles_shown_toast": "Verborgen bestanden weergegeven"
+    "dotfiles_shown_toast": "Verborgen bestanden weergegeven",
+    "col_modified": "Gewijzigd",
+    "col_added": "Toegevoegd",
+    "col_created_by": "Gemaakt door",
+    "col_opened": "Geopend",
+    "col_path": "Locatie"
   },
   "dialogs": {
     "rename_folder": "Map hernoemen",
