@@ -92,15 +92,20 @@ it('removes a recent row via the broom button', async () => {
 	await waitFor(() => expect(removeFromRecent).toHaveBeenCalledWith('file', 'r1'));
 });
 
-it('batch-deletes selected recent items after confirmation', async () => {
+it('batch-removes-from-recent the selection', async () => {
+	// /recent's batch bar was intentionally trimmed to Download +
+	// Remove-from-recent. Bulk-deleting the underlying file from
+	// this history view (previous behaviour) confused the "this is
+	// activity log" semantics — destructive actions belong in the
+	// row's context menu, not in the batch bar. This test pins the
+	// new shape: batch button just forgets the selection from history.
 	withOneFile();
-	confirmDialog.mockResolvedValue(true);
-	m(deleteFile).mockResolvedValue(undefined);
+	m(removeFromRecent).mockResolvedValue(undefined);
 	render(RecentPage);
 	await screen.findByText('notes.txt');
 	await fireEvent.click(screen.getByTestId('resource-list-select-r1-checkbox'));
-	await fireEvent.click(await screen.findByTestId('recent-batch-delete-btn'));
-	await waitFor(() => expect(deleteFile).toHaveBeenCalledWith('r1'));
+	await fireEvent.click(await screen.findByTestId('recent-batch-remove-btn'));
+	await waitFor(() => expect(removeFromRecent).toHaveBeenCalledWith('file', 'r1'));
 });
 
 it('renders an empty state when there is no recent activity', async () => {

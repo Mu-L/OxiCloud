@@ -55,8 +55,12 @@ test('favorites batch select-all then move dialog', async ({ page }) => {
   await page.getByTestId('resource-list-select-all-checkbox').check();
   await expect(page.getByTestId('resource-list-batch-close-btn')).toBeVisible();
 
-  // Batch-move opens the move dialog; cancel it.
-  await page.getByTestId('favorites-batch-move-btn').click();
-  await expect(page.getByTestId('move-dialog')).toBeVisible({ timeout: 15_000 });
-  await page.getByTestId('move-dialog-cancel-btn').click();
+  // Batch-remove-from-favorite un-stars every selected row without
+  // touching the underlying file — the /favorites batch bar was
+  // trimmed to Download + Remove-from-favorite (destructive-to-content
+  // actions moved into the row context menu). Verify the two folders
+  // vanish from the list after the click.
+  await page.getByTestId('favorites-batch-remove-btn').click();
+  await expect(page.getByTestId(f1)).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByTestId(f2)).toHaveCount(0);
 });

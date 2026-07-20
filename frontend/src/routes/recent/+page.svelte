@@ -319,29 +319,8 @@
 	// prunes its own selection when items reload) — benches/ROUND11.md §S1.
 	type Selectable = FileItem | FolderItem;
 
-	function batchTargets(sel: Selectable[]) {
-		return sel.map((i) => ({ id: i.id, name: i.name, kind: kindOf(i) }));
-	}
-
 	function batchDownload(sel: Selectable[]) {
 		for (const i of sel) downloadItem(i);
-	}
-
-	async function batchDelete(sel: Selectable[]) {
-		const ok = await confirmDialog({
-			title: t('common.delete', 'Delete'),
-			message: t('files.confirm_delete_n', { count: sel.length }, 'Delete {{count}} item(s)?'),
-			confirmText: t('common.delete', 'Delete'),
-			danger: true
-		});
-		if (!ok) return;
-		try {
-			await Promise.all(sel.map((i) => (isFile(i) ? deleteFile(i.id) : deleteFolder(i.id))));
-			const removed = new Set(sel.map((i) => i.id));
-			raw = raw.filter((i) => !removed.has(i.resource.id));
-		} catch (e) {
-			errorToast(e);
-		}
 	}
 
 	onMount(() => {
@@ -401,25 +380,26 @@
 		{/if}
 	{/snippet}
 	{#snippet batchActions(sel)}
+		<!--
+			Recent-scoped batch cluster: what makes sense on a HISTORY
+			view. Download stays (common bulk fetch). Move + Delete
+			were destructive-to-content actions carried over from the
+			pre-refactor menu; on a history view they belong in the
+			row's context menu (rename/move/delete via `contextActions`
+			above), not in the batch bar. Batch "remove from recent"
+			mirrors the per-row broom and forgets the selected rows
+			from history without touching the files themselves.
+		-->
 		<Button
 			icon="download"
 			data-testid="recent-batch-download-btn"
 			onclick={() => batchDownload(sel)}>{t('common.download', 'Download')}</Button
 		>
 		<Button
-			icon="arrows-alt"
-			data-testid="recent-batch-move-btn"
-			onclick={() => {
-				moveTarget = null;
-				moveItems = batchTargets(sel);
-				moveOpen = true;
-			}}>{t('files.move', 'Move')}</Button
-		>
-		<Button
-			variant="danger"
-			icon="trash"
-			data-testid="recent-batch-delete-btn"
-			onclick={() => batchDelete(sel)}>{t('common.delete', 'Delete')}</Button
+			icon="broom"
+			data-testid="recent-batch-remove-btn"
+			onclick={() => sel.forEach(removeItem)}
+			>{t('recent.remove_item', 'Remove from recent')}</Button
 		>
 	{/snippet}
 	{#snippet itemActions(item)}

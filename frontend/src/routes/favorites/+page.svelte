@@ -286,29 +286,8 @@
 	// prunes its own selection when items reload) — benches/ROUND11.md §S1.
 	type Selectable = FileItem | FolderItem;
 
-	function batchTargets(sel: Selectable[]) {
-		return sel.map((i) => ({ id: i.id, name: i.name, kind: kindOf(i) }));
-	}
-
 	function batchDownload(sel: Selectable[]) {
 		for (const i of sel) downloadItem(i);
-	}
-
-	async function batchDelete(sel: Selectable[]) {
-		const ok = await confirmDialog({
-			title: t('common.delete', 'Delete'),
-			message: t('files.confirm_delete_n', { count: sel.length }, 'Delete {{count}} item(s)?'),
-			confirmText: t('common.delete', 'Delete'),
-			danger: true
-		});
-		if (!ok) return;
-		try {
-			await Promise.all(sel.map((i) => (isFile(i) ? deleteFile(i.id) : deleteFolder(i.id))));
-			const removed = new Set(sel.map((i) => i.id));
-			raw = raw.filter((i) => !removed.has(i.resource.id));
-		} catch (e) {
-			errorToast(e);
-		}
 	}
 
 	onMount(() => load(true));
@@ -352,25 +331,25 @@
 	}}
 >
 	{#snippet batchActions(sel)}
+		<!--
+			Favorites-scoped batch cluster: Download stays. Move + Delete
+			were destructive-to-content operations carried over from the
+			pre-refactor menu; on a favorites *bookmarks* view they
+			belong in the row's context menu (rename/move/delete via
+			`contextActions`), not in the batch bar. Batch "remove from
+			favorite" un-stars the selected rows without touching the
+			underlying files — mirrors the per-row favorite star.
+		-->
 		<Button
 			icon="download"
 			data-testid="favorites-batch-download-btn"
 			onclick={() => batchDownload(sel)}>{t('common.download', 'Download')}</Button
 		>
 		<Button
-			icon="arrows-alt"
-			data-testid="favorites-batch-move-btn"
-			onclick={() => {
-				moveTarget = null;
-				moveItems = batchTargets(sel);
-				moveOpen = true;
-			}}>{t('files.move', 'Move')}</Button
-		>
-		<Button
-			variant="danger"
-			icon="trash"
-			data-testid="favorites-batch-delete-btn"
-			onclick={() => batchDelete(sel)}>{t('common.delete', 'Delete')}</Button
+			icon="star-outline"
+			data-testid="favorites-batch-remove-btn"
+			onclick={() => sel.forEach(unfavorite)}
+			>{t('files.unfavorite', 'Remove favorite')}</Button
 		>
 	{/snippet}
 </ResourceList>

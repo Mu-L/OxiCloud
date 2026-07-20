@@ -86,13 +86,18 @@ it('unfavorites a row via the star button', async () => {
 	await waitFor(() => expect(removeFavorite).toHaveBeenCalledWith('file', 'f1'));
 });
 
-it('batch-deletes selected favorites after confirmation', async () => {
+it('batch-removes-from-favorite the selection', async () => {
+	// /favorites' batch bar was intentionally trimmed to Download +
+	// Remove-from-favorite. Bulk-deleting the underlying file from
+	// this view (previous behaviour) confused the "this is a
+	// bookmarks list" semantics — destructive actions belong in the
+	// row's context menu, not in the batch bar. This test pins the
+	// new shape: batch button just un-stars the selection.
 	withOneFile();
-	confirmDialog.mockResolvedValue(true);
-	m(deleteFile).mockResolvedValue(undefined);
+	m(removeFavorite).mockResolvedValue(undefined);
 	render(FavoritesPage);
 	await screen.findByText('photo.png');
 	await fireEvent.click(screen.getByTestId('resource-list-select-f1-checkbox'));
-	await fireEvent.click(await screen.findByTestId('favorites-batch-delete-btn'));
-	await waitFor(() => expect(deleteFile).toHaveBeenCalledWith('f1'));
+	await fireEvent.click(await screen.findByTestId('favorites-batch-remove-btn'));
+	await waitFor(() => expect(removeFavorite).toHaveBeenCalledWith('file', 'f1'));
 });

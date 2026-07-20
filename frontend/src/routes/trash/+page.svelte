@@ -16,6 +16,7 @@
 	import { formatDate } from '$lib/utils/display';
 	import type { Drive, FileItem, FolderItem, TrashResourceItem } from '$lib/api/types';
 	import Icon from '$lib/icons/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import ResourceList, {
 		isFile,
 		type GroupByDef,
@@ -290,24 +291,27 @@
 		{/if}
 	{/snippet}
 	{#snippet batchActions(sel)}
-		<button
-			class="btn-action"
+		<!--
+			Use the shared `<Button>` component here (not the icon-only
+			`.btn-action` chip used for per-row `itemActions` above). The
+			batch bar renders text next to the glyph — `.btn-action` is
+			fixed 28x28 with no room for a label, and shoving text
+			inside was overlapping the icon. `<Button>` picks up the
+			standard action-bar sizing and reads consistently with
+			`/recent` and `/favorites` batch clusters.
+		-->
+		<Button
+			icon="undo"
 			data-testid="trash-batch-restore-btn"
-			title={t('trash.restore', 'Restore')}
-			onclick={() => sel.forEach(restore)}
+			onclick={() => sel.forEach(restore)}>{t('trash.restore', 'Restore')}</Button
 		>
-			<Icon name="undo" />
-			{t('trash.restore', 'Restore')}
-		</button>
-		<button
-			class="btn-action btn-action--delete"
+		<Button
+			variant="danger"
+			icon="trash"
 			data-testid="trash-batch-delete-btn"
-			title={t('trash.delete', 'Delete permanently')}
 			onclick={() => sel.forEach(purge)}
+			>{t('trash.delete', 'Delete permanently')}</Button
 		>
-			<Icon name="trash" />
-			{t('trash.delete', 'Delete permanently')}
-		</button>
 	{/snippet}
 	{#snippet rowBadge(_item, ctx)}
 		{@const chip = expiryChip(ctx?.date)}
