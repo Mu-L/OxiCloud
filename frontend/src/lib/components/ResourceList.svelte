@@ -53,13 +53,22 @@
 		/**
 		 * Optional per-item visibility gate. Called at menu-open time
 		 * with the target item + context; return `false` to hide the
-		 * entry for that row. Synchronous by contract — pages that need
-		 * an async check (e.g. "does the caller have Read on the parent
-		 * folder?") should pre-warm a cache when items load so the
-		 * answer is already resolved by the time this runs. See
-		 * `$lib/utils/folderAccess.ts` for the reference pattern.
+		 * entry entirely for that row (e.g. `open_parent` on a drive-
+		 * root folder that has no parent to open). Prefer `disabled?`
+		 * over hiding when the action *could* apply but the caller
+		 * lacks the required permission — a greyed entry answers
+		 * "this option exists" for the user instead of leaving a hole
+		 * that reads as a forgotten feature.
 		 */
 		visible?: (item: FileItem | FolderItem, ctx?: ItemContext) => boolean;
+		/**
+		 * Optional per-item disabled gate. Called at menu-open time;
+		 * `true` renders the entry non-interactive (dimmed, no click).
+		 * Kept sync by the same contract as `visible?` — use the
+		 * `menuPrepare` prop to prime any cache the predicate depends
+		 * on before the menu renders.
+		 */
+		disabled?: (item: FileItem | FolderItem, ctx?: ItemContext) => boolean;
 		run: (item: FileItem | FolderItem, ctx?: ItemContext) => void;
 	}
 
@@ -1352,12 +1361,17 @@
 		data-testid="resource-list-context-menu"
 	>
 		{#each visibleActions as action (action.key)}
+			{@const dis = action.disabled?.(ctxItem!, ctxOf(ctxItem!.id)) === true}
 			<button
 				class="rl-ctx-item"
 				class:rl-ctx-item--danger={action.danger}
+				class:rl-ctx-item--disabled={dis}
 				role="menuitem"
+				disabled={dis}
+				aria-disabled={dis}
 				data-testid={`resource-list-context-${action.key}-item`}
 				onclick={() => {
+					if (dis) return;
 					const target = ctxItem!;
 					closeContext();
 					action.run(target, ctxOf(target.id));
@@ -1542,8 +1556,22 @@
 		cursor: pointer;
 	}
 
-	.rl-ctx-item:hover {
+	.rl-ctx-item:hover:not(:disabled) {
 		background: var(--color-bg-hover);
+	}
+
+	/* Disabled entry — dimmed but STILL RENDERED so the user sees that
+	   the option exists and infers "I can't do this here" rather than
+	   assuming a forgotten feature. No `cursor: not-allowed` badge on
+	   hover (deliberate — a forbidden-sign cursor reads as alarming for
+	   an entry the user didn't try to activate). The `disabled`
+	   attribute alone still blocks click + keyboard activation and
+	   flags the element to assistive tech via `aria-disabled`. */
+	.rl-ctx-item--disabled {
+		opacity: 0.5;
+	}
+	.rl-ctx-item--disabled:hover {
+		background: transparent;
 	}
 
 	.rl-ctx-item--danger {

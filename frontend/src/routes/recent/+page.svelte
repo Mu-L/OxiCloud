@@ -14,6 +14,7 @@
 		type RecentResourceItem
 	} from '$lib/api/endpoints/recent';
 	import {
+		addFavorite,
 		dateBucket,
 		resolveOwnerName,
 		sizeBucket,
@@ -268,14 +269,16 @@
 			key: 'open_parent',
 			label: t('files.open_parent', 'Open parent folder'),
 			icon: 'folder-open',
-			// Sync gate: relies on the `warmFolderAccess` call in `load()`
-			// having populated the cache with a boolean answer for each
-			// visible row's parent id by the time the user right-clicks.
-			// `undefined` (not yet probed) is treated as "hide" — the
-			// entry appears once the probe resolves to `true`.
-			visible: (item) => {
+			// Same disabled-not-hidden pattern as /favorites: hide only
+			// when there's no parent (drive-root folder), otherwise
+			// show and disable when the caller lacks Read on the
+			// parent. `menuPrepare` primes the cache before the menu
+			// renders so the final enabled/disabled state is correct
+			// on the very first right-click of a row.
+			visible: (item) => parentFolderId(item) !== null,
+			disabled: (item) => {
 				const pid = parentFolderId(item);
-				return pid !== null && folderAccessCached(pid) === true;
+				return pid === null || folderAccessCached(pid) === false;
 			},
 			run: (item) => {
 				const pid = parentFolderId(item);
@@ -305,6 +308,21 @@
 				moveItems = null;
 				moveTarget = { id: item.id, name: item.name, kind: kindOf(item) };
 				moveOpen = true;
+			}
+		},
+		{
+			// "Add to favorites" — /recent doesn't track per-row favorite
+			// state (the star widget was replaced by the broom), so the
+			// entry always reads "Add" and the backend swallows duplicate
+			// adds idempotently. If the user wants to un-favorite, they
+			// navigate to /favorites and use the row menu there. Placed
+			// between Move and Rename to match the canonical context-menu
+			// order on `/files`.
+			key: 'favorite',
+			label: t('files.favorite', 'Add favorite'),
+			icon: 'star',
+			run: (item) => {
+				void addFavorite(kindOf(item), item.id).catch(errorToast);
 			}
 		},
 		{ key: 'rename', label: t('common.rename', 'Rename'), icon: 'pen', run: rename },

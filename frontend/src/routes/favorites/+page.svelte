@@ -236,13 +236,20 @@
 			key: 'open_parent',
 			label: t('files.open_parent', 'Open parent folder'),
 			icon: 'folder-open',
-			// Sync gate on the pre-warmed folder-access cache (see
-			// `warmFolderAccess` in `load()` below). `undefined` = not
-			// yet probed → hide; the entry appears once the probe
-			// resolves to `true`.
-			visible: (item) => {
+			// Hidden only when there's literally no parent to open
+			// (drive-root folders where `parent_id === null`); otherwise
+			// the entry is always visible and shows up disabled when the
+			// caller lacks read on the parent — a greyed row reads as
+			// "you can't do this here" instead of "the option is missing."
+			// `folderAccessCached` returns `true`/`false`/`undefined`;
+			// disabled fires when the answer is explicitly `false`. On
+			// first right-click of a fresh row, `menuPrepare` below has
+			// primed the cache so the entry either enables or disables
+			// without a "flash of enabled" beforehand.
+			visible: (item) => parentFolderId(item) !== null,
+			disabled: (item) => {
 				const pid = parentFolderId(item);
-				return pid !== null && folderAccessCached(pid) === true;
+				return pid === null || folderAccessCached(pid) === false;
 			},
 			run: (item) => {
 				const pid = parentFolderId(item);
@@ -273,6 +280,17 @@
 				moveTarget = { id: item.id, name: item.name, kind: kindOf(item) };
 				moveOpen = true;
 			}
+		},
+		{
+			// Every row on /favorites IS a favorite, so the entry is always
+			// "Remove favorite" — no per-item state lookup needed. Mirrors
+			// the star-widget behaviour: click, row un-stars, disappears
+			// from the list on next reload. Placed between Move and Rename
+			// to match the canonical context-menu order on `/files`.
+			key: 'unfavorite',
+			label: t('files.unfavorite', 'Remove favorite'),
+			icon: 'star-outline',
+			run: (item) => void unfavorite(item)
 		},
 		{ key: 'rename', label: t('common.rename', 'Rename'), icon: 'pen', run: rename },
 		{ key: 'delete', label: t('common.delete', 'Delete'), icon: 'trash', danger: true, run: remove }

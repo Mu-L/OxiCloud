@@ -1920,7 +1920,7 @@
 				const tg = ctxTarget!;
 				closeContext();
 				openShare(tg.kind, tg.id, tg.name);
-			}}><Icon name="link" /> {t('files.share', 'Share')}</button
+			}}><Icon name="share-alt" /> {t('files.share', 'Share')}</button
 		>
 		<button
 			class="ctx-item"
