@@ -382,7 +382,8 @@
     "col_added": "Добавлено",
     "col_created_by": "Создано",
     "col_opened": "Открыт",
-    "col_path": "Расположение"
+    "col_path": "Расположение",
+    "new_elements": "Новые элементы"
   },
   "dialogs": {
     "rename_folder": "Переименовать папку",

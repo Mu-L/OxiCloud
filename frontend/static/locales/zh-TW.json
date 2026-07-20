@@ -382,7 +382,8 @@
     "col_added": "新增日期",
     "col_created_by": "建立者",
     "col_opened": "開啟日期",
-    "col_path": "位置"
+    "col_path": "位置",
+    "new_elements": "新項目"
   },
   "dialogs": {
     "rename_folder": "重新命名資料夾",

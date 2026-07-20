@@ -471,6 +471,7 @@
     "move_title": "\"{{name}}\" 이동",
     "moved": "이동됨",
     "new_folder_prompt": "새 폴더 이름",
+    "new_elements": "새 항목",
     "no_home": "홈 폴더를 사용할 수 없습니다.",
     "no_preview": "이 파일 형식은 미리보기를 지원하지 않습니다.",
     "no_subfolders": "하위 폴더가 없습니다.",

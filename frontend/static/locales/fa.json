@@ -382,7 +382,8 @@
     "col_added": "افزوده شده",
     "col_created_by": "ایجاد شده توسط",
     "col_opened": "باز شده",
-    "col_path": "مکان"
+    "col_path": "مکان",
+    "new_elements": "موارد جدید"
   },
   "dialogs": {
     "rename_folder": "تغییر نام پوشه",

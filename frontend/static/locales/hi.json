@@ -382,7 +382,8 @@
     "col_added": "जोड़ा गया",
     "col_created_by": "द्वारा बनाया गया",
     "col_opened": "खोला गया",
-    "col_path": "स्थान"
+    "col_path": "स्थान",
+    "new_elements": "नए तत्व"
   },
   "dialogs": {
     "rename_folder": "फ़ोल्डर का नाम बदलें",

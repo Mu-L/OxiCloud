@@ -382,7 +382,8 @@
     "col_added": "Adicionado",
     "col_created_by": "Criado por",
     "col_opened": "Aberto",
-    "col_path": "Localização"
+    "col_path": "Localização",
+    "new_elements": "Novos itens"
   },
   "dialogs": {
     "rename_folder": "Renomear pasta",

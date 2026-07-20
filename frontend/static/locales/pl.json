@@ -382,7 +382,8 @@
     "col_added": "Dodano",
     "col_created_by": "Utworzone przez",
     "col_opened": "Otwarte",
-    "col_path": "Lokalizacja"
+    "col_path": "Lokalizacja",
+    "new_elements": "Nowe elementy"
   },
   "dialogs": {
     "rename_folder": "Zmień nazwę folderu",

@@ -1239,14 +1239,16 @@
 				<div class="files-list-view" style="--files-list-columns: {columns}">
 					{#if listHeaderOverride}{@render listHeaderOverride()}{:else}{@render listHeader()}{/if}
 					{#each sections as section (section.key)}
-						<div class="rl-swimlane-header" role="rowheader">
-							<span class="rl-swimlane-header__label">{section.label}</span>
-							{#if bucketAction}
-								<span class="rl-swimlane-header__action">
-									{@render bucketAction(section.key)}
-								</span>
-							{/if}
-						</div>
+						{#if section.label}
+							<div class="rl-swimlane-header" role="rowheader">
+								<span class="rl-swimlane-header__label">{section.label}</span>
+								{#if bucketAction}
+									<span class="rl-swimlane-header__action">
+										{@render bucketAction(section.key)}
+									</span>
+								{/if}
+							</div>
+						{/if}
 						<!-- Window each section's rows so a large grouped list (e.g. a big
 					     trash, grouped by remaining days) doesn't mount every row. -->
 						<VirtualList items={section.rows} rowHeight={56} key={(e) => e.id} {row} />
@@ -1262,14 +1264,16 @@
 			     (benches/ROUND13.md §V1). -->
 				<div class="rl-grouped-grid">
 					{#each sections as section (section.key)}
-						<div class="rl-swimlane-header rl-swimlane-header--grid" role="rowheader">
-							<span class="rl-swimlane-header__label">{section.label}</span>
-							{#if bucketAction}
-								<span class="rl-swimlane-header__action">
-									{@render bucketAction(section.key)}
-								</span>
-							{/if}
-						</div>
+						{#if section.label}
+							<div class="rl-swimlane-header rl-swimlane-header--grid" role="rowheader">
+								<span class="rl-swimlane-header__label">{section.label}</span>
+								{#if bucketAction}
+									<span class="rl-swimlane-header__action">
+										{@render bucketAction(section.key)}
+									</span>
+								{/if}
+							</div>
+						{/if}
 						<VirtualList
 							items={section.rows}
 							columns={gridCols}

@@ -382,7 +382,8 @@
     "col_added": "Toegevoegd",
     "col_created_by": "Gemaakt door",
     "col_opened": "Geopend",
-    "col_path": "Locatie"
+    "col_path": "Locatie",
+    "new_elements": "Nieuwe items"
   },
   "dialogs": {
     "rename_folder": "Map hernoemen",

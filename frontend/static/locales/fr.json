@@ -382,7 +382,8 @@
     "col_added": "Ajouté",
     "col_created_by": "Créé par",
     "col_opened": "Ouvert",
-    "col_path": "Emplacement"
+    "col_path": "Emplacement",
+    "new_elements": "Nouveaux éléments"
   },
   "dialogs": {
     "rename_folder": "Renommer le dossier",

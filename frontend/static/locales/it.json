@@ -382,7 +382,8 @@
     "col_added": "Aggiunto",
     "col_created_by": "Creato da",
     "col_opened": "Aperto",
-    "col_path": "Posizione"
+    "col_path": "Posizione",
+    "new_elements": "Nuovi elementi"
   },
   "dialogs": {
     "rename_folder": "Rinomina cartella",

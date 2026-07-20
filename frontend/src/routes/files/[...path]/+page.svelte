@@ -121,6 +121,26 @@
 	// enqueue two concurrent next-page fetches on the same cursor.
 	let loadingMore = $state(false);
 
+	// ── Transient "New elements" swimlane ────────────────────────────
+	// Server sort is authoritative, so an uploaded file lands wherever
+	// its sort key places it — possibly halfway down the list or on an
+	// unloaded page. To confirm "your upload worked", we detect items
+	// that appeared on the current page after a mutation (upload / new
+	// folder / dropped tree) and hoist them into a first-class swimlane
+	// at the top of the list. The swimlane clears on next folder nav.
+	//
+	// Detection strategy: caller of `reloadAndTrackNew()` snapshots the
+	// current id set, runs `reload()`, and diffs the freshly-loaded
+	// page 1 against the snapshot — every new id joins `newlyAdded`.
+	//
+	// Known limitation: server-sort places the new item on an unloaded
+	// page (e.g. sort=size on a 5 000-item folder and the new file is
+	// mid-size). It won't appear in the swimlane until the user scrolls
+	// far enough for that page to load. Threading the returned FileItem
+	// out of the 5-layer upload stack would fix this — deferred until
+	// the diff approach proves insufficient.
+	const newlyAdded = new SvelteSet<string>();
+
 	// Dotfile hide filter is now applied inside `rlItems` (below) directly
 	// on the server-ordered accumulator, so a single filter pass feeds
 	// ResourceList. Selection / batch ops iterate ResourceList's own
@@ -371,6 +391,36 @@
 		await load(true);
 	}
 
+	/**
+	 * Reload + populate the "new elements" swimlane with anything that
+	 * appeared on page 1 after the mutation.
+	 *
+	 * Called from mutation paths that ADD items (upload / dropped tree /
+	 * create-folder). Renames, deletes, moves use plain `reload()`
+	 * — nothing new to hoist.
+	 */
+	async function reloadAndTrackNew(): Promise<void> {
+		const before = new SvelteSet<string>();
+		for (const it of orderedItems) before.add(it.id);
+		await reload();
+		// `reload()` resets `pageCursor` + fetches page 1 fresh, so
+		// `orderedItems` is now the freshly-loaded page. Every id that
+		// wasn't there before this reload joins the swimlane.
+		newlyAdded.clear();
+		for (const it of orderedItems) if (!before.has(it.id)) newlyAdded.add(it.id);
+		// Scroll the page back to the top so the freshly-hoisted "New
+		// elements" swimlane is visible without the user having to hunt
+		// for it — the whole point of the swimlane is to confirm "your
+		// upload landed". Only fires when we actually detected new items,
+		// so a bare reload doesn't yank the user's scroll position.
+		// Smooth scroll for the visual continuity — instant would feel
+		// like the page reloaded. `scrollTo` at (0, 0) is a no-op if
+		// the user was already at the top; no jitter cost.
+		if (newlyAdded.size > 0 && typeof window !== 'undefined') {
+			window.scrollTo({ top: 0, behavior: 'smooth' });
+		}
+	}
+
 	function openFolder(folder: FolderItem) {
 		goto(resolve(`/files/${[...pathSegments, folder.id].join('/')}`));
 	}
@@ -384,7 +434,7 @@
 		if (!name) return;
 		try {
 			await createFolder(name, currentId);
-			await reload();
+			await reloadAndTrackNew();
 			// Vanish-warning: user just made a `.folder` and it's
 			// already hidden by their preference — otherwise the new
 			// folder would appear to have not been created. Third hook
@@ -668,7 +718,7 @@
 			} else {
 				finishUpload(nid, 0, 0, 0, skipped.length);
 			}
-			await reload();
+			await reloadAndTrackNew();
 			// Storage usage changed server-side — pull the fresh figure so the
 			// "Almacenamiento" bar moves off its login value instead of 0%.
 			void session.refresh();
@@ -1375,7 +1425,7 @@
 
 			const { savedBytes, failures } = await uploadAll(items, nid, label);
 			finishUpload(nid, savedBytes, failures, total, skipped.length);
-			await reload();
+			await reloadAndTrackNew();
 			void session.refresh();
 		} catch (err) {
 			ui.finishProgress(nid, errorMessage(err), 'error');
@@ -1418,7 +1468,25 @@
 	// necessary. Under order_by=name/type/size the server puts folders
 	// first then files; under modified_at/created_at they interleave —
 	// preserving the accumulator order is what surfaces that correctly.
-	const rlItems = $derived(filterDotfiles(orderedItems, preferences.hideDotfiles));
+	//
+	// Hoist step: items in `newlyAdded` (populated by `reloadAndTrackNew`
+	// after an upload / create / dropped tree) are pulled OUT of their
+	// natural-order position and PREPENDED to the list, so the
+	// "__new__" bucket rendered by the composed groupBy below appears
+	// at the top of the swimlanes regardless of what sort/group the
+	// user has active. First-appearance bucketing in
+	// `buildResourceSections` keys off the item order in the input list.
+	const rlItems = $derived.by<Array<FileItem | FolderItem>>(() => {
+		const filtered = filterDotfiles(orderedItems, preferences.hideDotfiles);
+		if (newlyAdded.size === 0) return filtered;
+		const hoisted: Array<FileItem | FolderItem> = [];
+		const rest: Array<FileItem | FolderItem> = [];
+		for (const it of filtered) {
+			if (newlyAdded.has(it.id)) hoisted.push(it);
+			else rest.push(it);
+		}
+		return [...hoisted, ...rest];
+	});
 
 	// Group-by state (bound to <ResourceList>). Kept as a `string` prop
 	// value; the current `sortField` mirrors from the picked group's
@@ -1429,40 +1497,75 @@
 	// modifiedAt / createdAt). The `orderBy` values are what the
 	// GROUP_BYS toolbar emits, so <ResourceList>'s onreload gets the
 	// legacy `sortField` name and can drive the same sort path.
+	//
+	// Every dimension composes a `__new__` branch on top of its natural
+	// `bucketOf` so that whenever the transient "new elements" swimlane
+	// is active, hoisted items get their own bucket-first-in-order
+	// regardless of the user's chosen group. On the default `''` (flat)
+	// dimension the wrapped `bucketOf` returns the empty string for
+	// non-new items — that renders as one unlabeled section (header
+	// suppressed by ResourceList when `label === ''`), preserving the
+	// current flat-list look with just the "New elements" header on
+	// top. `labelForNew` renders the localised header.
+	const NEW_KEY = '__new__';
+	const labelForNew = $derived(t('files.new_elements', 'New elements'));
+	const wrapNew =
+		<T extends FileItem | FolderItem>(inner?: (item: T) => string | null) =>
+		(item: T): string | null => {
+			if (newlyAdded.has(item.id)) return NEW_KEY;
+			return inner ? inner(item) : '';
+		};
+	const wrapLabel =
+		(inner?: (key: string) => string) =>
+		(key: string): string => {
+			if (key === NEW_KEY) return labelForNew;
+			return inner ? inner(key) : key;
+		};
 	const rlGroupBys = $derived<RLGroupByDef[]>([
-		{ key: '', label: t('files.name', 'Name'), orderBy: 'name', icon: 'arrow-up-a-z' },
+		{
+			key: '',
+			label: t('files.name', 'Name'),
+			orderBy: 'name',
+			icon: 'arrow-up-a-z',
+			// Only synthesize a bucketOf when the swimlane is active; when
+			// no new items exist we want the plain flat-list rendering
+			// (no bucketing pass at all).
+			bucketOf: newlyAdded.size > 0 ? wrapNew() : undefined,
+			labelOf: newlyAdded.size > 0 ? wrapLabel() : undefined
+		},
 		{
 			key: 'type',
 			label: t('groupby.type', 'Type'),
 			orderBy: 'type',
 			icon: 'layer-group',
-			bucketOf: (item) =>
-				isFile(item) ? typeLabel(item.category) : t('files.file_types.folder', 'Folders'),
-			labelOf: (k) => k
+			bucketOf: wrapNew((item) =>
+				isFile(item) ? typeLabel(item.category) : t('files.file_types.folder', 'Folders')
+			),
+			labelOf: wrapLabel((k) => k)
 		},
 		{
 			key: 'size',
 			label: t('groupby.size', 'Size'),
 			orderBy: 'size',
 			icon: 'layer-group',
-			bucketOf: (item) => (isFile(item) ? sizeBucket(item.size ?? 0) : sizeBucket(-1)),
-			labelOf: (k) => k
+			bucketOf: wrapNew((item) => (isFile(item) ? sizeBucket(item.size ?? 0) : sizeBucket(-1))),
+			labelOf: wrapLabel((k) => k)
 		},
 		{
 			key: 'modifiedAt',
 			label: t('groupby.modifiedAt', 'Modified date'),
 			orderBy: 'modified_at',
 			icon: 'layer-group',
-			bucketOf: (item) => dateBucket(item.modified_at),
-			labelOf: (k) => k
+			bucketOf: wrapNew((item) => dateBucket(item.modified_at)),
+			labelOf: wrapLabel((k) => k)
 		},
 		{
 			key: 'createdAt',
 			label: t('groupby.createdAt', 'Created date'),
 			orderBy: 'created_at',
 			icon: 'layer-group',
-			bucketOf: (item) => dateBucket(item.created_at),
-			labelOf: (k) => k
+			bucketOf: wrapNew((item) => dateBucket(item.created_at)),
+			labelOf: wrapLabel((k) => k)
 		}
 	]);
 
@@ -1533,6 +1636,11 @@
 		void sortField;
 		void reversed;
 		untrack(() => {
+			// Route/sort change → drop the transient "new elements"
+			// swimlane. It's a per-folder confirmation of "here's what
+			// you just added"; carrying it across folders would surface
+			// stale ids that don't belong to the new listing.
+			newlyAdded.clear();
 			void load(true);
 		});
 	});

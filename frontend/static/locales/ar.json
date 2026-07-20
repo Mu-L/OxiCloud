@@ -382,7 +382,8 @@
     "col_added": "أضيف",
     "col_created_by": "أنشئ بواسطة",
     "col_opened": "افتُح",
-    "col_path": "الموقع"
+    "col_path": "الموقع",
+    "new_elements": "عناصر جديدة"
   },
   "dialogs": {
     "rename_folder": "إعادة تسمية المجلد",
