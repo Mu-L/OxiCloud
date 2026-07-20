@@ -1675,6 +1675,7 @@
   },
   "resource_list": {
     "location": "Location",
-    "wrong_drop_zone_msg": "Uploads only work in Files — open the Files section and drop there."
+    "wrong_drop_zone_msg": "Uploads only work in Files — open the Files section and drop there.",
+    "wrong_drop_zone_action": "Go to Files"
   }
 }

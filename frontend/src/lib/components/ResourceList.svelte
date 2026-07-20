@@ -92,6 +92,8 @@
 	import DisplayModeControls from '$lib/components/DisplayModeControls.svelte';
 	import UserVignette from '$lib/components/UserVignette.svelte';
 	import VirtualList from '$lib/components/VirtualList.svelte';
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { t } from '$lib/i18n/index.svelte';
 	import { ui } from '$lib/stores/ui.svelte';
 	import { files as filesStore } from '$lib/stores/files.svelte';
@@ -927,7 +929,13 @@
 		// element accepts drops — without it, `drop` never fires and
 		// the pointer shows the OS "no-drop" cursor.
 		e.preventDefault();
-		if (e.dataTransfer) e.dataTransfer.dropEffect = enableSystemDrop ? 'copy' : 'none';
+		// `dropEffect = 'none'` would tell the browser to REJECT the
+		// drop before `drop` fires — the toast/notification path in
+		// `onSystemDrop` would never run for wrong-zone drops. Always
+		// accept at the pointer level; the drop handler decides
+		// whether to upload (`enableSystemDrop`) or fire the
+		// "go to Files" toast.
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
 	}
 	function onSystemDragLeave(e: DragEvent) {
 		if (!isSystemDrag(e)) return;
@@ -949,7 +957,19 @@
 					'Uploads only work in Files — open the Files section and drop there.'
 				),
 				'warning',
-				6000
+				6000,
+				true,
+				{
+					action: {
+						label: t('resource_list.wrong_drop_zone_action', 'Go to Files'),
+						// One-click recovery from a mis-drop: land the user in
+						// /files so they can re-drag from the OS. We don't
+						// re-attach the dropped files (browsers throw away
+						// DataTransfer once the drop event returns), so this
+						// is the best we can offer without a second drag.
+						onClick: () => goto(resolve('/files'))
+					}
+				}
 			);
 		}
 	}

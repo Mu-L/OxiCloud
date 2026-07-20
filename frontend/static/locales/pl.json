@@ -1279,6 +1279,7 @@
   },
   "resource_list": {
     "location": "Lokalizacja",
-    "wrong_drop_zone_msg": "Przesyłanie działa tylko w Plikach — otwórz sekcję Pliki i upuść tam pliki."
+    "wrong_drop_zone_msg": "Przesyłanie działa tylko w Plikach — otwórz sekcję Pliki i upuść tam pliki.",
+    "wrong_drop_zone_action": "Przejdź do Plików"
   }
 }

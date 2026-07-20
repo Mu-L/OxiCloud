@@ -1671,6 +1671,7 @@
   },
   "resource_list": {
     "location": "위치",
-    "wrong_drop_zone_msg": "업로드는 파일 섹션에서만 작동합니다. 파일 섹션을 열고 거기에 놓아 주세요."
+    "wrong_drop_zone_msg": "업로드는 파일 섹션에서만 작동합니다. 파일 섹션을 열고 거기에 놓아 주세요.",
+    "wrong_drop_zone_action": "파일로 이동"
   }
 }

@@ -1294,6 +1294,7 @@
   },
   "resource_list": {
     "location": "Ubicación",
-    "wrong_drop_zone_msg": "Las subidas solo funcionan en Archivos — abre la sección Archivos y suelta ahí los elementos."
+    "wrong_drop_zone_msg": "Las subidas solo funcionan en Archivos — abre la sección Archivos y suelta ahí los elementos.",
+    "wrong_drop_zone_action": "Ir a Archivos"
   }
 }

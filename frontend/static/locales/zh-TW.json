@@ -1279,6 +1279,7 @@
   },
   "resource_list": {
     "location": "位置",
-    "wrong_drop_zone_msg": "上傳僅在「檔案」中有效 — 請開啟檔案區並在該處拖放。"
+    "wrong_drop_zone_msg": "上傳僅在「檔案」中有效 — 請開啟檔案區並在該處拖放。",
+    "wrong_drop_zone_action": "前往檔案"
   }
 }

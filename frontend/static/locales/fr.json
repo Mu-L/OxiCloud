@@ -1279,6 +1279,7 @@
   },
   "resource_list": {
     "location": "Emplacement",
-    "wrong_drop_zone_msg": "Les envois ne fonctionnent que dans Fichiers — ouvrez la section Fichiers et déposez-y vos éléments."
+    "wrong_drop_zone_msg": "Les envois ne fonctionnent que dans Fichiers — ouvrez la section Fichiers et déposez-y vos éléments.",
+    "wrong_drop_zone_action": "Aller aux Fichiers"
   }
 }

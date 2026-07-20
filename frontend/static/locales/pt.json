@@ -1279,6 +1279,7 @@
   },
   "resource_list": {
     "location": "Localização",
-    "wrong_drop_zone_msg": "Os envios só funcionam em Ficheiros — abra a secção Ficheiros e largue-os aí."
+    "wrong_drop_zone_msg": "Os envios só funcionam em Ficheiros — abra a secção Ficheiros e largue-os aí.",
+    "wrong_drop_zone_action": "Ir para Arquivos"
   }
 }

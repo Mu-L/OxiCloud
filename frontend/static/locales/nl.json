@@ -1279,6 +1279,7 @@
   },
   "resource_list": {
     "location": "Locatie",
-    "wrong_drop_zone_msg": "Uploaden werkt alleen in Bestanden — open het onderdeel Bestanden en zet ze daar neer."
+    "wrong_drop_zone_msg": "Uploaden werkt alleen in Bestanden — open het onderdeel Bestanden en zet ze daar neer.",
+    "wrong_drop_zone_action": "Naar Bestanden"
   }
 }
