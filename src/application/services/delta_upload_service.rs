@@ -446,8 +446,12 @@ impl DeltaUploadService {
             ct if ct.is_empty() => "application/octet-stream".to_string(),
             ct => ct,
         };
-        let chunk_hashes: Vec<String> = request.chunks.iter().map(|c| c.h.clone()).collect();
-        let chunk_sizes: Vec<u64> = request.chunks.iter().map(|c| c.s).collect();
+        // `request.chunks` is owned and dead after this line (only
+        // `request.file_hash` is read below), so move the hashes out instead of
+        // cloning each 64-char hash a third time — the distinct set and the
+        // verification tuple already materialized it twice (benches/ROUND25.md §M2).
+        let (chunk_hashes, chunk_sizes): (Vec<String>, Vec<u64>) =
+            request.chunks.into_iter().map(|c| (c.h, c.s)).unzip();
         let attached = self
             .dedup
             .attach_manifest(
@@ -549,7 +553,10 @@ impl DeltaUploadService {
                 self.max_chunk_count()
             )));
         }
-        let mut distinct_seen = HashSet::new();
+        // foldhash::quality::RandomState — a fast, per-instance random-seeded
+        // hasher, DoS-safe for these attacker-controlled client hashes (up to
+        // max_chunk_count() of them per request) — benches/ROUND26.md §G1.
+        let mut distinct_seen: HashSet<&str, foldhash::quality::RandomState> = HashSet::default();
         for hash in &request.hashes {
             if !is_valid_hash(hash) {
                 return Err(DomainError::validation_error(
@@ -680,7 +687,9 @@ fn sanitize_file_name(name: &str) -> Result<String, DomainError> {
 
 /// Distinct hashes in first-occurrence order.
 fn distinct_hashes(chunks: &[ChunkRef]) -> Vec<String> {
-    let mut seen = HashSet::new();
+    // foldhash::quality::RandomState — fast, per-instance random-seeded and thus
+    // DoS-safe for these attacker-controlled client hashes (benches/ROUND26.md §G1).
+    let mut seen: HashSet<&str, foldhash::quality::RandomState> = HashSet::default();
     chunks
         .iter()
         .filter(|c| seen.insert(c.h.as_str()))

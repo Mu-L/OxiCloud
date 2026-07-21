@@ -24,7 +24,8 @@ use crate::interfaces::api::handlers::webdav_handler::{
 };
 use crate::interfaces::errors::AppError;
 use crate::interfaces::nextcloud::webdav_handler::{
-    batch_resolve_ids, format_oc_id, nc_href, nc_id_of, write_file_response, write_folder_response,
+    batch_resolve_ids, format_oc_id_into, nc_href, nc_id_of, write_file_response,
+    write_folder_response,
 };
 
 /// Handle WebDAV REPORT and SEARCH methods for Nextcloud compatibility.
@@ -174,6 +175,8 @@ async fn handle_filter_files(
         // per type, not 2N round-trips). Hrefs use `url_user` so the
         // multi-drive `~{drive}` form is echoed back to the client;
         // owner-id stays canonical via `&user.username`.
+        // One oc:id buffer reused across both emit loops (benches/ROUND27.md §H1).
+        let mut oc_buf = String::new();
         for file in &files {
             // Skip favorites that live outside the caller's chroot
             // (other-drive favorites); reachable via REST if needed.
@@ -188,13 +191,19 @@ async fn handle_filter_files(
             };
             let href = nc_href(url_user, subpath);
             let fid = nc_id_of(&file_id_map, &file.id);
-            let oc_id = fid.map(|id| format_oc_id(id, file_id_svc));
+            let oc_id: Option<&str> = match fid {
+                Some(id) => {
+                    format_oc_id_into(&mut oc_buf, id, file_id_svc);
+                    Some(oc_buf.as_str())
+                }
+                None => None,
+            };
             let dead = dead_props_for(&file.id, &file_deads);
             write_file_response(
                 &mut xml,
                 file,
                 &href,
-                (fid, oc_id.as_deref()),
+                (fid, oc_id),
                 &user.username,
                 &favorite_ids,
                 dead,
@@ -214,13 +223,19 @@ async fn handle_filter_files(
             };
             let href = format!("{}/", nc_href(url_user, subpath));
             let fid = nc_id_of(&folder_id_map, &folder.id);
-            let oc_id = fid.map(|id| format_oc_id(id, file_id_svc));
+            let oc_id: Option<&str> = match fid {
+                Some(id) => {
+                    format_oc_id_into(&mut oc_buf, id, file_id_svc);
+                    Some(oc_buf.as_str())
+                }
+                None => None,
+            };
             let dead = dead_props_for(&folder.id, &folder_deads);
             write_folder_response(
                 &mut xml,
                 folder,
                 &href,
-                (fid, oc_id.as_deref()),
+                (fid, oc_id),
                 &user.username,
                 &favorite_ids,
                 // REPORT results are a flat filter/search listing, not a
@@ -317,6 +332,8 @@ async fn handle_search(
         let folder_deads = folders_dead_props_map(&state.webdav_dead_props, &folders).await;
 
         // Files.
+        // One oc:id buffer reused across both emit loops (benches/ROUND27.md §H1).
+        let mut oc_buf = String::new();
         for file in &files {
             let Some(subpath) = strip_home_prefix(chroot, &file.path, home_prefix) else {
                 tracing::debug!(
@@ -329,13 +346,19 @@ async fn handle_search(
             };
             let href = nc_href(url_user, subpath);
             let fid = nc_id_of(&file_id_map, &file.id);
-            let oc_id = fid.map(|id| format_oc_id(id, file_id_svc));
+            let oc_id: Option<&str> = match fid {
+                Some(id) => {
+                    format_oc_id_into(&mut oc_buf, id, file_id_svc);
+                    Some(oc_buf.as_str())
+                }
+                None => None,
+            };
             let dead = dead_props_for(&file.id, &file_deads);
             write_file_response(
                 &mut xml,
                 file,
                 &href,
-                (fid, oc_id.as_deref()),
+                (fid, oc_id),
                 &user.username,
                 &favorite_ids,
                 dead,
@@ -356,13 +379,19 @@ async fn handle_search(
             };
             let href = format!("{}/", nc_href(url_user, subpath));
             let fid = nc_id_of(&folder_id_map, &folder.id);
-            let oc_id = fid.map(|id| format_oc_id(id, file_id_svc));
+            let oc_id: Option<&str> = match fid {
+                Some(id) => {
+                    format_oc_id_into(&mut oc_buf, id, file_id_svc);
+                    Some(oc_buf.as_str())
+                }
+                None => None,
+            };
             let dead = dead_props_for(&folder.id, &folder_deads);
             write_folder_response(
                 &mut xml,
                 folder,
                 &href,
-                (fid, oc_id.as_deref()),
+                (fid, oc_id),
                 &user.username,
                 &favorite_ids,
                 // REPORT results are a flat filter/search listing, not a

@@ -20,6 +20,19 @@ use crate::domain::repositories::drive_repository::{
     DriveRepository, DriveRepositoryError, DriveWithRootName,
 };
 
+/// Decode a `d.policies` JSONB column straight into `DrivePolicies` via
+/// `sqlx::types::Json<T>` — a single `serde_json::from_slice` over the raw JSONB
+/// bytes — instead of fetching a throwaway `serde_json::Value` DOM and walking it
+/// once with `DrivePolicies::from_value`. The §J1 pattern (ROUND23) applied to
+/// the drive-policy path §J2 left behind (benches/ROUND26.md §P1). The lenient
+/// `unwrap_or_default` fallback (a malformed bag decodes to all-false rather than
+/// erroring the read) is preserved exactly.
+fn policies_from_row(row: &sqlx::postgres::PgRow) -> crate::domain::entities::drive::DrivePolicies {
+    row.try_get::<sqlx::types::Json<crate::domain::entities::drive::DrivePolicies>, _>("policies")
+        .map(|j| j.0)
+        .unwrap_or_default()
+}
+
 /// `default_drive_cache` TTL. The default-drive → root-folder binding is
 /// nearly immutable (changes only on provisioning / drive deletion /
 /// policy edits — all of which invalidate explicitly below), yet it is
@@ -706,7 +719,7 @@ impl DriveRepository for DrivePgRepository {
         &self,
         file_id: Uuid,
     ) -> Result<crate::domain::entities::drive::DrivePolicies, DriveRepositoryError> {
-        let row: Option<(serde_json::Value,)> = sqlx::query_as(
+        let row = sqlx::query(
             "SELECT d.policies \
                FROM storage.drives d \
                JOIN storage.files  f ON f.drive_id = d.id \
@@ -715,20 +728,16 @@ impl DriveRepository for DrivePgRepository {
         .bind(file_id)
         .fetch_optional(self.pool.as_ref())
         .await
-        .map_err(|e| Self::map_sqlx_err("get_policies_for_file", e))?;
-        let raw = row
-            .ok_or_else(|| DriveRepositoryError::NotFound(file_id.to_string()))?
-            .0;
-        Ok(crate::domain::entities::drive::DrivePolicies::from_value(
-            &raw,
-        ))
+        .map_err(|e| Self::map_sqlx_err("get_policies_for_file", e))?
+        .ok_or_else(|| DriveRepositoryError::NotFound(file_id.to_string()))?;
+        Ok(policies_from_row(&row))
     }
 
     async fn get_policies_for_folder(
         &self,
         folder_id: Uuid,
     ) -> Result<crate::domain::entities::drive::DrivePolicies, DriveRepositoryError> {
-        let row: Option<(serde_json::Value,)> = sqlx::query_as(
+        let row = sqlx::query(
             "SELECT d.policies \
                FROM storage.drives  d \
                JOIN storage.folders fo ON fo.drive_id = d.id \
@@ -737,20 +746,16 @@ impl DriveRepository for DrivePgRepository {
         .bind(folder_id)
         .fetch_optional(self.pool.as_ref())
         .await
-        .map_err(|e| Self::map_sqlx_err("get_policies_for_folder", e))?;
-        let raw = row
-            .ok_or_else(|| DriveRepositoryError::NotFound(folder_id.to_string()))?
-            .0;
-        Ok(crate::domain::entities::drive::DrivePolicies::from_value(
-            &raw,
-        ))
+        .map_err(|e| Self::map_sqlx_err("get_policies_for_folder", e))?
+        .ok_or_else(|| DriveRepositoryError::NotFound(folder_id.to_string()))?;
+        Ok(policies_from_row(&row))
     }
 
     async fn get_drive_id_and_policies_for_file(
         &self,
         file_id: Uuid,
     ) -> Result<(Uuid, crate::domain::entities::drive::DrivePolicies), DriveRepositoryError> {
-        let row: Option<(Uuid, serde_json::Value)> = sqlx::query_as(
+        let row = sqlx::query(
             "SELECT d.id, d.policies \
                FROM storage.drives d \
                JOIN storage.files  f ON f.drive_id = d.id \
@@ -759,20 +764,19 @@ impl DriveRepository for DrivePgRepository {
         .bind(file_id)
         .fetch_optional(self.pool.as_ref())
         .await
-        .map_err(|e| Self::map_sqlx_err("get_drive_id_and_policies_for_file", e))?;
-        let (drive_id, raw) =
-            row.ok_or_else(|| DriveRepositoryError::NotFound(file_id.to_string()))?;
-        Ok((
-            drive_id,
-            crate::domain::entities::drive::DrivePolicies::from_value(&raw),
-        ))
+        .map_err(|e| Self::map_sqlx_err("get_drive_id_and_policies_for_file", e))?
+        .ok_or_else(|| DriveRepositoryError::NotFound(file_id.to_string()))?;
+        let drive_id: Uuid = row
+            .try_get("id")
+            .map_err(|e| Self::map_sqlx_err("get_drive_id_and_policies_for_file", e))?;
+        Ok((drive_id, policies_from_row(&row)))
     }
 
     async fn get_drive_id_and_policies_for_folder(
         &self,
         folder_id: Uuid,
     ) -> Result<(Uuid, crate::domain::entities::drive::DrivePolicies), DriveRepositoryError> {
-        let row: Option<(Uuid, serde_json::Value)> = sqlx::query_as(
+        let row = sqlx::query(
             "SELECT d.id, d.policies \
                FROM storage.drives  d \
                JOIN storage.folders fo ON fo.drive_id = d.id \
@@ -781,13 +785,12 @@ impl DriveRepository for DrivePgRepository {
         .bind(folder_id)
         .fetch_optional(self.pool.as_ref())
         .await
-        .map_err(|e| Self::map_sqlx_err("get_drive_id_and_policies_for_folder", e))?;
-        let (drive_id, raw) =
-            row.ok_or_else(|| DriveRepositoryError::NotFound(folder_id.to_string()))?;
-        Ok((
-            drive_id,
-            crate::domain::entities::drive::DrivePolicies::from_value(&raw),
-        ))
+        .map_err(|e| Self::map_sqlx_err("get_drive_id_and_policies_for_folder", e))?
+        .ok_or_else(|| DriveRepositoryError::NotFound(folder_id.to_string()))?;
+        let drive_id: Uuid = row
+            .try_get("id")
+            .map_err(|e| Self::map_sqlx_err("get_drive_id_and_policies_for_folder", e))?;
+        Ok((drive_id, policies_from_row(&row)))
     }
 
     async fn drive_id_for_folder(&self, folder_id: Uuid) -> Result<Uuid, DriveRepositoryError> {

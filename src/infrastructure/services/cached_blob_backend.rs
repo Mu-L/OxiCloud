@@ -119,10 +119,21 @@ impl BlobStorageBackend for CachedBlobBackend {
         Box::pin(async move {
             inner.initialize().await?;
 
-            // Create cache dir structure (256 prefix dirs)
+            // Create the cache dir AND its 256 {00..ff} shard dirs up front
+            // (mirroring LocalBlobBackend::initialize), so the write paths never
+            // pay a per-chunk `create_dir_all` on an already-existing shard — a
+            // ~45 µs mkdirat(EEXIST)+stat+blocking-dispatch removed per cache
+            // write on cached-remote deployments (benches/ROUND26.md §D1).
             fs::create_dir_all(&cache_dir).await.map_err(|e| {
                 DomainError::internal_error("BlobCache", format!("mkdir cache_dir: {e}"))
             })?;
+            for prefix in &crate::infrastructure::services::local_blob_backend::HEX_PREFIXES {
+                fs::create_dir_all(cache_dir.join(prefix))
+                    .await
+                    .map_err(|e| {
+                        DomainError::internal_error("BlobCache", format!("mkdir cache shard: {e}"))
+                    })?;
+            }
 
             // Scan existing cache to rebuild index.  Collect entries WITHOUT
             // holding the index lock — a large cache directory walk must not
@@ -411,10 +422,9 @@ impl CachedBlobBackend {
     /// index deliberately skipped the eviction sweep on this path, letting
     /// write bursts overshoot the budget until the next read-miss insert).
     async fn cache_bytes_write_through(&self, hash: String, data: &Bytes) {
+        // The shard dir was created at initialize() — no per-write create_dir_all
+        // (benches/ROUND26.md §D1).
         let dest = self.cached_path(&hash);
-        if let Some(parent) = dest.parent() {
-            let _ = fs::create_dir_all(parent).await;
-        }
         let _ = fs::write(&dest, data).await;
         let data_len = data.len() as u64;
         self.index.insert(hash, CacheEntry { size: data_len });
@@ -451,12 +461,8 @@ impl CachedBlobBackend {
     }
 
     async fn insert_into_cache(&self, hash: &str, source_path: &Path) -> Result<(), DomainError> {
+        // Shard dir pre-created at initialize() (benches/ROUND26.md §D1).
         let dest = self.cached_path(hash);
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).await.map_err(|e| {
-                DomainError::internal_error("BlobCache", format!("mkdir failed: {e}"))
-            })?;
-        }
 
         let size = fs::metadata(source_path)
             .await
@@ -476,12 +482,8 @@ impl CachedBlobBackend {
     async fn fetch_and_cache(&self, hash: &str) -> Result<PathBuf, DomainError> {
         let stream = self.inner.get_blob_stream(hash).await?;
 
+        // Shard dir pre-created at initialize() (benches/ROUND26.md §D1).
         let dest = self.cached_path(hash);
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).await.map_err(|e| {
-                DomainError::internal_error("BlobCache", format!("mkdir failed: {e}"))
-            })?;
-        }
 
         // Unique temp name: even if two fetches for one hash ever race
         // (e.g. across processes sharing a cache dir), each writes its own
